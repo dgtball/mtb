@@ -30,13 +30,16 @@ dp = Dispatcher()
 # ---------- ФУНКЦИИ ДЛЯ РАБОТЫ С MOEX ----------
 async def get_all_shares():
     async with aiohttp.ClientSession() as session:
-        data = await aiomoex.get_board_securities(
-            session,
-            board='TQBR',
-            engine='stock',
-            market='shares'
-        )
-        return data
+        url = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off"
+        async with session.get(url) as resp:
+            json_data = await resp.json()
+            # Проверяем, есть ли ключ 'securities'
+            if 'securities' not in json_data:
+                return pd.DataFrame()  # вернуть пустой DataFrame
+            columns = json_data['securities']['columns']
+            data_rows = json_data['securities']['data']
+            df = pd.DataFrame(data_rows, columns=columns)
+            return df
 
 async def get_moex_index():
     async with aiohttp.ClientSession() as session:
