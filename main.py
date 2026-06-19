@@ -127,27 +127,27 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
 # ---------- ОБРАБОТЧИКИ КОМАНД ----------
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.reply(
+    await message.answer(
         "👋 Привет! Я бот для отслеживания топ-акций Мосбиржи.\n\n"
         "📌 Используй команду /top — я покажу лидеров роста и падения."
     )
 
 @dp.message(Command("top"))
 async def cmd_top(message: types.Message):
-    await message.reply("⏳ Загружаю данные с Мосбиржи...")
+    await message.answer("⏳ Загружаю данные с Мосбиржи...")
     try:
         shares_df = await get_all_shares()
         gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
         if gainers.empty and losers.empty:
-            await message.reply("⚠️ Не удалось получить данные. Проверьте логи.")
+            await message.answer("⚠️ Не удалось получить данные. Проверьте логи.")
             return
         index_val = await get_moex_index()
         update_time = time.strftime("%Y-%m-%d %H:%M:%S")
         text = format_message(gainers, losers, index_val, update_time)
-        await message.reply(text, parse_mode="Markdown")
+        await message.answer(text, parse_mode="Markdown")
     except Exception as e:
         logging.error(f"Ошибка в /top: {e}", exc_info=True)
-        await message.reply(f"❌ Ошибка: {e}")
+        await message.answer(f"❌ Ошибка: {e}")
 
 # ---------- FASTAPI ПРИЛОЖЕНИЕ ----------
 @asynccontextmanager
