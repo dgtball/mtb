@@ -14,7 +14,7 @@ from tabulate import tabulate
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
-BASE_URL = os.getenv("RENDER_EXTERNAL_URL")  # автоматический URL от Render
+BASE_URL = os.getenv("RENDER_EXTERNAL_URL")
 
 if not API_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
@@ -33,15 +33,15 @@ dp = Dispatcher()
 # ---------- ФУНКЦИИ ДЛЯ РАБОТЫ С MOEX ----------
 async def get_all_shares():
     async with aiohttp.ClientSession() as session:
-        url = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off"
+        url = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=marketdata"
         try:
             async with session.get(url) as resp:
                 json_data = await resp.json()
-                if 'securities' not in json_data:
-                    logging.error("No 'securities' in response")
+                if 'marketdata' not in json_data:
+                    logging.error("Нет данных marketdata в ответе")
                     return pd.DataFrame()
-                columns = json_data['securities']['columns']
-                data_rows = json_data['securities']['data']
+                columns = json_data['marketdata']['columns']
+                data_rows = json_data['marketdata']['data']
                 df = pd.DataFrame(data_rows, columns=columns)
                 logging.info(f"Загружено {len(df)} строк, колонки: {df.columns.tolist()}")
                 return df
@@ -67,24 +67,37 @@ async def get_moex_index():
 def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N):
     if data.empty:
         return pd.DataFrame(), pd.DataFrame()
-    required = ['OPEN', 'LAST', 'SECID']
+    
+    # Проверяем наличие колонок
+    if 'CHANGEPERCENT' not in data.columns:
+        # Если нет CHANGEPERCENT, пробуем вычислить из OPEN и LAST
+        if 'OPEN' in data.columns and 'LAST' in data.columns:
+            data['CHANGEPERCENT'] = ((data['LAST'] - data['OPEN']) / data['OPEN']) * 100
+        else:
+            logging.error("Нет колонок для расчёта изменения")
+            return pd.DataFrame(), pd.DataFrame()
+    
+    required = ['SECID', 'CHANGEPERCENT', 'LAST']
     missing = [col for col in required if col not in data.columns]
     if missing:
         logging.error(f"Отсутствуют колонки: {missing}")
         return pd.DataFrame(), pd.DataFrame()
-    data = data.dropna(subset=['OPEN', 'LAST'])
-    data['OPEN'] = pd.to_numeric(data['OPEN'], errors='coerce')
+    
+    # Очистка
+    data = data.dropna(subset=required)
+    data['CHANGEPERCENT'] = pd.to_numeric(data['CHANGEPERCENT'], errors='coerce')
     data['LAST'] = pd.to_numeric(data['LAST'], errors='coerce')
-    data = data.dropna(subset=['OPEN', 'LAST'])
-    data = data[data['OPEN'] != 0]
+    data = data.dropna(subset=['CHANGEPERCENT', 'LAST'])
+    
     if data.empty:
         return pd.DataFrame(), pd.DataFrame()
-    data['change_percent'] = ((data['LAST'] - data['OPEN']) / data['OPEN']) * 100
-    gainers = data.nlargest(top_n, 'change_percent')
-    losers = data.nsmallest(top_n, 'change_percent')
+    
+    gainers = data.nlargest(top_n, 'CHANGEPERCENT')
+    losers = data.nsmallest(top_n, 'CHANGEPERCENT')
     return gainers, losers
 
 def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, update_time: str) -> str:
+    # Добавляем название, если нет
     if 'SHORTNAME' not in gainers.columns:
         gainers['SHORTNAME'] = gainers['SECID']
     if 'SHORTNAME' not in losers.columns:
@@ -96,7 +109,7 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
             row['SECID'],
             row['SHORTNAME'],
             f"{row['LAST']:.2f}" if isinstance(row['LAST'], (int, float)) else str(row['LAST']),
-            f"+{row['change_percent']:.2f}%"
+            f"+{row['CHANGEPERCENT']:.2f}%"
         ])
 
     losers_rows = []
@@ -105,7 +118,7 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
             row['SECID'],
             row['SHORTNAME'],
             f"{row['LAST']:.2f}" if isinstance(row['LAST'], (int, float)) else str(row['LAST']),
-            f"{row['change_percent']:.2f}%"
+            f"{row['CHANGEPERCENT']:.2f}%"
         ])
 
     headers = ["Тикер", "Название", "Цена", "Изменение"]
@@ -152,9 +165,10 @@ async def cmd_top(message: types.Message):
 # ---------- FASTAPI ПРИЛОЖЕНИЕ ----------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Устанавливаем вебхук без токена в пути
     webhook_url = f"{BASE_URL}/webhook"
     try:
+        # Сначала удалим старый вебхук (на всякий случай)
+        await bot.delete_webhook()
         await bot.set_webhook(webhook_url)
         logging.info(f"✅ Webhook установлен на {webhook_url}")
     except Exception as e:
@@ -168,17 +182,16 @@ app = FastAPI(lifespan=lifespan)
 async def index():
     return {"status": "Bot is running!"}
 
-# Эндпоинт для ручной установки вебхука (по желанию)
 @app.get("/set_webhook")
 async def set_webhook():
     webhook_url = f"{BASE_URL}/webhook"
     try:
+        await bot.delete_webhook()
         await bot.set_webhook(webhook_url)
         return {"status": "ok", "url": webhook_url}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-# Вебхук теперь без токена в пути
 @app.api_route("/webhook", methods=["GET", "POST"])
 async def webhook(request: Request):
     logging.info(f"Webhook вызван с методом {request.method}")
