@@ -57,11 +57,23 @@ async def get_moex_index():
         return None
 
 def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N):
+    # Проверяем наличие необходимых колонок
+    required_cols = ['OPEN', 'LAST', 'SECID']
+    for col in required_cols:
+        if col not in data.columns:
+            # Если колонки нет, возвращаем пустые DataFrame
+            return pd.DataFrame(), pd.DataFrame()
+    
+    # Убираем строки с пропусками в ценах
     data = data.dropna(subset=['OPEN', 'LAST'])
     data['OPEN'] = pd.to_numeric(data['OPEN'], errors='coerce')
     data['LAST'] = pd.to_numeric(data['LAST'], errors='coerce')
     data = data.dropna(subset=['OPEN', 'LAST'])
     data = data[data['OPEN'] != 0]
+    
+    if data.empty:
+        return pd.DataFrame(), pd.DataFrame()
+    
     data['change_percent'] = ((data['LAST'] - data['OPEN']) / data['OPEN']) * 100
     gainers = data.nlargest(top_n, 'change_percent')
     losers = data.nsmallest(top_n, 'change_percent')
@@ -121,6 +133,11 @@ async def cmd_top(message: types.Message):
     try:
         shares_df = await get_all_shares()
         gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
+        
+        if gainers.empty and losers.empty:
+            await message.reply("⚠️ Не удалось получить данные с Мосбиржи. Попробуйте позже.")
+            return
+        
         index_val = await get_moex_index()
         update_time = time.strftime("%Y-%m-%d %H:%M:%S")
         text = format_message(gainers, losers, index_val, update_time)
