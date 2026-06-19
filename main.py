@@ -14,7 +14,7 @@ from tabulate import tabulate
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
-BASE_URL = os.getenv("RENDER_EXTERNAL_URL")  # используем автоматическую переменную Render
+BASE_URL = os.getenv("RENDER_EXTERNAL_URL")   # автоматический URL от Render
 
 if not API_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
@@ -41,12 +41,10 @@ async def get_all_shares():
                 market='shares',
                 columns=['SECID', 'SHORTNAME', 'OPEN', 'LAST']
             )
-            logging.info(f"Received data: type={type(data)}, shape={data.shape if hasattr(data, 'shape') else 'N/A'}")
-            if hasattr(data, 'columns'):
-                logging.info(f"Columns: {data.columns.tolist()}")
+            logging.info(f"Получены данные: тип={type(data)}, колонки={data.columns.tolist() if hasattr(data, 'columns') else 'нет'}")
             return data
         except Exception as e:
-            logging.error(f"Error in get_all_shares: {e}")
+            logging.error(f"Ошибка get_all_shares: {e}")
             return pd.DataFrame()
 
 async def get_moex_index():
@@ -61,40 +59,69 @@ async def get_moex_index():
                     last_idx = columns.index('LAST')
                     return float(data_rows[0][last_idx])
         except Exception as e:
-            logging.error(f"Error getting index: {e}")
+            logging.error(f"Ошибка получения индекса: {e}")
         return None
 
 def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N):
     if data.empty:
-        logging.warning("Empty DataFrame in get_top_movers")
         return pd.DataFrame(), pd.DataFrame()
-    
     required = ['OPEN', 'LAST', 'SECID']
     missing = [col for col in required if col not in data.columns]
     if missing:
-        logging.error(f"Missing columns: {missing}")
+        logging.error(f"Отсутствуют колонки: {missing}")
         return pd.DataFrame(), pd.DataFrame()
-    
-    # Очистка
     data = data.dropna(subset=['OPEN', 'LAST'])
     data['OPEN'] = pd.to_numeric(data['OPEN'], errors='coerce')
     data['LAST'] = pd.to_numeric(data['LAST'], errors='coerce')
     data = data.dropna(subset=['OPEN', 'LAST'])
     data = data[data['OPEN'] != 0]
-    
     if data.empty:
-        logging.warning("No valid rows after cleaning")
         return pd.DataFrame(), pd.DataFrame()
-    
     data['change_percent'] = ((data['LAST'] - data['OPEN']) / data['OPEN']) * 100
     gainers = data.nlargest(top_n, 'change_percent')
     losers = data.nsmallest(top_n, 'change_percent')
     return gainers, losers
 
 def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, update_time: str) -> str:
-    # ... (оставляем без изменений, как было ранее) ...
-    # Убедитесь, что у вас есть эта функция из предыдущего кода.
-    # Я не буду дублировать её для краткости, но она должна быть.
+    # Добавляем колонку с названием, если её нет
+    if 'SHORTNAME' not in gainers.columns:
+        gainers['SHORTNAME'] = gainers['SECID']
+    if 'SHORTNAME' not in losers.columns:
+        losers['SHORTNAME'] = losers['SECID']
+
+    gainers_rows = []
+    for _, row in gainers.iterrows():
+        gainers_rows.append([
+            row['SECID'],
+            row['SHORTNAME'],
+            f"{row['LAST']:.2f}" if isinstance(row['LAST'], (int, float)) else str(row['LAST']),
+            f"+{row['change_percent']:.2f}%"
+        ])
+
+    losers_rows = []
+    for _, row in losers.iterrows():
+        losers_rows.append([
+            row['SECID'],
+            row['SHORTNAME'],
+            f"{row['LAST']:.2f}" if isinstance(row['LAST'], (int, float)) else str(row['LAST']),
+            f"{row['change_percent']:.2f}%"
+        ])
+
+    headers = ["Тикер", "Название", "Цена", "Изменение"]
+
+    table_gainers = tabulate(gainers_rows, headers=headers, tablefmt="simple", numalign="right", stralign="left")
+    table_losers = tabulate(losers_rows, headers=headers, tablefmt="simple", numalign="right", stralign="left")
+
+    if index_value is not None:
+        header = f"📊 **IMOEX Индекс МосБиржи** {index_value:.2f}\n"
+    else:
+        header = "📊 **Индекс МосБиржи** временно недоступен\n"
+    header += f"🕒 Обновлено: {update_time}\n\n"
+
+    text = header
+    text += "📈 **Лидеры роста**\n```\n" + table_gainers + "\n```\n"
+    text += "📉 **Лидеры падения**\n```\n" + table_losers + "\n```"
+    return text
 
 # ---------- ОБРАБОТЧИКИ КОМАНД ----------
 @dp.message(Command("start"))
@@ -118,7 +145,7 @@ async def cmd_top(message: types.Message):
         text = format_message(gainers, losers, index_val, update_time)
         await message.reply(text, parse_mode="Markdown")
     except Exception as e:
-        logging.error(f"Error in cmd_top: {e}")
+        logging.error(f"Ошибка в /top: {e}")
         await message.reply(f"❌ Ошибка: {e}")
 
 # ---------- FASTAPI ПРИЛОЖЕНИЕ ----------
@@ -126,7 +153,7 @@ async def cmd_top(message: types.Message):
 async def lifespan(app: FastAPI):
     webhook_url = f"{BASE_URL}/webhook/{API_TOKEN}"
     await bot.set_webhook(webhook_url)
-    logging.info(f"Webhook set to {webhook_url}")
+    logging.info(f"Webhook установлен на {webhook_url}")
     yield
     await bot.delete_webhook()
 
