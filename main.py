@@ -171,9 +171,12 @@ async def index():
 @app.api_route(f"/webhook/{API_TOKEN}", methods=["GET", "POST"])
 async def webhook(request: Request):
     if request.method == "GET":
+        logging.info("GET request to webhook")
         return Response(status_code=200, content="Webhook is ready")
     # POST
+    logging.info("POST request to webhook received")
     json_data = await request.json()
+    logging.info(f"Update data: {json_data}")
     update = Update(**json_data)
     await dp.feed_update(bot, update)
     return Response(status_code=200)
