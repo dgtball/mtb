@@ -13,8 +13,8 @@ import aiomoex
 from tabulate import tabulate
 
 # ---------- КОНФИГУРАЦИЯ ----------
-API_TOKEN = os.getenv("6231234093:AAFqG9gpCNrsr2RLoi2lNrMtvSg1pnEIt3Y")  # Токен берём из переменных окружения
-BASE_URL = os.getenv("https://mtb-0rk3.onrender.com")    # Например, https://your-service.onrender.com
+API_TOKEN = os.getenv("BOT_TOKEN")  # Токен берём из переменных окружения
+BASE_URL = os.getenv("BASE_URL")    # Например, https://your-service.onrender.com
 TOP_N = 10
 
 if not API_TOKEN or not BASE_URL:
