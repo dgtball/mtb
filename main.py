@@ -14,7 +14,7 @@ from tabulate import tabulate
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
-BASE_URL = os.getenv("RENDER_EXTERNAL_URL")
+BASE_URL = os.getenv("RENDER_EXTERNAL_URL")  # автоматический URL от Render
 
 if not API_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
@@ -152,7 +152,8 @@ async def cmd_top(message: types.Message):
 # ---------- FASTAPI ПРИЛОЖЕНИЕ ----------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    webhook_url = f"{BASE_URL}/webhook/{API_TOKEN}"
+    # Устанавливаем вебхук без токена в пути
+    webhook_url = f"{BASE_URL}/webhook"
     try:
         await bot.set_webhook(webhook_url)
         logging.info(f"✅ Webhook установлен на {webhook_url}")
@@ -167,16 +168,28 @@ app = FastAPI(lifespan=lifespan)
 async def index():
     return {"status": "Bot is running!"}
 
-# Используем api_route, чтобы разрешить и GET, и POST
-@app.api_route(f"/webhook/{API_TOKEN}", methods=["GET", "POST"])
+# Эндпоинт для ручной установки вебхука (по желанию)
+@app.get("/set_webhook")
+async def set_webhook():
+    webhook_url = f"{BASE_URL}/webhook"
+    try:
+        await bot.set_webhook(webhook_url)
+        return {"status": "ok", "url": webhook_url}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+# Вебхук теперь без токена в пути
+@app.api_route("/webhook", methods=["GET", "POST"])
 async def webhook(request: Request):
+    logging.info(f"Webhook вызван с методом {request.method}")
     if request.method == "GET":
-        logging.info("GET request to webhook")
         return Response(status_code=200, content="Webhook is ready")
-    # POST
-    logging.info("POST request to webhook received")
-    json_data = await request.json()
-    logging.info(f"Update data: {json_data}")
-    update = Update(**json_data)
-    await dp.feed_update(bot, update)
-    return Response(status_code=200)
+    try:
+        json_data = await request.json()
+        logging.info(f"Получено обновление: {json_data}")
+        update = Update(**json_data)
+        await dp.feed_update(bot, update)
+        return Response(status_code=200)
+    except Exception as e:
+        logging.error(f"Ошибка в вебхуке: {e}", exc_info=True)
+        return Response(status_code=500, content=str(e))
