@@ -14,7 +14,7 @@ from tabulate import tabulate
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
-BASE_URL = os.getenv("RENDER_EXTERNAL_URL")   # автоматический URL от Render
+BASE_URL = os.getenv("RENDER_EXTERNAL_URL")
 
 if not API_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
@@ -33,18 +33,20 @@ dp = Dispatcher()
 # ---------- ФУНКЦИИ ДЛЯ РАБОТЫ С MOEX ----------
 async def get_all_shares():
     async with aiohttp.ClientSession() as session:
+        url = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off"
         try:
-            data = await aiomoex.get_board_securities(
-                session,
-                board='TQBR',
-                engine='stock',
-                market='shares',
-                columns=['SECID', 'SHORTNAME', 'OPEN', 'LAST']
-            )
-            logging.info(f"Получены данные: тип={type(data)}, колонки={data.columns.tolist() if hasattr(data, 'columns') else 'нет'}")
-            return data
+            async with session.get(url) as resp:
+                json_data = await resp.json()
+                if 'securities' not in json_data:
+                    logging.error("No 'securities' in response")
+                    return pd.DataFrame()
+                columns = json_data['securities']['columns']
+                data_rows = json_data['securities']['data']
+                df = pd.DataFrame(data_rows, columns=columns)
+                logging.info(f"Загружено {len(df)} строк, колонки: {df.columns.tolist()}")
+                return df
         except Exception as e:
-            logging.error(f"Ошибка get_all_shares: {e}")
+            logging.error(f"Ошибка загрузки: {e}")
             return pd.DataFrame()
 
 async def get_moex_index():
@@ -83,7 +85,6 @@ def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N):
     return gainers, losers
 
 def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, update_time: str) -> str:
-    # Добавляем колонку с названием, если её нет
     if 'SHORTNAME' not in gainers.columns:
         gainers['SHORTNAME'] = gainers['SECID']
     if 'SHORTNAME' not in losers.columns:
@@ -145,15 +146,18 @@ async def cmd_top(message: types.Message):
         text = format_message(gainers, losers, index_val, update_time)
         await message.reply(text, parse_mode="Markdown")
     except Exception as e:
-        logging.error(f"Ошибка в /top: {e}")
+        logging.error(f"Ошибка в /top: {e}", exc_info=True)
         await message.reply(f"❌ Ошибка: {e}")
 
 # ---------- FASTAPI ПРИЛОЖЕНИЕ ----------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     webhook_url = f"{BASE_URL}/webhook/{API_TOKEN}"
-    await bot.set_webhook(webhook_url)
-    logging.info(f"Webhook установлен на {webhook_url}")
+    try:
+        await bot.set_webhook(webhook_url)
+        logging.info(f"✅ Webhook установлен на {webhook_url}")
+    except Exception as e:
+        logging.error(f"❌ Ошибка установки вебхука: {e}")
     yield
     await bot.delete_webhook()
 
@@ -163,8 +167,12 @@ app = FastAPI(lifespan=lifespan)
 async def index():
     return {"status": "Bot is running!"}
 
-@app.post(f"/webhook/{API_TOKEN}")
+@app.route(f"/webhook/{API_TOKEN}", methods=["POST", "GET"])
 async def webhook(request: Request):
+    if request.method == "GET":
+        # Просто подтверждаем доступность
+        return Response(status_code=200, content="Webhook is ready")
+    # POST — обрабатываем обновления
     json_data = await request.json()
     update = Update(**json_data)
     await dp.feed_update(bot, update)
