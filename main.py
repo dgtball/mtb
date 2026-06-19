@@ -167,12 +167,12 @@ app = FastAPI(lifespan=lifespan)
 async def index():
     return {"status": "Bot is running!"}
 
-@app.route(f"/webhook/{API_TOKEN}", methods=["POST", "GET"])
+# Используем api_route, чтобы разрешить и GET, и POST
+@app.api_route(f"/webhook/{API_TOKEN}", methods=["GET", "POST"])
 async def webhook(request: Request):
     if request.method == "GET":
-        # Просто подтверждаем доступность
         return Response(status_code=200, content="Webhook is ready")
-    # POST — обрабатываем обновления
+    # POST
     json_data = await request.json()
     update = Update(**json_data)
     await dp.feed_update(bot, update)
