@@ -1,12 +1,9 @@
 import os
 import logging
 import time
-from contextlib import asynccontextmanager
-
-from fastapi import FastAPI, Request, Response
+import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import Update
 import aiohttp
 import pandas as pd
 import aiomoex
@@ -14,12 +11,8 @@ from tabulate import tabulate
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
-BASE_URL = os.getenv("RENDER_EXTERNAL_URL")
-
 if not API_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
-if not BASE_URL:
-    raise ValueError("RENDER_EXTERNAL_URL не задан")
 
 TOP_N = 10
 
@@ -38,12 +31,10 @@ async def get_all_shares():
             async with session.get(url) as resp:
                 json_data = await resp.json()
                 if 'marketdata' not in json_data:
-                    logging.error("Нет данных marketdata в ответе")
                     return pd.DataFrame()
                 columns = json_data['marketdata']['columns']
                 data_rows = json_data['marketdata']['data']
                 df = pd.DataFrame(data_rows, columns=columns)
-                logging.info(f"Загружено {len(df)} строк, колонки: {df.columns.tolist()}")
                 return df
         except Exception as e:
             logging.error(f"Ошибка загрузки: {e}")
@@ -60,44 +51,30 @@ async def get_moex_index():
                 if data_rows:
                     last_idx = columns.index('LAST')
                     return float(data_rows[0][last_idx])
-        except Exception as e:
-            logging.error(f"Ошибка получения индекса: {e}")
+        except Exception:
+            return None
         return None
 
 def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N):
     if data.empty:
         return pd.DataFrame(), pd.DataFrame()
-    
-    # Проверяем наличие колонок
     if 'CHANGEPERCENT' not in data.columns:
-        # Если нет CHANGEPERCENT, пробуем вычислить из OPEN и LAST
         if 'OPEN' in data.columns and 'LAST' in data.columns:
             data['CHANGEPERCENT'] = ((data['LAST'] - data['OPEN']) / data['OPEN']) * 100
         else:
-            logging.error("Нет колонок для расчёта изменения")
             return pd.DataFrame(), pd.DataFrame()
-    
     required = ['SECID', 'CHANGEPERCENT', 'LAST']
-    missing = [col for col in required if col not in data.columns]
-    if missing:
-        logging.error(f"Отсутствуют колонки: {missing}")
-        return pd.DataFrame(), pd.DataFrame()
-    
-    # Очистка
     data = data.dropna(subset=required)
     data['CHANGEPERCENT'] = pd.to_numeric(data['CHANGEPERCENT'], errors='coerce')
     data['LAST'] = pd.to_numeric(data['LAST'], errors='coerce')
     data = data.dropna(subset=['CHANGEPERCENT', 'LAST'])
-    
     if data.empty:
         return pd.DataFrame(), pd.DataFrame()
-    
     gainers = data.nlargest(top_n, 'CHANGEPERCENT')
     losers = data.nsmallest(top_n, 'CHANGEPERCENT')
     return gainers, losers
 
 def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, update_time: str) -> str:
-    # Добавляем название, если нет
     if 'SHORTNAME' not in gainers.columns:
         gainers['SHORTNAME'] = gainers['SECID']
     if 'SHORTNAME' not in losers.columns:
@@ -122,7 +99,6 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
         ])
 
     headers = ["Тикер", "Название", "Цена", "Изменение"]
-
     table_gainers = tabulate(gainers_rows, headers=headers, tablefmt="simple", numalign="right", stralign="left")
     table_losers = tabulate(losers_rows, headers=headers, tablefmt="simple", numalign="right", stralign="left")
 
@@ -131,7 +107,6 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
     else:
         header = "📊 **Индекс МосБиржи** временно недоступен\n"
     header += f"🕒 Обновлено: {update_time}\n\n"
-
     text = header
     text += "📈 **Лидеры роста**\n```\n" + table_gainers + "\n```\n"
     text += "📉 **Лидеры падения**\n```\n" + table_losers + "\n```"
@@ -162,47 +137,9 @@ async def cmd_top(message: types.Message):
         logging.error(f"Ошибка в /top: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- FASTAPI ПРИЛОЖЕНИЕ ----------
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    webhook_url = f"{BASE_URL}/webhook"
-    try:
-        # Сначала удалим старый вебхук (на всякий случай)
-        await bot.delete_webhook()
-        await bot.set_webhook(webhook_url)
-        logging.info(f"✅ Webhook установлен на {webhook_url}")
-    except Exception as e:
-        logging.error(f"❌ Ошибка установки вебхука: {e}")
-    yield
-    await bot.delete_webhook()
+# ---------- ЗАПУСК ПОЛЛИНГА ----------
+async def main():
+    await dp.start_polling(bot)
 
-app = FastAPI(lifespan=lifespan)
-
-@app.get("/")
-async def index():
-    return {"status": "Bot is running!"}
-
-@app.get("/set_webhook")
-async def set_webhook():
-    webhook_url = f"{BASE_URL}/webhook"
-    try:
-        await bot.delete_webhook()
-        await bot.set_webhook(webhook_url)
-        return {"status": "ok", "url": webhook_url}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-@app.api_route("/webhook", methods=["GET", "POST"])
-async def webhook(request: Request):
-    logging.info(f"Webhook вызван с методом {request.method}")
-    if request.method == "GET":
-        return Response(status_code=200, content="Webhook is ready")
-    try:
-        json_data = await request.json()
-        logging.info(f"Получено обновление: {json_data}")
-        update = Update(**json_data)
-        await dp.feed_update(bot, update)
-        return Response(status_code=200)
-    except Exception as e:
-        logging.error(f"Ошибка в вебхуке: {e}", exc_info=True)
-        return Response(status_code=500, content=str(e))
+if __name__ == "__main__":
+    asyncio.run(main())
