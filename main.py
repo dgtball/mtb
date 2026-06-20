@@ -292,7 +292,7 @@ async def cmd_top(message: types.Message):
 
 @dp.message(Command("top_image"))
 async def cmd_top_image(message: types.Message):
-    loading_msg = await message.answer("⏳ Генерирую картинку...")
+    loading_msg = await message.answer("⏳ Готовлю картинку...")
     try:
         shares_df = await get_all_shares()
         gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
