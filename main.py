@@ -171,6 +171,21 @@ def calc_period_change(df: pd.DataFrame) -> pd.DataFrame:
     combined['CHANGE_PCT'] = ((combined['CLOSE'] - combined['OPEN']) / combined['OPEN']) * 100
     return combined.reset_index()
 
+async def get_historical_changes(tickers: list, from_date: str, till_date: str) -> dict:
+    """
+    Возвращает словарь {ticker: change_percent} за период.
+    """
+    df = await get_historical_shares(from_date, till_date)
+    if df.empty:
+        return {}
+    # Фильтруем только нужные тикеры
+    df = df[df['SECID'].isin(tickers)]
+    if df.empty:
+        return {}
+    changes = calc_period_change(df)
+    # Превращаем в словарь
+    return dict(zip(changes['SECID'], changes['CHANGE_PCT']))
+
 # ---------- УНИВЕРСАЛЬНАЯ ФУНКЦИЯ ПОСТРОЕНИЯ ТАБЛИЦ ----------
 def build_table_universal(df, title, headers, data_columns):
     if df.empty:
@@ -334,6 +349,8 @@ async def cmd_favorites(message: types.Message):
     if not favs:
         await message.answer("У вас пока нет избранных акций. Добавьте через /add TICKER")
         return
+
+    # Получаем текущие данные
     shares_df = await get_all_shares()
     if shares_df.empty:
         if is_weekend():
@@ -341,26 +358,59 @@ async def cmd_favorites(message: types.Message):
         else:
             await message.answer("📊 Биржа закрыта. Попробуйте позже.")
         return
-    fav_df = shares_df[shares_df['SECID'].isin(favs)]
+
+    # Фильтруем по избранным
+    fav_df = shares_df[shares_df['SECID'].isin(favs)].copy()
     if fav_df.empty:
         await message.answer("По вашему списку нет актуальных данных.")
         return
-    if 'CHANGEPERCENT' in fav_df.columns:
-        fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
-    else:
-        if 'OPEN' in fav_df.columns and 'LAST' in fav_df.columns:
-            fav_df['CHANGEPERCENT'] = ((fav_df['LAST'] - fav_df['OPEN']) / fav_df['OPEN']) * 100
-            fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
-        else:
-            await message.answer("Недостаточно данных для сортировки.")
-            return
-    text = "⭐ Ваши избранные акции:\n\n"
+
+    # Получаем исторические изменения за неделю и месяц
+    now = get_moscow_time()
+    # Неделя: с понедельника
+    monday = now - datetime.timedelta(days=now.weekday())
+    week_from = monday.strftime("%Y-%m-%d")
+    week_till = now.strftime("%Y-%m-%d")
+    # Месяц: с 1-го числа
+    month_from = now.replace(day=1).strftime("%Y-%m-%d")
+    month_till = now.strftime("%Y-%m-%d")
+
+    week_changes = await get_historical_changes(favs, week_from, week_till)
+    month_changes = await get_historical_changes(favs, month_from, month_till)
+
+    # Добавляем колонки в fav_df
+    fav_df['change_week'] = fav_df['SECID'].map(week_changes)
+    fav_df['change_month'] = fav_df['SECID'].map(month_changes)
+
+    # Заполняем пропуски (если данных нет)
+    fav_df['change_week'] = fav_df['change_week'].fillna(float('nan'))
+    fav_df['change_month'] = fav_df['change_month'].fillna(float('nan'))
+
+    # Сортируем по дневному изменению (по убыванию)
+    fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
+
+    # Формируем таблицу
+    # Используем build_table_universal, но передаём свои заголовки и колонки
+    table_data = []
     for _, row in fav_df.iterrows():
         name = row.get('SHORTNAME', row['SECID'])
-        price = row['LAST']
-        change = row['CHANGEPERCENT']
-        text += f"• {row['SECID']} ({name}) — {price:.2f}  {change:+.2f}%\n"
-    await message.answer(text)
+        if len(name) > 25:
+            name = name[:22] + "…"
+        price = f"{row['LAST']:.2f}" if isinstance(row['LAST'], (int, float)) else str(row['LAST'])
+        day_change = f"{row['CHANGEPERCENT']:+.2f}%" if pd.notna(row['CHANGEPERCENT']) else "—"
+        week_change = f"{row['change_week']:+.2f}%" if pd.notna(row['change_week']) else "—"
+        month_change = f"{row['change_month']:+.2f}%" if pd.notna(row['change_month']) else "—"
+        table_data.append([name, price, day_change, week_change, month_change])
+
+    if not table_data:
+        await message.answer("Нет данных для отображения.")
+        return
+
+    headers = ["Название", "Цена", "День", "Неделя", "Месяц"]
+    # Используем tabulate напрямую, т.к. нам не нужен SECID в таблице
+    table = tabulate(table_data, headers=headers, tablefmt="simple", numalign="right", stralign="left")
+    text = f"⭐ <b>Избранные акции</b>\n<pre>{table}</pre>"
+    await message.answer(text, parse_mode="HTML")
 
 @dp.callback_query(lambda c: c.data == "refresh")
 async def process_refresh(callback: CallbackQuery):
