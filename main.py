@@ -365,24 +365,15 @@ async def process_refresh(callback: CallbackQuery):
     except Exception as e:
         logging.error(f"Ошибка обновления: {e}")
         await callback.message.answer(f"❌ Ошибка обновления: {e}")
-
 # ---------- ЗАПУСК ПОЛЛИНГА ----------
 async def main():
     init_db()
-    # Многократная попытка сбросить вебхук
-    for attempt in range(3):
-        try:
-            await bot.delete_webhook(drop_pending_updates=True)
-            logging.info(f"Webhook удалён, попытка {attempt+1}")
-            break
-        except Exception as e:
-            logging.warning(f"Не удалось удалить вебхук (попытка {attempt+1}): {e}")
-            await asyncio.sleep(1)
-    await asyncio.sleep(2)
-    
-    # Закрываем старую сессию и создаём новую
-    await bot.session.close()
-    bot.session = aiohttp.ClientSession()
+    # Принудительно удаляем вебхук (на случай, если он остался с предыдущих запусков)
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        logging.info("Webhook удалён")
+    except Exception as e:
+        logging.warning(f"Не удалось удалить вебхук: {e}")
     
     logging.info("Запускаем polling...")
     await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
