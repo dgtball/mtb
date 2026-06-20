@@ -220,22 +220,24 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
     header += f"🕒 Обновлено: {update_time}\n\n"
 
     def build_table(df, title):
-        if df.empty:
-            return ""
-        table_data = []
-        for _, row in df.iterrows():
-            ticker = row['SECID']
-            name = row.get('SECNAME', ticker)
-            if len(name) > 25:
-                name = name[:22] + "…"
-            price = f"{row['LAST']:.2f}" if isinstance(row['LAST'], (int, float)) else str(row['LAST'])
-            change = row['CHANGEPERCENT']
-            sign = "▲" if change > 0 else "▼"
-            change_str = f"{sign} {change:.2f}%"
-            table_data.append([ticker, name, price, change_str])
-        headers = ["Тикер", "Название", "Цена", "Изменение"]
-        table = tabulate(table_data, headers=headers, tablefmt="simple", numalign="right", stralign="left")
-        return f"{title}\n```\n{table}\n```\n"
+    if df.empty:
+        return ""
+    table_data = []
+    for _, row in df.iterrows():
+        ticker = row['SECID']
+        name = row.get('SECNAME', ticker)
+        if len(name) > 25:
+            name = name[:22] + "…"
+        price = f"{row['LAST']:.2f}" if isinstance(row['LAST'], (int, float)) else str(row['LAST'])
+        change = row['CHANGEPERCENT']
+        sign = "▲" if change > 0 else "▼"
+        change_str = f"{sign} {change:.2f}%"
+        table_data.append([ticker, name, price, change_str])
+    headers = ["Тикер", "Название", "Цена", "Изменение"]
+    # Используем tablefmt="grid" для аккуратных рамок
+    table = tabulate(table_data, headers=headers, tablefmt="grid", numalign="right", stralign="left")
+    # Возвращаем без обрамления в ```
+    return f"{title}\n{table}\n"
 
     text = header
     text += build_table(gainers, "📈 Лидеры роста")
@@ -310,7 +312,7 @@ async def cmd_top(message: types.Message):
                 [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
             ]
         )
-        await message.answer(text, reply_markup=keyboard)
+        await message.answer(text, reply_markup=keyboard)  # parse_mode не указываем
         await loading_msg.delete()
     except Exception as e:
         await loading_msg.delete()
