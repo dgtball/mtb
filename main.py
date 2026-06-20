@@ -390,10 +390,57 @@ async def top_month_button(message: types.Message):
 @dp.message(lambda msg: msg.text == "⭐ Избранные")
 async def favorites_button(message: types.Message):
     try:
-        fav_df, error = await get_favorites_data(message.chat.id)
-        if error:
-            await message.answer(error)
+        logging.info(f"Пользователь {message.chat.id} запросил избранное")
+        favs = get_favorites(message.chat.id)
+        logging.info(f"Избранное: {favs}")
+        if not favs:
+            await message.answer("У вас пока нет избранных акций. Добавьте через /add TICKER")
             return
+
+        shares_df = await get_all_shares()
+        if shares_df.empty:
+            if is_weekend():
+                await message.answer("📊 Сессия выходного дня. Избранное обновится в рабочие дни.")
+            else:
+                await message.answer("📊 Биржа закрыта. Попробуйте позже.")
+            return
+
+        fav_df = shares_df[shares_df['SECID'].isin(favs)].copy()
+        if fav_df.empty:
+            await message.answer("По вашему списку нет актуальных данных.")
+            return
+
+        logging.info(f"fav_df получен, строк: {len(fav_df)}")
+
+        now = get_moscow_time()
+        monday = now - datetime.timedelta(days=now.weekday())
+        week_from = monday.strftime("%Y-%m-%d")
+        week_till = now.strftime("%Y-%m-%d")
+        month_from = now.replace(day=1).strftime("%Y-%m-%d")
+        month_till = now.strftime("%Y-%m-%d")
+
+        week_df = await get_historical_shares(week_from, week_till)
+        month_df = await get_historical_shares(month_from, month_till)
+
+        def get_change(df, ticker):
+            if df.empty:
+                return None
+            ticker_data = df[df['SECID'] == ticker]
+            if ticker_data.empty:
+                return None
+            changes = calc_period_change(ticker_data)
+            if changes.empty:
+                return None
+            return changes.iloc[0]['CHANGE_PCT']
+
+        fav_df['change_week'] = fav_df['SECID'].apply(lambda t: get_change(week_df, t))
+        fav_df['change_month'] = fav_df['SECID'].apply(lambda t: get_change(month_df, t))
+        fav_df['change_week'] = fav_df['change_week'].fillna(float('nan'))
+        fav_df['change_month'] = fav_df['change_month'].fillna(float('nan'))
+        fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
+
+        logging.info(f"Таблица fav_df готова, колонки: {fav_df.columns.tolist()}")
+
         table_data = []
         for _, row in fav_df.iterrows():
             name = row.get('SHORTNAME', row['SECID'])
@@ -404,17 +451,20 @@ async def favorites_button(message: types.Message):
             week_change = f"{row['change_week']:+.2f}%" if pd.notna(row['change_week']) else "—"
             month_change = f"{row['change_month']:+.2f}%" if pd.notna(row['change_month']) else "—"
             table_data.append([name, price, day_change, week_change, month_change])
+
         if not table_data:
             await message.answer("Нет данных для отображения.")
             return
+
         headers = ["Название", "Цена", "День", "Неделя", "Месяц"]
         header_line = "  ".join(f"<b>{h}</b>" for h in headers)
         table = tabulate(table_data, headers=[], tablefmt="simple", numalign="right", stralign="left")
         text = f"⭐ <b>Избранные акции</b>\n{header_line}\n<pre>{table}</pre>"
         await message.answer(text, parse_mode="HTML")
+        logging.info("Избранное успешно отправлено")
     except Exception as e:
         logging.error(f"❌ Ошибка в favorites: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка: {e}")
+        await message.answer(f"❌ Ошибка при загрузке избранного: {e}")
 
 @dp.message(lambda msg: msg.text == "➕ Добавить тикер")
 async def add_ticker_button(message: types.Message):
