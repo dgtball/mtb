@@ -186,32 +186,34 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
     if index_value is not None:
         header = f"📊 Индекс МосБиржи: {index_value:.2f}\n"
     else:
-        header = "📊 Сессия выходного дня\n" if is_weekend else "📊 Биржа закрыта\n"
+        if is_weekend:
+            header = "📊 Сессия выходного дня\n"
+        else:
+            header = "📊 Биржа закрыта\n"
     header += f"🕒 Обновлено: {update_time}\n\n"
 
     def build_table(df, title):
-    if df.empty:
-        return ""
-    table_data = []
-    for _, row in df.iterrows():
-        ticker = row['SECID']
-        name = row.get('SECNAME', ticker)
-        if len(name) > 25:
-            name = name[:22] + "…"
-        price = f"{row['LAST']:.2f}" if isinstance(row['LAST'], (int, float)) else str(row['LAST'])
-        change = row['CHANGEPERCENT']
-        sign = "▲" if change > 0 else "▼"
-        change_str = f"{sign} {change:.2f}%"
-        table_data.append([ticker, name, price, change_str])
-    headers = ["Тикер", "Название", "Цена", "Изменение"]
-    table = tabulate(table_data, headers=headers, tablefmt="pipe", numalign="right", stralign="left")
-    return f"<b>{title}</b>\n<pre>{table}</pre>\n"
+        if df.empty:
+            return ""
+        table_data = []
+        for _, row in df.iterrows():
+            ticker = row['SECID']
+            name = row.get('SECNAME', ticker)
+            if len(name) > 25:
+                name = name[:22] + "…"
+            price = f"{row['LAST']:.2f}" if isinstance(row['LAST'], (int, float)) else str(row['LAST'])
+            change = row['CHANGEPERCENT']
+            sign = "▲" if change > 0 else "▼"
+            change_str = f"{sign} {change:.2f}%"
+            table_data.append([ticker, name, price, change_str])
+        headers = ["Тикер", "Название", "Цена", "Изменение"]
+        table = tabulate(table_data, headers=headers, tablefmt="pipe", numalign="right", stralign="left")
+        return f"<b>{title}</b>\n<pre>{table}</pre>\n"
 
     text = header
     text += build_table(gainers, "📈 Лидеры роста")
     text += build_table(losers, "📉 Лидеры падения")
     return text
-
 # ---------- ГЕНЕРАЦИЯ КАРТИНКИ ----------
 def create_table_image(df: pd.DataFrame, title: str) -> BytesIO:
     if df.empty:
