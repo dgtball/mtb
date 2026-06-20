@@ -3,14 +3,17 @@ import logging
 import time
 import asyncio
 import sqlite3
-from io import BytesIO
+import datetime
 import re
+from io import BytesIO
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputFile
 import aiohttp
 import pandas as pd
+import matplotlib
+matplotlib.use('Agg')  # для работы на сервере без GUI
 import matplotlib.pyplot as plt
 from tabulate import tabulate
 
@@ -68,10 +71,15 @@ def get_favorites(chat_id: int) -> list:
     conn.close()
     return [row[0] for row in rows]
 
-def escape_markdown(text: str) -> str:
-    """Экранирует специальные символы для MarkdownV2."""
-    escape_chars = r'_*[]()~`>#+-=|{}.!'
-    return re.sub(r'([{}])'.format(re.escape(escape_chars)), r'\\\1', str(text))
+# ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
+def get_moscow_time():
+    """Возвращает текущее московское время как datetime."""
+    return datetime.datetime.now(datetime.timezone.utc).astimezone(datetime.timezone(datetime.timedelta(hours=3)))
+
+def is_weekend():
+    """Возвращает True, если сегодня суббота или воскресенье."""
+    now = get_moscow_time()
+    return now.weekday() in (5, 6)  # 5=суббота, 6=воскресенье
 
 # ---------- ФУНКЦИИ ДЛЯ РАБОТЫ С MOEX ----------
 async def get_all_shares():
@@ -158,19 +166,62 @@ def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool 
     losers = data.nsmallest(top_n, 'CHANGEPERCENT')
     return gainers, losers
 
+# ---------- ИСТОРИЧЕСКИЕ ДАННЫЕ ----------
+async def get_historical_shares(from_date: str, till_date: str):
+    async with aiohttp.ClientSession() as session:
+        url = f"https://iss.moex.com/iss/history/engines/stock/markets/shares/boards/TQBR/securities.json?from={from_date}&till={till_date}&iss.meta=off&iss.only=history"
+        try:
+            async with session.get(url) as resp:
+                json_data = await resp.json()
+                if 'history' not in json_data:
+                    return pd.DataFrame()
+                columns = json_data['history']['columns']
+                data_rows = json_data['history']['data']
+                df = pd.DataFrame(data_rows, columns=columns)
+                return df
+        except Exception:
+            return pd.DataFrame()
+
+def calc_period_change(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
+    # Сортируем по дате
+    df['TRADEDATE'] = pd.to_datetime(df['TRADEDATE'])
+    df = df.sort_values('TRADEDATE')
+    # Группируем по тикеру и берём первую и последнюю запись
+    first = df.groupby('SECID').first()[['OPEN']]
+    last = df.groupby('SECID').last()[['CLOSE']]
+    combined = first.join(last, how='inner')
+    combined['CHANGE_PCT'] = ((combined['CLOSE'] - combined['OPEN']) / combined['OPEN']) * 100
+    return combined.reset_index()
+
+def format_historical(gainers, losers, period_name, from_date, till_date):
+    text = f"📊 Топ за {period_name}\n"
+    text += f"📅 Период: {from_date} – {till_date}\n\n"
+    if not gainers.empty:
+        text += "📈 Рост:\n"
+        for _, row in gainers.iterrows():
+            text += f"• {row['SECID']}: {row['CHANGE_PCT']:.2f}%\n"
+    if not losers.empty:
+        text += "📉 Падение:\n"
+        for _, row in losers.iterrows():
+            text += f"• {row['SECID']}: {row['CHANGE_PCT']:.2f}%\n"
+    return text
+
 # ---------- ФОРМАТИРОВАНИЕ СООБЩЕНИЙ ----------
-def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, update_time: str) -> str:
-    # Шапка
+def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, update_time: str, is_weekend: bool = False) -> str:
     if index_value is not None:
         header = f"📊 Индекс МосБиржи: {index_value:.2f}\n"
     else:
-        header = "📊 Индекс МосБиржи: временно недоступен\n"
+        if is_weekend:
+            header = "📊 Сессия выходного дня\n"
+        else:
+            header = "📊 Биржа закрыта\n"
     header += f"🕒 Обновлено: {update_time}\n\n"
 
     def build_table(df, title):
         if df.empty:
             return ""
-        # Подготовка данных для tabulate
         table_data = []
         for _, row in df.iterrows():
             ticker = row['SECID']
@@ -182,29 +233,23 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
             sign = "▲" if change > 0 else "▼"
             change_str = f"{sign} {change:.2f}%"
             table_data.append([ticker, name, price, change_str])
-        
-        # Используем tabulate с форматом "grid" — аккуратные рамки
         headers = ["Тикер", "Название", "Цена", "Изменение"]
-        table = tabulate(table_data, headers=headers, tablefmt="grid", numalign="right", stralign="left")
+        table = tabulate(table_data, headers=headers, tablefmt="simple", numalign="right", stralign="left")
         return f"{title}\n```\n{table}\n```\n"
 
     text = header
     text += build_table(gainers, "📈 Лидеры роста")
     text += build_table(losers, "📉 Лидеры падения")
     return text
-# ---------- ГЕНЕРАЦИЯ КАРТИНКИ (Идея 3) ----------
+
+# ---------- ГЕНЕРАЦИЯ КАРТИНКИ ----------
 def create_table_image(df: pd.DataFrame, title: str) -> BytesIO:
-    """
-    Создаёт изображение таблицы с цветовой индикацией (зелёный/красный).
-    """
     if df.empty:
         return None
-    # Подготовка данных
     data = df[['SECID', 'SECNAME', 'LAST', 'CHANGEPERCENT']].head(TOP_N).copy()
     data['CHANGEPERCENT'] = data['CHANGEPERCENT'].apply(lambda x: f"{x:+.2f}%")
     data['LAST'] = data['LAST'].apply(lambda x: f"{x:.2f}")
     data.columns = ['Тикер', 'Название', 'Цена', 'Изменение']
-    # Цвета строк
     colors = []
     for val in df['CHANGEPERCENT'].head(TOP_N):
         if val > 0:
@@ -213,7 +258,6 @@ def create_table_image(df: pd.DataFrame, title: str) -> BytesIO:
             colors.append('lightcoral')
         else:
             colors.append('white')
-    
     fig, ax = plt.subplots(figsize=(8, len(data)*0.5 + 1))
     ax.axis('off')
     table = ax.table(cellText=data.values, colLabels=data.columns, loc='center', cellLoc='center', colColours=['#f0f0f0']*4)
@@ -236,7 +280,9 @@ async def cmd_start(message: types.Message):
     await message.answer(
         "👋 Привет! Я бот для отслеживания топ-акций Мосбиржи.\n\n"
         "📌 Доступные команды:\n"
-        "/top — показать лидеров роста и падения\n"
+        "/top — показать лидеров роста и падения (текущий день)\n"
+        "/week — топ за неделю\n"
+        "/month — топ за месяц\n"
         "/top_image — показать лидеров в виде картинки\n"
         "/add TICKER — добавить акцию в избранное\n"
         "/remove TICKER — удалить из избранного\n"
@@ -251,19 +297,20 @@ async def cmd_top(message: types.Message):
         gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
         if gainers.empty and losers.empty:
             await loading_msg.delete()
-            await message.answer("⚠️ Не удалось получить данные. Проверьте логи.")
+            if is_weekend():
+                await message.answer("📊 Сессия выходного дня. Данные обновятся в рабочие дни.")
+            else:
+                await message.answer("📊 Биржа закрыта. Попробуйте позже.")
             return
         index_val = await get_moex_index()
         update_time = time.strftime("%Y-%m-%d %H:%M:%S")
-        text = format_message(gainers, losers, index_val, update_time)
+        text = format_message(gainers, losers, index_val, update_time, is_weekend=is_weekend())
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
             ]
         )
-        # Отправляем основной ответ (без parse_mode, т.к. используем моноширинный блок)
         await message.answer(text, reply_markup=keyboard)
-        # Удаляем загрузочное сообщение
         await loading_msg.delete()
     except Exception as e:
         await loading_msg.delete()
@@ -278,7 +325,10 @@ async def cmd_top_image(message: types.Message):
         gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
         if gainers.empty and losers.empty:
             await loading_msg.delete()
-            await message.answer("Нет данных для отображения.")
+            if is_weekend():
+                await message.answer("📊 Сессия выходного дня. Данные обновятся в рабочие дни.")
+            else:
+                await message.answer("📊 Биржа закрыта. Попробуйте позже.")
             return
         img_gainers = create_table_image(gainers, "📈 Лидеры роста")
         if img_gainers:
@@ -290,6 +340,52 @@ async def cmd_top_image(message: types.Message):
     except Exception as e:
         await loading_msg.delete()
         logging.error(f"Ошибка в /top_image: {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка: {e}")
+
+@dp.message(Command("week"))
+async def cmd_week(message: types.Message):
+    loading_msg = await message.answer("⏳ Загружаю данные за неделю...")
+    try:
+        now = get_moscow_time()
+        from_date = (now - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
+        till_date = now.strftime("%Y-%m-%d")
+        df = await get_historical_shares(from_date, till_date)
+        if df.empty:
+            await loading_msg.delete()
+            await message.answer("Нет данных за неделю.")
+            return
+        changes = calc_period_change(df)
+        gainers = changes.nlargest(TOP_N, 'CHANGE_PCT')
+        losers = changes.nsmallest(TOP_N, 'CHANGE_PCT')
+        text = format_historical(gainers, losers, "неделю", from_date, till_date)
+        await message.answer(text)
+        await loading_msg.delete()
+    except Exception as e:
+        await loading_msg.delete()
+        logging.error(f"Ошибка в /week: {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка: {e}")
+
+@dp.message(Command("month"))
+async def cmd_month(message: types.Message):
+    loading_msg = await message.answer("⏳ Загружаю данные за месяц...")
+    try:
+        now = get_moscow_time()
+        from_date = (now - datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+        till_date = now.strftime("%Y-%m-%d")
+        df = await get_historical_shares(from_date, till_date)
+        if df.empty:
+            await loading_msg.delete()
+            await message.answer("Нет данных за месяц.")
+            return
+        changes = calc_period_change(df)
+        gainers = changes.nlargest(TOP_N, 'CHANGE_PCT')
+        losers = changes.nsmallest(TOP_N, 'CHANGE_PCT')
+        text = format_historical(gainers, losers, "месяц", from_date, till_date)
+        await message.answer(text)
+        await loading_msg.delete()
+    except Exception as e:
+        await loading_msg.delete()
+        logging.error(f"Ошибка в /month: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}")
 
 @dp.message(Command("add"))
@@ -324,7 +420,10 @@ async def cmd_favorites(message: types.Message):
         return
     shares_df = await get_all_shares()
     if shares_df.empty:
-        await message.answer("Не удалось получить данные с биржи.")
+        if is_weekend():
+            await message.answer("📊 Сессия выходного дня. Избранное обновится в рабочие дни.")
+        else:
+            await message.answer("📊 Биржа закрыта. Попробуйте позже.")
         return
     fav_df = shares_df[shares_df['SECID'].isin(favs)]
     if fav_df.empty:
@@ -333,7 +432,6 @@ async def cmd_favorites(message: types.Message):
     if 'CHANGEPERCENT' in fav_df.columns:
         fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
     else:
-        # пытаемся вычислить
         if 'OPEN' in fav_df.columns and 'LAST' in fav_df.columns:
             fav_df['CHANGEPERCENT'] = ((fav_df['LAST'] - fav_df['OPEN']) / fav_df['OPEN']) * 100
             fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
@@ -356,11 +454,14 @@ async def process_refresh(callback: CallbackQuery):
         shares_df = await get_all_shares()
         gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
         if gainers.empty and losers.empty:
-            await callback.message.answer("⚠️ Не удалось получить данные.")
+            if is_weekend():
+                await callback.message.answer("📊 Сессия выходного дня. Данные обновятся в рабочие дни.")
+            else:
+                await callback.message.answer("📊 Биржа закрыта. Попробуйте позже.")
             return
         index_val = await get_moex_index()
         update_time = time.strftime("%Y-%m-%d %H:%M:%S")
-        text = format_message(gainers, losers, index_val, update_time)
+        text = format_message(gainers, losers, index_val, update_time, is_weekend=is_weekend())
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
@@ -370,10 +471,11 @@ async def process_refresh(callback: CallbackQuery):
     except Exception as e:
         logging.error(f"Ошибка обновления: {e}")
         await callback.message.answer(f"❌ Ошибка обновления: {e}")
+
 # ---------- ЗАПУСК ПОЛЛИНГА ----------
 async def main():
     init_db()
-    # Принудительно удаляем вебхук (на случай, если он остался с предыдущих запусков)
+    # Принудительно удаляем вебхук
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         logging.info("Webhook удалён")
