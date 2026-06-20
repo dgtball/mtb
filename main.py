@@ -19,7 +19,7 @@ API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
 
-BASE_URL = os.getenv("RENDER_EXTERNAL_URL")  # автоматический URL от Render
+BASE_URL = os.getenv("RENDER_EXTERNAL_URL")
 if not BASE_URL:
     raise ValueError("RENDER_EXTERNAL_URL не задан")
 
@@ -170,21 +170,6 @@ def calc_period_change(df: pd.DataFrame) -> pd.DataFrame:
     combined = first.join(last, how='inner')
     combined['CHANGE_PCT'] = ((combined['CLOSE'] - combined['OPEN']) / combined['OPEN']) * 100
     return combined.reset_index()
-
-async def get_historical_changes(tickers: list, from_date: str, till_date: str) -> dict:
-    """
-    Возвращает словарь {ticker: change_percent} за период.
-    """
-    df = await get_historical_shares(from_date, till_date)
-    if df.empty:
-        return {}
-    # Фильтруем только нужные тикеры
-    df = df[df['SECID'].isin(tickers)]
-    if df.empty:
-        return {}
-    changes = calc_period_change(df)
-    # Превращаем в словарь
-    return dict(zip(changes['SECID'], changes['CHANGE_PCT']))
 
 # ---------- УНИВЕРСАЛЬНАЯ ФУНКЦИЯ ПОСТРОЕНИЯ ТАБЛИЦ ----------
 def build_table_universal(df, title, headers, data_columns):
@@ -349,8 +334,6 @@ async def cmd_favorites(message: types.Message):
     if not favs:
         await message.answer("У вас пока нет избранных акций. Добавьте через /add TICKER")
         return
-
-    # Получаем текущие данные
     shares_df = await get_all_shares()
     if shares_df.empty:
         if is_weekend():
@@ -358,63 +341,33 @@ async def cmd_favorites(message: types.Message):
         else:
             await message.answer("📊 Биржа закрыта. Попробуйте позже.")
         return
-
-    # Фильтруем по избранным
-    fav_df = shares_df[shares_df['SECID'].isin(favs)].copy()
+    fav_df = shares_df[shares_df['SECID'].isin(favs)]
     if fav_df.empty:
         await message.answer("По вашему списку нет актуальных данных.")
         return
-
-    # Получаем исторические изменения за неделю и месяц
-    now = get_moscow_time()
-    # Неделя: с понедельника
-    monday = now - datetime.timedelta(days=now.weekday())
-    week_from = monday.strftime("%Y-%m-%d")
-    week_till = now.strftime("%Y-%m-%d")
-    # Месяц: с 1-го числа
-    month_from = now.replace(day=1).strftime("%Y-%m-%d")
-    month_till = now.strftime("%Y-%m-%d")
-
-    week_changes = await get_historical_changes(favs, week_from, week_till)
-    month_changes = await get_historical_changes(favs, month_from, month_till)
-
-    # Добавляем колонки в fav_df
-    fav_df['change_week'] = fav_df['SECID'].map(week_changes)
-    fav_df['change_month'] = fav_df['SECID'].map(month_changes)
-
-    # Заполняем пропуски (если данных нет)
-    fav_df['change_week'] = fav_df['change_week'].fillna(float('nan'))
-    fav_df['change_month'] = fav_df['change_month'].fillna(float('nan'))
-
-    # Сортируем по дневному изменению (по убыванию)
-    fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
-
-    # Формируем таблицу
-    # Используем build_table_universal, но передаём свои заголовки и колонки
-    table_data = []
+    if 'CHANGEPERCENT' in fav_df.columns:
+        fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
+    else:
+        if 'OPEN' in fav_df.columns and 'LAST' in fav_df.columns:
+            fav_df['CHANGEPERCENT'] = ((fav_df['LAST'] - fav_df['OPEN']) / fav_df['OPEN']) * 100
+            fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
+        else:
+            await message.answer("Недостаточно данных для сортировки.")
+            return
+    text = "⭐ Ваши избранные акции:\n\n"
     for _, row in fav_df.iterrows():
         name = row.get('SHORTNAME', row['SECID'])
-        if len(name) > 25:
-            name = name[:22] + "…"
-        price = f"{row['LAST']:.2f}" if isinstance(row['LAST'], (int, float)) else str(row['LAST'])
-        day_change = f"{row['CHANGEPERCENT']:+.2f}%" if pd.notna(row['CHANGEPERCENT']) else "—"
-        week_change = f"{row['change_week']:+.2f}%" if pd.notna(row['change_week']) else "—"
-        month_change = f"{row['change_month']:+.2f}%" if pd.notna(row['change_month']) else "—"
-        table_data.append([name, price, day_change, week_change, month_change])
-
-    if not table_data:
-        await message.answer("Нет данных для отображения.")
-        return
-
-    headers = ["Название", "Цена", "День", "Неделя", "Месяц"]
-    # Используем tabulate напрямую, т.к. нам не нужен SECID в таблице
-    table = tabulate(table_data, headers=headers, tablefmt="simple", numalign="right", stralign="left")
-    text = f"⭐ <b>Избранные акции</b>\n<pre>{table}</pre>"
-    await message.answer(text, parse_mode="HTML")
+        price = row['LAST']
+        change = row['CHANGEPERCENT']
+        text += f"• {row['SECID']} ({name}) — {price:.2f}  {change:+.2f}%\n"
+    await message.answer(text)
 
 @dp.callback_query(lambda c: c.data == "refresh")
 async def process_refresh(callback: CallbackQuery):
-    await callback.answer("Обновляю данные...")
+    try:
+        await callback.answer("Обновляю...", cache_time=0)
+    except Exception:
+        pass
     try:
         shares_df = await get_all_shares()
         gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
@@ -457,7 +410,6 @@ async def lifespan(app: FastAPI):
             logging.error("❌ Не удалось установить вебхук после 5 попыток")
     except Exception as e:
         logging.error(f"❌ Критическая ошибка в lifespan: {e}", exc_info=True)
-        # Не выкидываем исключение, чтобы приложение не упало
     yield
     logging.info("Завершение lifespan...")
     await bot.delete_webhook()
@@ -467,24 +419,6 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/")
 async def index():
     return {"status": "Bot is running!"}
-
-@app.post("/webhook")
-async def webhook(request: Request):
-    try:
-        json_data = await request.json()
-        update = Update(**json_data)
-        await dp.feed_update(bot, update)
-        return Response(status_code=200)
-    except Exception as e:
-        # Логируем ошибку, чтобы увидеть её в логах Render
-        logging.error(f"Webhook error: {e}", exc_info=True)
-        # Возвращаем 200, чтобы Telegram не переотправлял одно и то же обновление
-        return Response(status_code=200)
-
-# Для теста вебхука (на случай GET-запросов от Telegram)
-@app.get("/webhook")
-async def webhook_get():
-    return {"status": "webhook is ready"}
 
 @app.get("/set_webhook")
 async def set_webhook():
@@ -496,7 +430,22 @@ async def set_webhook():
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-# ---------- ЗАПУСК ----------
+@app.post("/webhook")
+async def webhook(request: Request):
+    try:
+        json_data = await request.json()
+        update = Update(**json_data)
+        await dp.feed_update(bot, update)
+        return Response(status_code=200)
+    except Exception as e:
+        logging.error(f"Webhook error: {e}", exc_info=True)
+        return Response(status_code=200)
+
+@app.get("/webhook")
+async def webhook_get():
+    return {"status": "webhook is ready"}
+
+# ---------- ЗАПУСК (для локального теста, на Render не используется) ----------
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
