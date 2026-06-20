@@ -566,13 +566,32 @@ async def lifespan(app: FastAPI):
     logging.info("Запуск lifespan...")
     http_session = aiohttp.ClientSession()
     
-    # Проверка Supabase и установка вебхука...
-    # (ваш существующий код)
+    # Проверка Supabase
+    try:
+        supabase.table("favorites").select("ticker").limit(1).execute()
+        logging.info("✅ Подключение к Supabase установлено")
+    except Exception as e:
+        logging.error(f"❌ Ошибка подключения к Supabase: {e}")
+
+    # Установка вебхука
+    webhook_url = f"{BASE_URL}/webhook"
+    for attempt in range(5):
+        try:
+            await bot.delete_webhook(drop_pending_updates=True)
+            await bot.set_webhook(webhook_url)
+            logging.info(f"✅ Webhook установлен на {webhook_url} (попытка {attempt+1})")
+            break
+        except Exception as e:
+            logging.error(f"❌ Ошибка установки вебхука (попытка {attempt+1}): {e}")
+            await asyncio.sleep(2)
+    else:
+        logging.error("❌ Не удалось установить вебхук после 5 попыток")
     
-    # --- Добавьте это ---
+    # --- ГЛАВНОЕ ИЗМЕНЕНИЕ ---
+    # Создаём событие, которое будет ждать сигнала остановки
     stop_event = asyncio.Event()
     try:
-        yield
+        yield  # Здесь приложение запускается и работает
     finally:
         # Этот блок выполнится только при завершении приложения
         logging.info("Завершение lifespan...")
@@ -581,7 +600,7 @@ async def lifespan(app: FastAPI):
                 task.cancel()
         await bot.delete_webhook()
         await http_session.close()
-        stop_event.set()
+        stop_event.set()  # Сигнализируем, что можно завершаться
     
     # Бесконечное ожидание, пока приложение не будет остановлено извне
     await stop_event.wait()
