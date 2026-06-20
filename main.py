@@ -4,7 +4,6 @@ import time
 import asyncio
 import datetime
 from contextlib import asynccontextmanager
-
 from fastapi import FastAPI, Request, Response
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -13,6 +12,11 @@ import aiohttp
 import pandas as pd
 from tabulate import tabulate
 from supabase import create_client, Client
+import matplotlib.pyplot as plt
+from matplotlib.table import Table
+import io
+import matplotlib
+matplotlib.use('Agg')
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -279,7 +283,47 @@ async def get_favorites_data(chat_id: int):
     fav_df['change_month'] = fav_df['change_month'].fillna(float('nan'))
     fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
     return fav_df, None
+    
+def generate_favorites_image(fav_df) -> io.BytesIO:
+    """Создаёт изображение таблицы избранного."""
+    if fav_df.empty:
+        return None
+    # Подготовка данных
+    table_data = []
+    for _, row in fav_df.iterrows():
+        name = row.get('SHORTNAME', row['SECID'])
+        if len(name) > 20:
+            name = name[:17] + "…"
+        price = f"{row['LAST']:.2f}" if isinstance(row['LAST'], (int, float)) else str(row['LAST'])
+        day = f"{row['CHANGEPERCENT']:+.2f}%" if pd.notna(row['CHANGEPERCENT']) else "—"
+        week = f"{row['change_week']:+.2f}%" if pd.notna(row['change_week']) else "—"
+        month = f"{row['change_month']:+.2f}%" if pd.notna(row['change_month']) else "—"
+        table_data.append([name, price, day, week, month])
 
+    headers = ["Название", "Цена", "День", "Неделя", "Месяц"]
+    # Создаём фигуру с автоматической высотой
+    fig, ax = plt.subplots(figsize=(8, max(3, len(table_data) * 0.4 + 1)))
+    ax.axis('off')
+    table = ax.table(cellText=table_data, colLabels=headers, loc='center', cellLoc='center',
+                     colColours=['#f0f0f0']*5, bbox=[0, 0, 1, 1])
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1, 1.5)
+    # Цветовая индикация для изменения
+    for i, row in enumerate(table_data):
+        for j, cell in enumerate(row):
+            if j >= 2:  # колонки с изменениями
+                val = row[j]
+                if val != "—" and val.startswith('+'):
+                    table[(i+1, j)].set_facecolor('lightgreen')
+                elif val != "—" and val.startswith('-'):
+                    table[(i+1, j)].set_facecolor('lightcoral')
+    ax.set_title("⭐ Избранные акции", fontsize=14, fontweight='bold', pad=20)
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.2)
+    buf.seek(0)
+    plt.close()
+    return buf
 # ---------- УНИВЕРСАЛЬНАЯ ОТПРАВКА ТОПА ----------
 async def send_top(message: types.Message, period: str = 'day'):
     loading_msg = await message.answer("⏳ Загружаю данные...")
@@ -394,78 +438,24 @@ async def top_month_button(message: types.Message):
 @dp.message(lambda msg: msg.text == "⭐ Избранные")
 async def favorites_button(message: types.Message):
     try:
-        logging.info(f"Пользователь {message.chat.id} запросил избранное")
-        favs = get_favorites(message.chat.id)
-        logging.info(f"Избранное: {favs}")
-        if not favs:
-            await message.answer("У вас пока нет избранных акций. Добавьте через /add TICKER")
+        loading_msg = await message.answer("⏳ Загружаю избранное...")
+        fav_df, error = await get_favorites_data(message.chat.id)
+        if error:
+            await loading_msg.delete()
+            await message.answer(error)
             return
-        shares_df = await get_all_shares()
-        if shares_df.empty:
-            if is_weekend():
-                await message.answer("📊 Сессия выходного дня. Избранное обновится в рабочие дни.")
-            else:
-                await message.answer("📊 Биржа закрыта. Попробуйте позже.")
-            return
-        fav_df = shares_df[shares_df['SECID'].isin(favs)].copy()
-        if fav_df.empty:
-            await message.answer("По вашему списку нет актуальных данных.")
-            return
-        # Убедимся, что есть CHANGEPERCENT
-        if 'CHANGEPERCENT' not in fav_df.columns:
-            if 'OPEN' in fav_df.columns and 'LAST' in fav_df.columns:
-                fav_df['CHANGEPERCENT'] = ((fav_df['LAST'] - fav_df['OPEN']) / fav_df['OPEN']) * 100
-            else:
-                await message.answer("Недостаточно данных для расчёта изменений.")
-                return
-        if 'SHORTNAME' not in fav_df.columns:
-            fav_df['SHORTNAME'] = fav_df['SECID']
-        logging.info(f"fav_df получен, строк: {len(fav_df)}")
-        now = get_moscow_time()
-        monday = now - datetime.timedelta(days=now.weekday())
-        week_from = monday.strftime("%Y-%m-%d")
-        week_till = now.strftime("%Y-%m-%d")
-        month_from = now.replace(day=1).strftime("%Y-%m-%d")
-        month_till = now.strftime("%Y-%m-%d")
-        week_df = await get_historical_shares(week_from, week_till)
-        month_df = await get_historical_shares(month_from, month_till)
-
-        def get_change(df, ticker):
-            if df.empty:
-                return None
-            ticker_data = df[df['SECID'] == ticker]
-            if ticker_data.empty:
-                return None
-            changes = calc_period_change(ticker_data)
-            if changes.empty:
-                return None
-            return changes.iloc[0]['CHANGE_PCT']
-
-        fav_df['change_week'] = fav_df['SECID'].apply(lambda t: get_change(week_df, t))
-        fav_df['change_month'] = fav_df['SECID'].apply(lambda t: get_change(month_df, t))
-        fav_df['change_week'] = fav_df['change_week'].fillna(float('nan'))
-        fav_df['change_month'] = fav_df['change_month'].fillna(float('nan'))
-        fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
-        logging.info(f"Таблица fav_df готова, колонки: {fav_df.columns.tolist()}")
-        table_data = []
-        for _, row in fav_df.iterrows():
-            name = row.get('SHORTNAME', row['SECID'])
-            if len(name) > 25:
-                name = name[:22] + "…"
-            price = f"{row['LAST']:.2f}" if isinstance(row['LAST'], (int, float)) else str(row['LAST'])
-            day_change = f"{row['CHANGEPERCENT']:+.2f}%" if pd.notna(row['CHANGEPERCENT']) else "—"
-            week_change = f"{row['change_week']:+.2f}%" if pd.notna(row['change_week']) else "—"
-            month_change = f"{row['change_month']:+.2f}%" if pd.notna(row['change_month']) else "—"
-            table_data.append([name, price, day_change, week_change, month_change])
-        if not table_data:
+        # Генерируем картинку
+        img_buf = generate_favorites_image(fav_df)
+        if img_buf is None:
+            await loading_msg.delete()
             await message.answer("Нет данных для отображения.")
             return
-        headers = ["Название", "Цена", "День", "Неделя", "Месяц"]
-        table = tabulate(table_data, headers=headers, tablefmt="simple", numalign="right", stralign="left")
-        text = f"⭐ <b>Избранные акции</b>\n<pre>{table}</pre>"
-        await message.answer(text, parse_mode="HTML")
-        logging.info("Избранное успешно отправлено")
+        # Отправляем фото
+        from aiogram.types import InputFile
+        await message.answer_photo(photo=InputFile(img_buf, filename="favorites.png"))
+        await loading_msg.delete()
     except Exception as e:
+        await loading_msg.delete()
         logging.error(f"❌ Ошибка в favorites: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка при загрузке избранного: {e}")
 
