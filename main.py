@@ -367,14 +367,25 @@ async def process_refresh(callback: CallbackQuery):
         await callback.message.answer(f"❌ Ошибка обновления: {e}")
 
 # ---------- ЗАПУСК ПОЛЛИНГА ----------
-async def main():
-    # Инициализация БД
+sync def main():
     init_db()
-    # Удаляем вебхук (на случай, если он остался)
-    await bot.delete_webhook(drop_pending_updates=True)   # добавили drop_pending_updates
-    await asyncio.sleep(0.5)
-    # Запускаем polling
-    await dp.start_polling(bot)
+    # Многократная попытка сбросить вебхук и закрыть старые подключения
+    for attempt in range(3):
+        try:
+            await bot.delete_webhook(drop_pending_updates=True)
+            logging.info(f"Webhook удалён, попытка {attempt+1}")
+            break
+        except Exception as e:
+            logging.warning(f"Не удалось удалить вебхук (попытка {attempt+1}): {e}")
+            await asyncio.sleep(1)
+    await asyncio.sleep(2)  # даём Telegram время на обработку
+    
+    # Закрываем старую сессию и создаём новую
+    await bot.session.close()
+    bot.session = aiohttp.ClientSession()
+    
+    logging.info("Запускаем polling...")
+    await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
 
 if __name__ == "__main__":
     asyncio.run(main())
