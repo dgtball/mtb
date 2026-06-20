@@ -15,6 +15,8 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
     ReplyKeyboardMarkup, KeyboardButton, BufferedInputFile
 )
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiohttp import web
 import aiohttp
 import pandas as pd
 from tabulate import tabulate
@@ -558,8 +560,8 @@ async def process_refresh(callback: CallbackQuery):
         logging.error(f"❌ Ошибка обновления: {e}", exc_info=True)
         await callback.message.answer(f"❌ Ошибка обновления: {e}")
 
-# ---------- ЗАПУСК ВЕБХУКА ЧЕРЕЗ AIOGRAM ----------
-async def on_startup():
+# ---------- ЗАПУСК ВЕБХУКА ЧЕРЕЗ AIOHTTP (aiogram 3) ----------
+async def on_startup(app: web.Application):
     global http_session
     http_session = aiohttp.ClientSession()
     logging.info("✅ HTTP сессия создана")
@@ -576,7 +578,7 @@ async def on_startup():
     await bot.set_webhook(webhook_url, drop_pending_updates=True)
     logging.info(f"✅ Webhook установлен на {webhook_url}")
 
-async def on_shutdown():
+async def on_shutdown(app: web.Application):
     global http_session
     logging.info("Завершение работы...")
     for task in update_tasks.values():
@@ -586,20 +588,21 @@ async def on_shutdown():
     await http_session.close()
     logging.info("✅ Сессии закрыты")
 
-async def main():
-    await on_startup()
-    try:
-        # Запуск вебхука через aiogram
-        await dp.start_webhook(
-            webhook_path=WEBHOOK_PATH,
-            on_startup=on_startup,
-            on_shutdown=on_shutdown,
-            skip_updates=True,
-            host="0.0.0.0",
-            port=WEBHOOK_PORT,
-        )
-    finally:
-        await on_shutdown()
+def main():
+    # Создаём aiohttp приложение
+    app = web.Application()
+
+    # Регистрируем обработчик вебхука
+    handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
+    handler.register(app, path=WEBHOOK_PATH)
+
+    # Настраиваем startup/shutdown хуки
+    app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
+
+    # Запускаем сервер
+    web.run_app(app, host="0.0.0.0", port=WEBHOOK_PORT)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    logging.basicConfig(level=logging.INFO)
+    main()
