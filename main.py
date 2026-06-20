@@ -4,7 +4,6 @@ import time
 import asyncio
 import sqlite3
 import datetime
-import re
 from io import BytesIO
 
 from aiogram import Bot, Dispatcher, types
@@ -13,7 +12,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQu
 import aiohttp
 import pandas as pd
 import matplotlib
-matplotlib.use('Agg')  # для работы на сервере без GUI
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from tabulate import tabulate
 
@@ -32,7 +31,7 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
-# ---------- РАБОТА С БАЗОЙ ДАННЫХ (SQLite) ----------
+# ---------- РАБОТА С БАЗОЙ ДАННЫХ ----------
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -73,27 +72,20 @@ def get_favorites(chat_id: int) -> list:
 
 # ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
 def get_moscow_time():
-    """Возвращает текущее московское время как datetime."""
     return datetime.datetime.now(datetime.timezone.utc).astimezone(datetime.timezone(datetime.timedelta(hours=3)))
 
 def is_weekend():
-    """Возвращает True, если сегодня суббота или воскресенье."""
     now = get_moscow_time()
-    return now.weekday() in (5, 6)  # 5=суббота, 6=воскресенье
+    return now.weekday() in (5, 6)
 
-# ---------- ФУНКЦИИ ДЛЯ РАБОТЫ С MOEX ----------
+# ---------- ЗАПРОСЫ К MOEX ----------
 async def get_all_shares():
-    """
-    Получает рыночные данные (marketdata) и справочную информацию (securities),
-    включая уровень листинга (LISTLEVEL).
-    """
     async with aiohttp.ClientSession() as session:
         url = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=marketdata,securities"
         try:
             async with session.get(url) as resp:
                 json_data = await resp.json()
                 if 'marketdata' not in json_data or 'securities' not in json_data:
-                    logging.error("Нет данных от MOEX")
                     return pd.DataFrame()
                 md_columns = json_data['marketdata']['columns']
                 md_rows = json_data['marketdata']['data']
@@ -101,10 +93,8 @@ async def get_all_shares():
                 sec_columns = json_data['securities']['columns']
                 sec_rows = json_data['securities']['data']
                 sec_df = pd.DataFrame(sec_rows, columns=sec_columns)
-                # Берём только нужные колонки из securities
                 sec_df = sec_df[['SECID', 'SECNAME', 'LISTLEVEL']]
                 merged = pd.merge(market_df, sec_df, on='SECID', how='left')
-                logging.info(f"Загружено {len(merged)} строк")
                 return merged
         except Exception as e:
             logging.error(f"Ошибка загрузки: {e}")
@@ -126,42 +116,28 @@ async def get_moex_index():
         return None
 
 def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool = True):
-    """
-    Возвращает два DataFrame: лидеры роста и падения.
-    Если exclude_level3=True, исключает акции 3-го эшелона.
-    """
     if data.empty:
         return pd.DataFrame(), pd.DataFrame()
-    
-    # Исключаем 3-й эшелон
     if exclude_level3 and 'LISTLEVEL' in data.columns:
         data = data[data['LISTLEVEL'] < 3]
-        logging.info(f"После исключения 3-го эшелона осталось {len(data)} строк")
-    
-    # Проверка наличия колонок для расчёта
     if 'CHANGEPERCENT' not in data.columns:
         if 'OPEN' in data.columns and 'LAST' in data.columns:
             data['CHANGEPERCENT'] = ((data['LAST'] - data['OPEN']) / data['OPEN']) * 100
         else:
-            logging.error("Нет данных для расчёта изменения")
             return pd.DataFrame(), pd.DataFrame()
-    
     required = ['SECID', 'CHANGEPERCENT', 'LAST', 'SECNAME']
     for col in required:
         if col not in data.columns:
             if col == 'SECNAME':
-                data['SECNAME'] = data['SECID']  # fallback
+                data['SECNAME'] = data['SECID']
             else:
-                logging.error(f"Отсутствует колонка {col}")
                 return pd.DataFrame(), pd.DataFrame()
-    
     data = data.dropna(subset=['SECID', 'CHANGEPERCENT', 'LAST'])
     data['CHANGEPERCENT'] = pd.to_numeric(data['CHANGEPERCENT'], errors='coerce')
     data['LAST'] = pd.to_numeric(data['LAST'], errors='coerce')
     data = data.dropna(subset=['CHANGEPERCENT', 'LAST'])
     if data.empty:
         return pd.DataFrame(), pd.DataFrame()
-    
     gainers = data.nlargest(top_n, 'CHANGEPERCENT')
     losers = data.nsmallest(top_n, 'CHANGEPERCENT')
     return gainers, losers
@@ -185,10 +161,8 @@ async def get_historical_shares(from_date: str, till_date: str):
 def calc_period_change(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
-    # Сортируем по дате
     df['TRADEDATE'] = pd.to_datetime(df['TRADEDATE'])
     df = df.sort_values('TRADEDATE')
-    # Группируем по тикеру и берём первую и последнюю запись
     first = df.groupby('SECID').first()[['OPEN']]
     last = df.groupby('SECID').last()[['CLOSE']]
     combined = first.join(last, how='inner')
@@ -196,8 +170,7 @@ def calc_period_change(df: pd.DataFrame) -> pd.DataFrame:
     return combined.reset_index()
 
 def format_historical(gainers, losers, period_name, from_date, till_date):
-    text = f"📊 Топ за {period_name}\n"
-    text += f"📅 Период: {from_date} – {till_date}\n\n"
+    text = f"📊 Топ за {period_name}\n📅 Период: {from_date} – {till_date}\n\n"
     if not gainers.empty:
         text += "📈 Рост:\n"
         for _, row in gainers.iterrows():
@@ -208,7 +181,7 @@ def format_historical(gainers, losers, period_name, from_date, till_date):
             text += f"• {row['SECID']}: {row['CHANGE_PCT']:.2f}%\n"
     return text
 
-# ---------- ФОРМАТИРОВАНИЕ СООБЩЕНИЙ ----------
+# ---------- ФОРМАТИРОВАНИЕ ОСНОВНОЙ ТАБЛИЦЫ (без моноширинного блока) ----------
 def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, update_time: str, is_weekend: bool = False) -> str:
     if index_value is not None:
         header = f"📊 Индекс МосБиржи: {index_value:.2f}\n"
@@ -241,6 +214,7 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
     text += build_table(gainers, "📈 Лидеры роста")
     text += build_table(losers, "📉 Лидеры падения")
     return text
+
 # ---------- ГЕНЕРАЦИЯ КАРТИНКИ ----------
 def create_table_image(df: pd.DataFrame, title: str) -> BytesIO:
     if df.empty:
@@ -309,7 +283,7 @@ async def cmd_top(message: types.Message):
                 [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
             ]
         )
-        await message.answer(text, reply_markup=keyboard)  # parse_mode не указываем
+        await message.answer(text, reply_markup=keyboard)
         await loading_msg.delete()
     except Exception as e:
         await loading_msg.delete()
@@ -471,16 +445,14 @@ async def process_refresh(callback: CallbackQuery):
         logging.error(f"Ошибка обновления: {e}")
         await callback.message.answer(f"❌ Ошибка обновления: {e}")
 
-# ---------- ЗАПУСК ПОЛЛИНГА ----------
+# ---------- ЗАПУСК ----------
 async def main():
     init_db()
-    # Принудительно удаляем вебхук
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         logging.info("Webhook удалён")
     except Exception as e:
         logging.warning(f"Не удалось удалить вебхук: {e}")
-    
     logging.info("Запускаем polling...")
     await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
 
