@@ -611,6 +611,20 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# ---- ОБРАБОТЧИКИ HEAD ДЛЯ RENDER ----
+@app.head("/")
+async def head_root():
+    return Response(status_code=200)
+
+@app.head("/webhook")
+async def head_webhook():
+    return Response(status_code=200)
+
+@app.head("/health")
+async def head_health():
+    return Response(status_code=200)
+
+# ---- ОБЫЧНЫЕ ЭНДПОИНТЫ ----
 @app.get("/")
 async def index():
     return {"status": "Bot is running!"}
