@@ -3,20 +3,21 @@ import logging
 import time
 import asyncio
 import datetime
+import io
 from contextlib import asynccontextmanager
+
+import matplotlib
+matplotlib.use('Agg')  # обязательно для работы на сервере
+import matplotlib.pyplot as plt
+
 from fastapi import FastAPI, Request, Response
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import Update, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import Update, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, InputFile
 import aiohttp
 import pandas as pd
 from tabulate import tabulate
 from supabase import create_client, Client
-import matplotlib.pyplot as plt
-from matplotlib.table import Table
-import io
-import matplotlib
-matplotlib.use('Agg')
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -195,7 +196,7 @@ def calc_period_change(df: pd.DataFrame) -> pd.DataFrame:
     combined['CHANGE_PCT'] = ((combined['CLOSE'] - combined['OPEN']) / combined['OPEN']) * 100
     return combined.reset_index()
 
-# ---------- УНИВЕРСАЛЬНАЯ ФУНКЦИЯ ПОСТРОЕНИЯ ТАБЛИЦ ----------
+# ---------- УНИВЕРСАЛЬНАЯ ФУНКЦИЯ ПОСТРОЕНИЯ ТАБЛИЦ (ТЕКСТ) ----------
 def build_table_universal(df, title, headers, data_columns):
     if df.empty:
         return ""
@@ -249,7 +250,6 @@ async def get_favorites_data(chat_id: int):
     fav_df = shares_df[shares_df['SECID'].isin(favs)].copy()
     if fav_df.empty:
         return None, "По вашему списку нет актуальных данных."
-    # Убедимся, что есть CHANGEPERCENT
     if 'CHANGEPERCENT' not in fav_df.columns:
         if 'OPEN' in fav_df.columns and 'LAST' in fav_df.columns:
             fav_df['CHANGEPERCENT'] = ((fav_df['LAST'] - fav_df['OPEN']) / fav_df['OPEN']) * 100
@@ -283,12 +283,11 @@ async def get_favorites_data(chat_id: int):
     fav_df['change_month'] = fav_df['change_month'].fillna(float('nan'))
     fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
     return fav_df, None
-    
+
+# ---------- ГЕНЕРАЦИЯ КАРТИНКИ ДЛЯ ИЗБРАННОГО ----------
 def generate_favorites_image(fav_df) -> io.BytesIO:
-    """Создаёт изображение таблицы избранного."""
     if fav_df.empty:
         return None
-    # Подготовка данных
     table_data = []
     for _, row in fav_df.iterrows():
         name = row.get('SHORTNAME', row['SECID'])
@@ -299,9 +298,7 @@ def generate_favorites_image(fav_df) -> io.BytesIO:
         week = f"{row['change_week']:+.2f}%" if pd.notna(row['change_week']) else "—"
         month = f"{row['change_month']:+.2f}%" if pd.notna(row['change_month']) else "—"
         table_data.append([name, price, day, week, month])
-
     headers = ["Название", "Цена", "День", "Неделя", "Месяц"]
-    # Создаём фигуру с автоматической высотой
     fig, ax = plt.subplots(figsize=(8, max(3, len(table_data) * 0.4 + 1)))
     ax.axis('off')
     table = ax.table(cellText=table_data, colLabels=headers, loc='center', cellLoc='center',
@@ -309,10 +306,9 @@ def generate_favorites_image(fav_df) -> io.BytesIO:
     table.auto_set_font_size(False)
     table.set_fontsize(10)
     table.scale(1, 1.5)
-    # Цветовая индикация для изменения
     for i, row in enumerate(table_data):
         for j, cell in enumerate(row):
-            if j >= 2:  # колонки с изменениями
+            if j >= 2:
                 val = row[j]
                 if val != "—" and val.startswith('+'):
                     table[(i+1, j)].set_facecolor('lightgreen')
@@ -324,6 +320,7 @@ def generate_favorites_image(fav_df) -> io.BytesIO:
     buf.seek(0)
     plt.close()
     return buf
+
 # ---------- УНИВЕРСАЛЬНАЯ ОТПРАВКА ТОПА ----------
 async def send_top(message: types.Message, period: str = 'day'):
     loading_msg = await message.answer("⏳ Загружаю данные...")
@@ -444,14 +441,11 @@ async def favorites_button(message: types.Message):
             await loading_msg.delete()
             await message.answer(error)
             return
-        # Генерируем картинку
         img_buf = generate_favorites_image(fav_df)
         if img_buf is None:
             await loading_msg.delete()
             await message.answer("Нет данных для отображения.")
             return
-        # Отправляем фото
-        from aiogram.types import InputFile
         await message.answer_photo(photo=InputFile(img_buf, filename="favorites.png"))
         await loading_msg.delete()
     except Exception as e:
@@ -475,7 +469,6 @@ async def handle_text(message: types.Message):
     if chat_id in user_state:
         state = user_state[chat_id]
         raw = message.text.strip()
-        # Разделяем по запятым, удаляем пробелы, приводим к верхнему регистру
         tickers = [t.strip().upper() for t in raw.split(',') if t.strip()]
         results = []
         for ticker in tickers:
@@ -530,7 +523,7 @@ async def process_refresh(callback: CallbackQuery):
 async def lifespan(app: FastAPI):
     logging.info("Запуск lifespan...")
     try:
-        # Проверка подключения к Supabase
+        # Проверка Supabase
         try:
             supabase.table("favorites").select("ticker").limit(1).execute()
             logging.info("✅ Подключение к Supabase установлено")
@@ -566,7 +559,6 @@ async def index():
 
 @app.get("/health")
 async def health():
-    """Эндпоинт для проверки состояния (используется для пинга)"""
     return {"status": "ok", "webhook_set": True}
 
 @app.get("/set_webhook")
