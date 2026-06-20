@@ -410,6 +410,18 @@ async def favorites_button(message: types.Message):
             await message.answer("По вашему списку нет актуальных данных.")
             return
 
+        # Убедимся, что есть CHANGEPERCENT
+        if 'CHANGEPERCENT' not in fav_df.columns:
+            if 'OPEN' in fav_df.columns and 'LAST' in fav_df.columns:
+                fav_df['CHANGEPERCENT'] = ((fav_df['LAST'] - fav_df['OPEN']) / fav_df['OPEN']) * 100
+            else:
+                await message.answer("Недостаточно данных для расчёта изменений.")
+                return
+
+        # Убедимся, что есть SHORTNAME
+        if 'SHORTNAME' not in fav_df.columns:
+            fav_df['SHORTNAME'] = fav_df['SECID']
+
         logging.info(f"fav_df получен, строк: {len(fav_df)}")
 
         now = get_moscow_time()
