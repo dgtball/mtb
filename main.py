@@ -11,9 +11,6 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputFile
 import aiohttp
 import pandas as pd
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 from tabulate import tabulate
 
 # ---------- КОНФИГУРАЦИЯ ----------
@@ -93,6 +90,7 @@ async def get_all_shares():
                 sec_columns = json_data['securities']['columns']
                 sec_rows = json_data['securities']['data']
                 sec_df = pd.DataFrame(sec_rows, columns=sec_columns)
+                # Используем SHORTNAME
                 sec_df = sec_df[['SECID', 'SHORTNAME', 'LISTLEVEL']]
                 merged = pd.merge(market_df, sec_df, on='SECID', how='left')
                 return merged
@@ -181,7 +179,7 @@ def format_historical(gainers, losers, period_name, from_date, till_date):
             text += f"• {row['SECID']}: {row['CHANGE_PCT']:.2f}%\n"
     return text
 
-# ---------- ФОРМАТИРОВАНИЕ ТАБЛИЦЫ С МОНОШИРИННЫМ БЛОКОМ ----------
+# ---------- ФОРМАТИРОВАНИЕ ТАБЛИЦЫ (без значков, без рамок, с SHORTNAME) ----------
 def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, update_time: str, is_weekend: bool = False) -> str:
     if index_value is not None:
         header = f"📊 Индекс МосБиржи: {index_value:.2f}\n"
@@ -203,7 +201,7 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
                 name = name[:22] + "…"
             price = f"{row['LAST']:.2f}" if isinstance(row['LAST'], (int, float)) else str(row['LAST'])
             change = row['CHANGEPERCENT']
-            change_str = f"{sign} {change:.2f}%"
+            change_str = f"{change:+.2f}%"
             table_data.append([ticker, name, price, change_str])
         headers = ["Тикер", "Название", "Цена", "Изменение"]
         table = tabulate(table_data, headers=headers, tablefmt="plain", numalign="right", stralign="left")
@@ -213,37 +211,6 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
     text += build_table(gainers, "📈 Лидеры роста")
     text += build_table(losers, "📉 Лидеры падения")
     return text
-# ---------- ГЕНЕРАЦИЯ КАРТИНКИ ----------
-def create_table_image(df: pd.DataFrame, title: str) -> BytesIO:
-    if df.empty:
-        return None
-    data = df[['SECID', 'SHORTNAME', 'LAST', 'CHANGEPERCENT']].head(TOP_N).copy()
-    data['CHANGEPERCENT'] = data['CHANGEPERCENT'].apply(lambda x: f"{x:+.2f}%")
-    data['LAST'] = data['LAST'].apply(lambda x: f"{x:.2f}")
-    data.columns = ['Тикер', 'Название', 'Цена', 'Изменение']
-    colors = []
-    for val in df['CHANGEPERCENT'].head(TOP_N):
-        if val > 0:
-            colors.append('lightgreen')
-        elif val < 0:
-            colors.append('lightcoral')
-        else:
-            colors.append('white')
-    fig, ax = plt.subplots(figsize=(8, len(data)*0.5 + 1))
-    ax.axis('off')
-    table = ax.table(cellText=data.values, colLabels=data.columns, loc='center', cellLoc='center', colColours=['#f0f0f0']*4)
-    table.auto_set_font_size(False)
-    table.set_fontsize(10)
-    table.scale(1.2, 1.5)
-    for i, color in enumerate(colors):
-        for j in range(4):
-            table[(i+1, j)].set_facecolor(color)
-    ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
-    buf = BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.2)
-    buf.seek(0)
-    plt.close()
-    return buf
 
 # ---------- ОБРАБОТЧИКИ КОМАНД ----------
 @dp.message(Command("start"))
@@ -254,7 +221,6 @@ async def cmd_start(message: types.Message):
         "/top — показать лидеров роста и падения (текущий день)\n"
         "/week — топ за неделю\n"
         "/month — топ за месяц\n"
-        "/top_image — показать лидеров в виде картинки\n"
         "/add TICKER — добавить акцию в избранное\n"
         "/remove TICKER — удалить из избранного\n"
         "/favorites — показать избранные акции"
@@ -288,30 +254,7 @@ async def cmd_top(message: types.Message):
         logging.error(f"Ошибка в /top: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}")
 
-@dp.message(Command("top_image"))
-async def cmd_top_image(message: types.Message):
-    loading_msg = await message.answer("⏳ Готовлю картинку...")
-    try:
-        shares_df = await get_all_shares()
-        gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
-        if gainers.empty and losers.empty:
-            await loading_msg.delete()
-            if is_weekend():
-                await message.answer("📊 Сессия выходного дня. Данные обновятся в рабочие дни.")
-            else:
-                await message.answer("📊 Биржа закрыта. Попробуйте позже.")
-            return
-        img_gainers = create_table_image(gainers, "📈 Лидеры роста")
-        if img_gainers:
-            await message.answer_photo(photo=InputFile(img_gainers, filename="gainers.png"))
-        img_losers = create_table_image(losers, "📉 Лидеры падения")
-        if img_losers:
-            await message.answer_photo(photo=InputFile(img_losers, filename="losers.png"))
-        await loading_msg.delete()
-    except Exception as e:
-        await loading_msg.delete()
-        logging.error(f"Ошибка в /top_image: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка: {e}")
+# Команда /top_image убрана, т.к. matplotlib исключён из зависимостей
 
 @dp.message(Command("week"))
 async def cmd_week(message: types.Message):
@@ -414,8 +357,7 @@ async def cmd_favorites(message: types.Message):
         name = row.get('SHORTNAME', row['SECID'])
         price = row['LAST']
         change = row['CHANGEPERCENT']
-        sign = "▲" if change > 0 else "▼"
-        text += f"• {row['SECID']} ({name}) — {price:.2f}  {sign} {change:+.2f}%\n"
+        text += f"• {row['SECID']} ({name}) — {price:.2f}  {change:+.2f}%\n"
     await message.answer(text)
 
 @dp.callback_query(lambda c: c.data == "refresh")
@@ -451,7 +393,7 @@ async def main():
         logging.info("Webhook удалён")
     except Exception as e:
         logging.warning(f"Не удалось удалить вебхук: {e}")
-    await asyncio.sleep(1)  # даём время Telegram
+    await asyncio.sleep(1)
     logging.info("Запускаем polling...")
     await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
 
