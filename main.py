@@ -208,7 +208,6 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
             table_data.append([ticker, name, price, change_str])
         headers = ["Тикер", "Название", "Цена", "Изменение"]
         table = tabulate(table_data, headers=headers, tablefmt="grid", numalign="right", stralign="left")
-        # Оборачиваем в моноширинный блок
         return f"{title}\n```\n{table}\n```\n"
 
     text = header
@@ -446,26 +445,15 @@ async def process_refresh(callback: CallbackQuery):
         logging.error(f"Ошибка обновления: {e}")
         await callback.message.answer(f"❌ Ошибка обновления: {e}")
 
-# ---------- ЗАПУСК С УЛУЧШЕННЫМ СБРОСОМ ----------
+# ---------- ЗАПУСК ----------
 async def main():
     init_db()
-    # Принудительно удаляем вебхук и сбрасываем ожидающие обновления
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         logging.info("Webhook удалён")
     except Exception as e:
         logging.warning(f"Не удалось удалить вебхук: {e}")
-    
-    # Закрываем старую сессию и создаём новую, чтобы избежать конфликтов
-    try:
-        await bot.session.close()
-    except:
-        pass
-    bot.session = aiohttp.ClientSession()
-    
-    # Небольшая пауза, чтобы Telegram успел обработать удаление
-    await asyncio.sleep(1)
-    
+    await asyncio.sleep(1)  # даём время Telegram
     logging.info("Запускаем polling...")
     await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
 
