@@ -291,13 +291,12 @@ async def send_top(message: types.Message, period: str = 'day'):
             update_time = time.strftime("%Y-%m-%d %H:%M:%S")
             text = format_message(gainers, losers, index_val, update_time, is_weekend=is_weekend())
         else:
-            # week или month
             now = get_moscow_time()
             if period == 'week':
                 start = now - datetime.timedelta(days=now.weekday())
                 from_date = start.strftime("%Y-%m-%d")
                 period_name = "неделю"
-            else:  # month
+            else:
                 from_date = now.replace(day=1).strftime("%Y-%m-%d")
                 period_name = "месяц"
             till_date = now.strftime("%Y-%m-%d")
@@ -323,22 +322,17 @@ async def send_top(message: types.Message, period: str = 'day'):
             ]
         )
         sent_msg = await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
-
-        # Сохраняем последнее сообщение для автообновления
         chat_id = message.chat.id
         last_messages[chat_id] = sent_msg.message_id
-
-        # Если это Топ дня и включено автообновление — запускаем задачу
         if period == 'day' and auto_update_enabled.get(chat_id, False):
             if chat_id not in update_tasks or update_tasks[chat_id].done():
                 task = asyncio.create_task(auto_update_task(chat_id, sent_msg.message_id))
                 update_tasks[chat_id] = task
-
         await loading_msg.delete()
     except Exception as e:
         await loading_msg.delete()
-        logging.error(f"Ошибка в send_top: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка: {e}")
+        logging.error(f"❌ Ошибка в send_top (period={period}): {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка при загрузке данных: {e}")
 
 # ---------- АВТООБНОВЛЕНИЕ ----------
 async def auto_update_task(chat_id: int, message_id: int):
@@ -366,16 +360,17 @@ async def auto_update_task(chat_id: int, message_id: int):
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     chat_id = message.chat.id
-    # Включаем автообновление по умолчанию
     auto_update_enabled[chat_id] = True
-    # Показываем клавиатуру
-    await message.answer(
-        "👋 Привет! Я бот для отслеживания топ-акций Мосбиржи.\n\n"
-        "Используйте кнопки ниже для навигации.",
-        reply_markup=main_keyboard()
-    )
-    # Автоматически показываем топ дня с автообновлением
-    await send_top(message, 'day')
+    try:
+        await message.answer(
+            "👋 Привет! Я бот для отслеживания топ-акций Мосбиржи.\n\n"
+            "Используйте кнопки ниже для навигации.",
+            reply_markup=main_keyboard()
+        )
+        await send_top(message, 'day')
+    except Exception as e:
+        logging.error(f"❌ Ошибка в /start: {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка при запуске: {e}")
 
 @dp.message(lambda msg: msg.text == "📈 Топ дня")
 async def top_day_button(message: types.Message):
@@ -391,28 +386,32 @@ async def top_month_button(message: types.Message):
 
 @dp.message(lambda msg: msg.text == "⭐ Избранные")
 async def favorites_button(message: types.Message):
-    fav_df, error = await get_favorites_data(message.chat.id)
-    if error:
-        await message.answer(error)
-        return
-    table_data = []
-    for _, row in fav_df.iterrows():
-        name = row.get('SHORTNAME', row['SECID'])
-        if len(name) > 25:
-            name = name[:22] + "…"
-        price = f"{row['LAST']:.2f}" if isinstance(row['LAST'], (int, float)) else str(row['LAST'])
-        day_change = f"{row['CHANGEPERCENT']:+.2f}%" if pd.notna(row['CHANGEPERCENT']) else "—"
-        week_change = f"{row['change_week']:+.2f}%" if pd.notna(row['change_week']) else "—"
-        month_change = f"{row['change_month']:+.2f}%" if pd.notna(row['change_month']) else "—"
-        table_data.append([name, price, day_change, week_change, month_change])
-    if not table_data:
-        await message.answer("Нет данных для отображения.")
-        return
-    headers = ["Название", "Цена", "День", "Неделя", "Месяц"]
-    header_line = "  ".join(f"<b>{h}</b>" for h in headers)
-    table = tabulate(table_data, headers=[], tablefmt="simple", numalign="right", stralign="left")
-    text = f"⭐ <b>Избранные акции</b>\n{header_line}\n<pre>{table}</pre>"
-    await message.answer(text, parse_mode="HTML")
+    try:
+        fav_df, error = await get_favorites_data(message.chat.id)
+        if error:
+            await message.answer(error)
+            return
+        table_data = []
+        for _, row in fav_df.iterrows():
+            name = row.get('SHORTNAME', row['SECID'])
+            if len(name) > 25:
+                name = name[:22] + "…"
+            price = f"{row['LAST']:.2f}" if isinstance(row['LAST'], (int, float)) else str(row['LAST'])
+            day_change = f"{row['CHANGEPERCENT']:+.2f}%" if pd.notna(row['CHANGEPERCENT']) else "—"
+            week_change = f"{row['change_week']:+.2f}%" if pd.notna(row['change_week']) else "—"
+            month_change = f"{row['change_month']:+.2f}%" if pd.notna(row['change_month']) else "—"
+            table_data.append([name, price, day_change, week_change, month_change])
+        if not table_data:
+            await message.answer("Нет данных для отображения.")
+            return
+        headers = ["Название", "Цена", "День", "Неделя", "Месяц"]
+        header_line = "  ".join(f"<b>{h}</b>" for h in headers)
+        table = tabulate(table_data, headers=[], tablefmt="simple", numalign="right", stralign="left")
+        text = f"⭐ <b>Избранные акции</b>\n{header_line}\n<pre>{table}</pre>"
+        await message.answer(text, parse_mode="HTML")
+    except Exception as e:
+        logging.error(f"❌ Ошибка в favorites: {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка: {e}")
 
 @dp.message(lambda msg: msg.text == "➕ Добавить тикер")
 async def add_ticker_button(message: types.Message):
@@ -441,7 +440,6 @@ async def handle_text(message: types.Message):
             else:
                 await message.answer(f"ℹ️ {ticker} не найден в избранном.")
         del user_state[chat_id]
-        # Возвращаем клавиатуру
         await message.answer("Что дальше?", reply_markup=main_keyboard())
     else:
         await message.answer("Используйте кнопки меню.", reply_markup=main_keyboard())
@@ -473,7 +471,7 @@ async def process_refresh(callback: CallbackQuery):
         last_messages[chat_id] = callback.message.message_id
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
     except Exception as e:
-        logging.error(f"Ошибка обновления: {e}")
+        logging.error(f"❌ Ошибка обновления: {e}", exc_info=True)
         await callback.message.answer(f"❌ Ошибка обновления: {e}")
 
 # ---------- FASTAPI ПРИЛОЖЕНИЕ ----------
@@ -526,7 +524,7 @@ async def webhook(request: Request):
         await dp.feed_update(bot, update)
         return Response(status_code=200)
     except Exception as e:
-        logging.error(f"Webhook error: {e}", exc_info=True)
+        logging.error(f"❌ Webhook error: {e}", exc_info=True)
         return Response(status_code=200)
 
 @app.get("/webhook")
