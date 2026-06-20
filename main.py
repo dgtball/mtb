@@ -469,9 +469,8 @@ async def favorites_button(message: types.Message):
             return
 
         headers = ["Название", "Цена", "День", "Неделя", "Месяц"]
-        header_line = "  ".join(f"<b>{h}</b>" for h in headers)
-        table = tabulate(table_data, headers=[], tablefmt="simple", numalign="right", stralign="left")
-        text = f"⭐ <b>Избранные акции</b>\n{header_line}\n<pre>{table}</pre>"
+        table = tabulate(table_data, headers=headers, tablefmt="simple", numalign="right", stralign="left")
+        text = f"⭐ <b>Избранные акции</b>\n<pre>{table}</pre>"
         await message.answer(text, parse_mode="HTML")
         logging.info("Избранное успешно отправлено")
     except Exception as e:
@@ -493,19 +492,24 @@ async def handle_text(message: types.Message):
     chat_id = message.chat.id
     if chat_id in user_state:
         state = user_state[chat_id]
-        ticker = message.text.strip().upper()
-        if state == 'add':
-            if add_favorite(chat_id, ticker):
-                await message.answer(f"✅ {ticker} добавлен в избранное.")
-            else:
-                await message.answer(f"ℹ️ {ticker} уже есть в избранном.")
-        elif state == 'remove':
-            if remove_favorite(chat_id, ticker):
-                await message.answer(f"✅ {ticker} удалён из избранного.")
-            else:
-                await message.answer(f"ℹ️ {ticker} не найден в избранном.")
+        raw = message.text.strip()
+        # Разделяем по запятым, удаляем пробелы, приводим к верхнему регистру
+        tickers = [t.strip().upper() for t in raw.split(',') if t.strip()]
+        results = []
+        for ticker in tickers:
+            if state == 'add':
+                if add_favorite(chat_id, ticker):
+                    results.append(f"✅ {ticker}")
+                else:
+                    results.append(f"ℹ️ {ticker} уже есть")
+            elif state == 'remove':
+                if remove_favorite(chat_id, ticker):
+                    results.append(f"✅ {ticker} удалён")
+                else:
+                    results.append(f"ℹ️ {ticker} не найден")
+        await message.answer("\n".join(results) if results else "Ничего не сделано.")
         del user_state[chat_id]
-        await message.answer("Что дальше?", reply_markup=main_keyboard())
+        await message.answer("✅ Готово. Выберите действие из меню.", reply_markup=main_keyboard())
     else:
         await message.answer("Используйте кнопки меню.", reply_markup=main_keyboard())
 
