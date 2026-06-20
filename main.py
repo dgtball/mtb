@@ -160,36 +160,33 @@ def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool 
 
 # ---------- ФОРМАТИРОВАНИЕ СООБЩЕНИЙ ----------
 def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, update_time: str) -> str:
+    # Шапка
     if index_value is not None:
-        header = f"📊 *Индекс МосБиржи* {escape_markdown(f'{index_value:.2f}')}\n"
+        header = f"📊 Индекс МосБиржи: {index_value:.2f}\n"
     else:
-        header = "📊 *Индекс МосБиржи* временно недоступен\n"
-    header += f"🕒 Обновлено: {escape_markdown(update_time)}\n\n"
+        header = "📊 Индекс МосБиржи: временно недоступен\n"
+    header += f"🕒 Обновлено: {update_time}\n\n"
 
     def build_table(df, title):
         if df.empty:
             return ""
-        rows = []
+        # Подготовка данных для tabulate
+        table_data = []
         for _, row in df.iterrows():
-            ticker = escape_markdown(row['SECID'])
-            name = row.get('SECNAME', row['SECID'])
-            # Обрезаем и экранируем
+            ticker = row['SECID']
+            name = row.get('SECNAME', ticker)
             if len(name) > 25:
                 name = name[:22] + "…"
-            name = escape_markdown(name)
             price = f"{row['LAST']:.2f}" if isinstance(row['LAST'], (int, float)) else str(row['LAST'])
-            price = escape_markdown(price)
             change = row['CHANGEPERCENT']
             sign = "▲" if change > 0 else "▼"
-            # Изменение НЕ экранируем, потому что мы сами ставим звёздочки
-            change_str = f"*{sign} {change:.2f}%*"
-            rows.append([ticker, name, price, change_str])
-        table = f"### {title}\n"
-        table += "| Тикер | Название | Цена | Изменение |\n"
-        table += "|-------|----------|-----:|-----------|\n"
-        for row in rows:
-            table += f"| {row[0]} | {row[1]} | {row[2]} | {row[3]} |\n"
-        return table + "\n"
+            change_str = f"{sign} {change:.2f}%"
+            table_data.append([ticker, name, price, change_str])
+        
+        # Используем tabulate с форматом "grid" — аккуратные рамки
+        headers = ["Тикер", "Название", "Цена", "Изменение"]
+        table = tabulate(table_data, headers=headers, tablefmt="grid", numalign="right", stralign="left")
+        return f"{title}\n```\n{table}\n```\n"
 
     text = header
     text += build_table(gainers, "📈 Лидеры роста")
@@ -248,11 +245,12 @@ async def cmd_start(message: types.Message):
 
 @dp.message(Command("top"))
 async def cmd_top(message: types.Message):
-    await message.answer("⏳ Загружаю данные с Мосбиржи...")
+    loading_msg = await message.answer("⏳ Загружаю данные с Мосбиржи...")
     try:
         shares_df = await get_all_shares()
         gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
         if gainers.empty and losers.empty:
+            await loading_msg.delete()
             await message.answer("⚠️ Не удалось получить данные. Проверьте логи.")
             return
         index_val = await get_moex_index()
@@ -263,18 +261,23 @@ async def cmd_top(message: types.Message):
                 [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
             ]
         )
-        await message.answer(text, parse_mode="MarkdownV2", reply_markup=keyboard)
+        # Отправляем основной ответ (без parse_mode, т.к. используем моноширинный блок)
+        await message.answer(text, reply_markup=keyboard)
+        # Удаляем загрузочное сообщение
+        await loading_msg.delete()
     except Exception as e:
+        await loading_msg.delete()
         logging.error(f"Ошибка в /top: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}")
 
 @dp.message(Command("top_image"))
 async def cmd_top_image(message: types.Message):
-    await message.answer("⏳ Генерирую картинку...")
+    loading_msg = await message.answer("⏳ Генерирую картинку...")
     try:
         shares_df = await get_all_shares()
         gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
         if gainers.empty and losers.empty:
+            await loading_msg.delete()
             await message.answer("Нет данных для отображения.")
             return
         img_gainers = create_table_image(gainers, "📈 Лидеры роста")
@@ -283,7 +286,9 @@ async def cmd_top_image(message: types.Message):
         img_losers = create_table_image(losers, "📉 Лидеры падения")
         if img_losers:
             await message.answer_photo(photo=InputFile(img_losers, filename="losers.png"))
+        await loading_msg.delete()
     except Exception as e:
+        await loading_msg.delete()
         logging.error(f"Ошибка в /top_image: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}")
 
@@ -351,7 +356,7 @@ async def process_refresh(callback: CallbackQuery):
         shares_df = await get_all_shares()
         gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
         if gainers.empty and losers.empty:
-            await callback.message.answer("⚠️ Не удалось получить данные. Проверьте логи.")
+            await callback.message.answer("⚠️ Не удалось получить данные.")
             return
         index_val = await get_moex_index()
         update_time = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -361,7 +366,7 @@ async def process_refresh(callback: CallbackQuery):
                 [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
             ]
         )
-        await callback.message.edit_text(text, parse_mode="MarkdownV2", reply_markup=keyboard)
+        await callback.message.edit_text(text, reply_markup=keyboard)
     except Exception as e:
         logging.error(f"Ошибка обновления: {e}")
         await callback.message.answer(f"❌ Ошибка обновления: {e}")
