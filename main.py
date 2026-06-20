@@ -4,17 +4,15 @@ import time
 import asyncio
 import datetime
 import io
-from contextlib import asynccontextmanager
 
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from fastapi import FastAPI, Request, Response
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import (
-    Update, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
+    InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
     ReplyKeyboardMarkup, KeyboardButton, BufferedInputFile
 )
 import aiohttp
@@ -37,6 +35,8 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     raise ValueError("SUPABASE_URL и SUPABASE_KEY должны быть заданы")
 
 TOP_N = 10
+WEBHOOK_PATH = "/webhook"
+WEBHOOK_PORT = int(os.getenv("PORT", 10000))
 
 # ---------- ЛОГИРОВАНИЕ ----------
 logging.basicConfig(level=logging.INFO)
@@ -115,7 +115,7 @@ def is_weekend():
     now = get_moscow_time()
     return now.weekday() in (5, 6)
 
-# ---------- ЗАПРОСЫ К MOEX (используем глобальную сессию) ----------
+# ---------- ЗАПРОСЫ К MOEX ----------
 async def get_all_shares():
     global http_session
     url = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=marketdata,securities"
@@ -167,7 +167,6 @@ async def get_historical_shares(from_date: str, till_date: str):
     except Exception:
         return pd.DataFrame()
 
-# ---------- ОСТАЛЬНЫЕ ФУНКЦИИ БЕЗ ИЗМЕНЕНИЙ ----------
 def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool = True):
     if data.empty:
         return pd.DataFrame(), pd.DataFrame()
@@ -559,13 +558,12 @@ async def process_refresh(callback: CallbackQuery):
         logging.error(f"❌ Ошибка обновления: {e}", exc_info=True)
         await callback.message.answer(f"❌ Ошибка обновления: {e}")
 
-# ---------- FASTAPI ПРИЛОЖЕНИЕ ----------
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+# ---------- ЗАПУСК ВЕБХУКА ЧЕРЕЗ AIOGRAM ----------
+async def on_startup():
     global http_session
-    logging.info("Запуск lifespan...")
     http_session = aiohttp.ClientSession()
-    
+    logging.info("✅ HTTP сессия создана")
+
     # Проверка Supabase
     try:
         supabase.table("favorites").select("ticker").limit(1).execute()
@@ -574,84 +572,34 @@ async def lifespan(app: FastAPI):
         logging.error(f"❌ Ошибка подключения к Supabase: {e}")
 
     # Установка вебхука
-    webhook_url = f"{BASE_URL}/webhook"
-    for attempt in range(5):
-        try:
-            await bot.delete_webhook(drop_pending_updates=True)
-            await bot.set_webhook(webhook_url)
-            logging.info(f"✅ Webhook установлен на {webhook_url} (попытка {attempt+1})")
-            break
-        except Exception as e:
-            logging.error(f"❌ Ошибка установки вебхука (попытка {attempt+1}): {e}")
-            await asyncio.sleep(2)
-    else:
-        logging.error("❌ Не удалось установить вебхук после 5 попыток")
-    
-    # --- ГЛАВНОЕ ИЗМЕНЕНИЕ ---
-    # Создаём событие, которое будет ждать сигнала остановки
-    stop_event = asyncio.Event()
+    webhook_url = f"{BASE_URL}{WEBHOOK_PATH}"
+    await bot.set_webhook(webhook_url, drop_pending_updates=True)
+    logging.info(f"✅ Webhook установлен на {webhook_url}")
+
+async def on_shutdown():
+    global http_session
+    logging.info("Завершение работы...")
+    for task in update_tasks.values():
+        if not task.done():
+            task.cancel()
+    await bot.delete_webhook()
+    await http_session.close()
+    logging.info("✅ Сессии закрыты")
+
+async def main():
+    await on_startup()
     try:
-        yield  # Здесь приложение запускается и работает
+        # Запуск вебхука через aiogram
+        await dp.start_webhook(
+            webhook_path=WEBHOOK_PATH,
+            on_startup=on_startup,
+            on_shutdown=on_shutdown,
+            skip_updates=True,
+            host="0.0.0.0",
+            port=WEBHOOK_PORT,
+        )
     finally:
-        # Этот блок выполнится только при завершении приложения
-        logging.info("Завершение lifespan...")
-        for task in update_tasks.values():
-            if not task.done():
-                task.cancel()
-        await bot.delete_webhook()
-        await http_session.close()
-        stop_event.set()  # Сигнализируем, что можно завершаться
-    
-    # Бесконечное ожидание, пока приложение не будет остановлено извне
-    await stop_event.wait()
-
-app = FastAPI(lifespan=lifespan)
-
-@app.head("/")
-async def head_root():
-    return Response(status_code=200)
-
-@app.head("/webhook")
-async def head_webhook():
-    return Response(status_code=200)
-
-@app.head("/health")
-async def head_health():
-    return Response(status_code=200)
-
-@app.get("/")
-async def index():
-    return {"status": "Bot is running!"}
-
-@app.get("/health")
-async def health():
-    return {"status": "ok", "webhook_set": True}
-
-@app.get("/set_webhook")
-async def set_webhook():
-    webhook_url = f"{BASE_URL}/webhook"
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-        await bot.set_webhook(webhook_url)
-        return {"status": "ok", "url": webhook_url}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-@app.post("/webhook")
-async def webhook(request: Request):
-    try:
-        json_data = await request.json()
-        update = Update(**json_data)
-        await dp.feed_update(bot, update)
-        return Response(status_code=200)
-    except Exception as e:
-        logging.error(f"❌ Webhook error: {e}", exc_info=True)
-        return Response(status_code=200)
-
-@app.get("/webhook")
-async def webhook_get():
-    return {"status": "webhook is ready"}
+        await on_shutdown()
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+    asyncio.run(main())
