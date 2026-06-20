@@ -207,6 +207,88 @@ def calc_period_change(df: pd.DataFrame) -> pd.DataFrame:
     combined['CHANGE_PCT'] = ((combined['CLOSE'] - combined['OPEN']) / combined['OPEN']) * 100
     return combined.reset_index()
 
+# ---------- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ИСТОРИЧЕСКОЙ ЦЕНЫ ЗАКРЫТИЯ ----------
+async def get_historical_close(ticker: str, target_date: datetime.date) -> float | None:
+    """
+    Возвращает цену закрытия для заданного тикера на target_date
+    или на ближайший торговый день до target_date.
+    """
+    from_date = (target_date - datetime.timedelta(days=10)).strftime("%Y-%m-%d")
+    till_date = target_date.strftime("%Y-%m-%d")
+    df = await get_historical_shares(from_date, till_date)
+    if df.empty:
+        return None
+    ticker_data = df[df['SECID'] == ticker].copy()
+    if ticker_data.empty:
+        return None
+    ticker_data['TRADEDATE'] = pd.to_datetime(ticker_data['TRADEDATE'])
+    ticker_data = ticker_data.sort_values('TRADEDATE')
+    return ticker_data.iloc[-1]['CLOSE']
+
+# ---------- ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ ДАННЫХ ДЛЯ ИЗБРАННОГО (УЛУЧШЕННАЯ) ----------
+async def get_favorites_data(chat_id: int):
+    favs = get_favorites(chat_id)
+    if not favs:
+        return None, "У вас пока нет избранных акций. Добавьте через /add TICKER"
+    shares_df = await get_all_shares()
+    if shares_df.empty:
+        if is_weekend():
+            return None, "📊 Сессия выходного дня. Избранное обновится в рабочие дни."
+        else:
+            return None, "📊 Биржа закрыта. Попробуйте позже."
+    fav_df = shares_df[shares_df['SECID'].isin(favs)].copy()
+    if fav_df.empty:
+        return None, "По вашему списку нет актуальных данных."
+    if 'CHANGEPERCENT' not in fav_df.columns:
+        if 'OPEN' in fav_df.columns and 'LAST' in fav_df.columns:
+            fav_df['CHANGEPERCENT'] = ((fav_df['LAST'] - fav_df['OPEN']) / fav_df['OPEN']) * 100
+        else:
+            return None, "Недостаточно данных для расчёта изменений."
+    if 'SHORTNAME' not in fav_df.columns:
+        fav_df['SHORTNAME'] = fav_df['SECID']
+
+    now = get_moscow_time()
+    today = now.date()
+
+    # Для недели: берём пятницу (последний день перед понедельником)
+    monday = now - datetime.timedelta(days=now.weekday())
+    week_reference = (monday - datetime.timedelta(days=1)).date()
+
+    # Для месяца: берём последний день предыдущего месяца
+    first_of_month = now.replace(day=1)
+    month_reference = (first_of_month - datetime.timedelta(days=1)).date()
+
+    week_changes = []
+    month_changes = []
+
+    for _, row in fav_df.iterrows():
+        ticker = row['SECID']
+        current_price = row['LAST']
+
+        # Цена закрытия на пятницу (или ближайший торговый день)
+        week_price = await get_historical_close(ticker, week_reference)
+        if week_price is not None and week_price > 0:
+            week_change = ((current_price - week_price) / week_price) * 100
+        else:
+            week_change = None
+
+        # Цена закрытия на последний день предыдущего месяца
+        month_price = await get_historical_close(ticker, month_reference)
+        if month_price is not None and month_price > 0:
+            month_change = ((current_price - month_price) / month_price) * 100
+        else:
+            month_change = None
+
+        week_changes.append(week_change)
+        month_changes.append(month_change)
+
+    fav_df['change_week'] = week_changes
+    fav_df['change_month'] = month_changes
+    fav_df['change_week'] = fav_df['change_week'].fillna(float('nan'))
+    fav_df['change_month'] = fav_df['change_month'].fillna(float('nan'))
+    fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
+    return fav_df, None
+
 # ---------- УНИВЕРСАЛЬНАЯ ФУНКЦИЯ ПОСТРОЕНИЯ ТАБЛИЦ (ТЕКСТ) ----------
 def build_table_universal(df, title, headers, data_columns):
     if df.empty:
@@ -246,54 +328,6 @@ def format_historical_table(gainers, losers, period_name, from_date, till_date):
     text += build_table_universal(gainers, "📈 Рост", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
     text += build_table_universal(losers, "📉 Падение", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
     return text
-
-# ---------- ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ ДАННЫХ ДЛЯ ИЗБРАННОГО ----------
-async def get_favorites_data(chat_id: int):
-    favs = get_favorites(chat_id)
-    if not favs:
-        return None, "У вас пока нет избранных акций. Добавьте через /add TICKER"
-    shares_df = await get_all_shares()
-    if shares_df.empty:
-        if is_weekend():
-            return None, "📊 Сессия выходного дня. Избранное обновится в рабочие дни."
-        else:
-            return None, "📊 Биржа закрыта. Попробуйте позже."
-    fav_df = shares_df[shares_df['SECID'].isin(favs)].copy()
-    if fav_df.empty:
-        return None, "По вашему списку нет актуальных данных."
-    if 'CHANGEPERCENT' not in fav_df.columns:
-        if 'OPEN' in fav_df.columns and 'LAST' in fav_df.columns:
-            fav_df['CHANGEPERCENT'] = ((fav_df['LAST'] - fav_df['OPEN']) / fav_df['OPEN']) * 100
-        else:
-            return None, "Недостаточно данных для расчёта изменений."
-    if 'SHORTNAME' not in fav_df.columns:
-        fav_df['SHORTNAME'] = fav_df['SECID']
-    now = get_moscow_time()
-    monday = now - datetime.timedelta(days=now.weekday())
-    week_from = monday.strftime("%Y-%m-%d")
-    week_till = now.strftime("%Y-%m-%d")
-    month_from = now.replace(day=1).strftime("%Y-%m-%d")
-    month_till = now.strftime("%Y-%m-%d")
-    week_df = await get_historical_shares(week_from, week_till)
-    month_df = await get_historical_shares(month_from, month_till)
-
-    def get_change(df, ticker):
-        if df.empty:
-            return None
-        ticker_data = df[df['SECID'] == ticker]
-        if ticker_data.empty:
-            return None
-        changes = calc_period_change(ticker_data)
-        if changes.empty:
-            return None
-        return changes.iloc[0]['CHANGE_PCT']
-
-    fav_df['change_week'] = fav_df['SECID'].apply(lambda t: get_change(week_df, t))
-    fav_df['change_month'] = fav_df['SECID'].apply(lambda t: get_change(month_df, t))
-    fav_df['change_week'] = fav_df['change_week'].fillna(float('nan'))
-    fav_df['change_month'] = fav_df['change_month'].fillna(float('nan'))
-    fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
-    return fav_df, None
 
 # ---------- ГЕНЕРАЦИЯ КАРТИНКИ ДЛЯ ИЗБРАННОГО ----------
 def generate_favorites_image(fav_df) -> io.BytesIO:
