@@ -440,21 +440,26 @@ async def process_refresh(callback: CallbackQuery):
 # ---------- FASTAPI ПРИЛОЖЕНИЕ ----------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db()
-    webhook_url = f"{BASE_URL}/webhook"
-    # Пытаемся установить вебхук с повторными попытками
-    for attempt in range(5):
-        try:
-            await bot.delete_webhook(drop_pending_updates=True)
-            await bot.set_webhook(webhook_url)
-            logging.info(f"✅ Webhook установлен на {webhook_url} (попытка {attempt+1})")
-            break
-        except Exception as e:
-            logging.error(f"❌ Ошибка установки вебхука (попытка {attempt+1}): {e}")
-            await asyncio.sleep(2)
-    else:
-        logging.error("❌ Не удалось установить вебхук после 5 попыток")
+    logging.info("Запуск lifespan...")
+    try:
+        init_db()
+        webhook_url = f"{BASE_URL}/webhook"
+        for attempt in range(5):
+            try:
+                await bot.delete_webhook(drop_pending_updates=True)
+                await bot.set_webhook(webhook_url)
+                logging.info(f"✅ Webhook установлен на {webhook_url} (попытка {attempt+1})")
+                break
+            except Exception as e:
+                logging.error(f"❌ Ошибка установки вебхука (попытка {attempt+1}): {e}")
+                await asyncio.sleep(2)
+        else:
+            logging.error("❌ Не удалось установить вебхук после 5 попыток")
+    except Exception as e:
+        logging.error(f"❌ Критическая ошибка в lifespan: {e}", exc_info=True)
+        # Не выкидываем исключение, чтобы приложение не упало
     yield
+    logging.info("Завершение lifespan...")
     await bot.delete_webhook()
 
 app = FastAPI(lifespan=lifespan)
