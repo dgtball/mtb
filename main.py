@@ -203,11 +203,10 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
                 name = name[:22] + "…"
             price = f"{row['LAST']:.2f}" if isinstance(row['LAST'], (int, float)) else str(row['LAST'])
             change = row['CHANGEPERCENT']
-            sign = "▲" if change > 0 else "▼"
             change_str = f"{sign} {change:.2f}%"
             table_data.append([ticker, name, price, change_str])
         headers = ["Тикер", "Название", "Цена", "Изменение"]
-        table = tabulate(table_data, headers=headers, tablefmt="pipe", numalign="right", stralign="left")
+        table = tabulate(table_data, headers=headers, tablefmt="plain", numalign="right", stralign="left")
         return f"<b>{title}</b>\n<pre>{table}</pre>\n"
 
     text = header
