@@ -4,11 +4,12 @@ import time
 import asyncio
 import sqlite3
 import datetime
-from io import BytesIO
+from contextlib import asynccontextmanager
 
+from fastapi import FastAPI, Request, Response
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputFile
+from aiogram.types import Update, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 import aiohttp
 import pandas as pd
 from tabulate import tabulate
@@ -17,6 +18,10 @@ from tabulate import tabulate
 API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
+
+BASE_URL = os.getenv("RENDER_EXTERNAL_URL")  # автоматический URL от Render
+if not BASE_URL:
+    raise ValueError("RENDER_EXTERNAL_URL не задан")
 
 TOP_N = 10
 DB_PATH = "favorites.db"
@@ -166,7 +171,7 @@ def calc_period_change(df: pd.DataFrame) -> pd.DataFrame:
     combined['CHANGE_PCT'] = ((combined['CLOSE'] - combined['OPEN']) / combined['OPEN']) * 100
     return combined.reset_index()
 
-# ---------- УНИВЕРСАЛЬНАЯ ФУНКЦИЯ ПОСТРОЕНИЯ ТАБЛИЦ (с simple) ----------
+# ---------- УНИВЕРСАЛЬНАЯ ФУНКЦИЯ ПОСТРОЕНИЯ ТАБЛИЦ ----------
 def build_table_universal(df, title, headers, data_columns):
     if df.empty:
         return ""
@@ -186,7 +191,6 @@ def build_table_universal(df, title, headers, data_columns):
     table = tabulate(table_data, headers=headers, tablefmt="simple", numalign="right", stralign="left")
     return f"<b>{title}</b>\n<pre>{table}</pre>\n"
 
-# ---------- ФОРМАТИРОВАНИЕ СООБЩЕНИЙ ----------
 def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, update_time: str, is_weekend: bool = False) -> str:
     if index_value is not None:
         header = f"📊 Индекс МосБиржи: {index_value:.2f}\n"
@@ -196,7 +200,6 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
         else:
             header = "📊 Биржа закрыта\n"
     header += f"🕒 Обновлено: {update_time}\n\n"
-
     text = header
     text += build_table_universal(gainers, "📈 Лидеры роста", ["Тикер", "Название", "Цена", "Изменение"], ['SECID', 'SHORTNAME', 'LAST', 'CHANGEPERCENT'])
     text += build_table_universal(losers, "📉 Лидеры падения", ["Тикер", "Название", "Цена", "Изменение"], ['SECID', 'SHORTNAME', 'LAST', 'CHANGEPERCENT'])
@@ -224,12 +227,11 @@ async def cmd_start(message: types.Message):
 
 @dp.message(Command("top"))
 async def cmd_top(message: types.Message):
-    loading_msg = await message.answer("⏳ Загружаю данные с Мосбиржи...")
+    await message.answer("⏳ Загружаю данные...")
     try:
         shares_df = await get_all_shares()
         gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
         if gainers.empty and losers.empty:
-            await loading_msg.delete()
             if is_weekend():
                 await message.answer("📊 Сессия выходного дня. Данные обновятся в рабочие дни.")
             else:
@@ -244,15 +246,13 @@ async def cmd_top(message: types.Message):
             ]
         )
         await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
-        await loading_msg.delete()
     except Exception as e:
-        await loading_msg.delete()
         logging.error(f"Ошибка в /top: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}")
 
 @dp.message(Command("week"))
 async def cmd_week(message: types.Message):
-    loading_msg = await message.answer("⏳ Загружаю данные за неделю...")
+    await message.answer("⏳ Загружаю данные за неделю...")
     try:
         now = get_moscow_time()
         monday = now - datetime.timedelta(days=now.weekday())
@@ -260,11 +260,9 @@ async def cmd_week(message: types.Message):
         till_date = now.strftime("%Y-%m-%d")
         df = await get_historical_shares(from_date, till_date)
         if df.empty:
-            await loading_msg.delete()
             await message.answer("Нет данных за неделю.")
             return
         changes = calc_period_change(df)
-        # Один вызов get_all_shares для фильтрации и получения названий
         shares_all = await get_all_shares()
         if not shares_all.empty:
             allowed_tickers = shares_all[shares_all['LISTLEVEL'] < 3]['SECID'].unique()
@@ -275,15 +273,13 @@ async def cmd_week(message: types.Message):
         losers = changes.nsmallest(TOP_N, 'CHANGE_PCT')
         text = format_historical_table(gainers, losers, "неделю", from_date, till_date)
         await message.answer(text, parse_mode="HTML")
-        await loading_msg.delete()
     except Exception as e:
-        await loading_msg.delete()
         logging.error(f"Ошибка в /week: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}")
 
 @dp.message(Command("month"))
 async def cmd_month(message: types.Message):
-    loading_msg = await message.answer("⏳ Загружаю данные за месяц...")
+    await message.answer("⏳ Загружаю данные за месяц...")
     try:
         now = get_moscow_time()
         first_day = now.replace(day=1)
@@ -291,11 +287,9 @@ async def cmd_month(message: types.Message):
         till_date = now.strftime("%Y-%m-%d")
         df = await get_historical_shares(from_date, till_date)
         if df.empty:
-            await loading_msg.delete()
             await message.answer("Нет данных за месяц.")
             return
         changes = calc_period_change(df)
-        # Один вызов get_all_shares
         shares_all = await get_all_shares()
         if not shares_all.empty:
             allowed_tickers = shares_all[shares_all['LISTLEVEL'] < 3]['SECID'].unique()
@@ -306,9 +300,7 @@ async def cmd_month(message: types.Message):
         losers = changes.nsmallest(TOP_N, 'CHANGE_PCT')
         text = format_historical_table(gainers, losers, "месяц", from_date, till_date)
         await message.answer(text, parse_mode="HTML")
-        await loading_msg.delete()
     except Exception as e:
-        await loading_msg.delete()
         logging.error(f"Ошибка в /month: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}")
 
@@ -395,17 +387,39 @@ async def process_refresh(callback: CallbackQuery):
         logging.error(f"Ошибка обновления: {e}")
         await callback.message.answer(f"❌ Ошибка обновления: {e}")
 
-# ---------- ЗАПУСК ----------
-async def main():
+# ---------- FASTAPI ПРИЛОЖЕНИЕ ----------
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Инициализация БД
     init_db()
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-        logging.info("Webhook удалён")
-    except Exception as e:
-        logging.warning(f"Не удалось удалить вебхук: {e}")
-    await asyncio.sleep(1)
-    logging.info("Запускаем polling...")
-    await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
+    # Установка вебхука при старте
+    webhook_url = f"{BASE_URL}/webhook"
+    await bot.delete_webhook(drop_pending_updates=True)
+    await bot.set_webhook(webhook_url)
+    logging.info(f"Webhook установлен на {webhook_url}")
+    yield
+    # При завершении — удаляем вебхук
+    await bot.delete_webhook()
 
+app = FastAPI(lifespan=lifespan)
+
+@app.get("/")
+async def index():
+    return {"status": "Bot is running!"}
+
+@app.post("/webhook")
+async def webhook(request: Request):
+    json_data = await request.json()
+    update = Update(**json_data)
+    await dp.feed_update(bot, update)
+    return Response(status_code=200)
+
+# Для теста вебхука (на случай GET-запросов от Telegram)
+@app.get("/webhook")
+async def webhook_get():
+    return {"status": "webhook is ready"}
+
+# ---------- ЗАПУСК ----------
 if __name__ == "__main__":
-    asyncio.run(main())
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
