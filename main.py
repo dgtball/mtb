@@ -459,10 +459,16 @@ async def index():
 
 @app.post("/webhook")
 async def webhook(request: Request):
-    json_data = await request.json()
-    update = Update(**json_data)
-    await dp.feed_update(bot, update)
-    return Response(status_code=200)
+    try:
+        json_data = await request.json()
+        update = Update(**json_data)
+        await dp.feed_update(bot, update)
+        return Response(status_code=200)
+    except Exception as e:
+        # Логируем ошибку, чтобы увидеть её в логах Render
+        logging.error(f"Webhook error: {e}", exc_info=True)
+        # Возвращаем 200, чтобы Telegram не переотправлял одно и то же обновление
+        return Response(status_code=200)
 
 # Для теста вебхука (на случай GET-запросов от Telegram)
 @app.get("/webhook")
