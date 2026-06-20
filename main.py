@@ -53,6 +53,7 @@ last_messages = {}       # chat_id -> message_id
 update_tasks = {}        # chat_id -> asyncio.Task
 auto_update_enabled = {} # chat_id -> True/False
 user_state = {}          # chat_id -> 'add' / 'remove'
+http_session = None      # единая aiohttp сессия
 
 # ---------- КЛАВИАТУРА ----------
 def main_keyboard():
@@ -114,43 +115,59 @@ def is_weekend():
     now = get_moscow_time()
     return now.weekday() in (5, 6)
 
-# ---------- ЗАПРОСЫ К MOEX ----------
+# ---------- ЗАПРОСЫ К MOEX (используем глобальную сессию) ----------
 async def get_all_shares():
-    async with aiohttp.ClientSession() as session:
-        url = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=marketdata,securities"
-        try:
-            async with session.get(url) as resp:
-                json_data = await resp.json()
-                if 'marketdata' not in json_data or 'securities' not in json_data:
-                    return pd.DataFrame()
-                md_columns = json_data['marketdata']['columns']
-                md_rows = json_data['marketdata']['data']
-                market_df = pd.DataFrame(md_rows, columns=md_columns)
-                sec_columns = json_data['securities']['columns']
-                sec_rows = json_data['securities']['data']
-                sec_df = pd.DataFrame(sec_rows, columns=sec_columns)
-                sec_df = sec_df[['SECID', 'SHORTNAME', 'LISTLEVEL']].copy()
-                merged = pd.merge(market_df, sec_df, on='SECID', how='left')
-                return merged
-        except Exception as e:
-            logging.error(f"Ошибка загрузки: {e}")
-            return pd.DataFrame()
+    global http_session
+    url = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=marketdata,securities"
+    try:
+        async with http_session.get(url) as resp:
+            json_data = await resp.json()
+            if 'marketdata' not in json_data or 'securities' not in json_data:
+                return pd.DataFrame()
+            md_columns = json_data['marketdata']['columns']
+            md_rows = json_data['marketdata']['data']
+            market_df = pd.DataFrame(md_rows, columns=md_columns)
+            sec_columns = json_data['securities']['columns']
+            sec_rows = json_data['securities']['data']
+            sec_df = pd.DataFrame(sec_rows, columns=sec_columns)
+            sec_df = sec_df[['SECID', 'SHORTNAME', 'LISTLEVEL']].copy()
+            merged = pd.merge(market_df, sec_df, on='SECID', how='left')
+            return merged
+    except Exception as e:
+        logging.error(f"Ошибка загрузки: {e}")
+        return pd.DataFrame()
 
 async def get_moex_index():
-    async with aiohttp.ClientSession() as session:
-        url = "https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX.json?iss.meta=off"
-        try:
-            async with session.get(url) as resp:
-                json_data = await resp.json()
-                columns = json_data['securities']['columns']
-                data_rows = json_data['securities']['data']
-                if data_rows:
-                    last_idx = columns.index('LAST')
-                    return float(data_rows[0][last_idx])
-        except Exception:
-            return None
+    global http_session
+    url = "https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX.json?iss.meta=off"
+    try:
+        async with http_session.get(url) as resp:
+            json_data = await resp.json()
+            columns = json_data['securities']['columns']
+            data_rows = json_data['securities']['data']
+            if data_rows:
+                last_idx = columns.index('LAST')
+                return float(data_rows[0][last_idx])
+    except Exception:
         return None
+    return None
 
+async def get_historical_shares(from_date: str, till_date: str):
+    global http_session
+    url = f"https://iss.moex.com/iss/history/engines/stock/markets/shares/boards/TQBR/securities.json?from={from_date}&till={till_date}&iss.meta=off&iss.only=history"
+    try:
+        async with http_session.get(url) as resp:
+            json_data = await resp.json()
+            if 'history' not in json_data:
+                return pd.DataFrame()
+            columns = json_data['history']['columns']
+            data_rows = json_data['history']['data']
+            df = pd.DataFrame(data_rows, columns=columns)
+            return df
+    except Exception:
+        return pd.DataFrame()
+
+# ---------- ОСТАЛЬНЫЕ ФУНКЦИИ БЕЗ ИЗМЕНЕНИЙ ----------
 def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool = True):
     if data.empty:
         return pd.DataFrame(), pd.DataFrame()
@@ -179,22 +196,6 @@ def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool 
     losers = data.nsmallest(top_n, 'CHANGEPERCENT')
     return gainers, losers
 
-# ---------- ИСТОРИЧЕСКИЕ ДАННЫЕ ----------
-async def get_historical_shares(from_date: str, till_date: str):
-    async with aiohttp.ClientSession() as session:
-        url = f"https://iss.moex.com/iss/history/engines/stock/markets/shares/boards/TQBR/securities.json?from={from_date}&till={till_date}&iss.meta=off&iss.only=history"
-        try:
-            async with session.get(url) as resp:
-                json_data = await resp.json()
-                if 'history' not in json_data:
-                    return pd.DataFrame()
-                columns = json_data['history']['columns']
-                data_rows = json_data['history']['data']
-                df = pd.DataFrame(data_rows, columns=columns)
-                return df
-        except Exception:
-            return pd.DataFrame()
-
 def calc_period_change(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
@@ -207,12 +208,7 @@ def calc_period_change(df: pd.DataFrame) -> pd.DataFrame:
     combined['CHANGE_PCT'] = ((combined['CLOSE'] - combined['OPEN']) / combined['OPEN']) * 100
     return combined.reset_index()
 
-# ---------- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ИСТОРИЧЕСКОЙ ЦЕНЫ ЗАКРЫТИЯ ----------
 async def get_historical_close(ticker: str, target_date: datetime.date) -> float | None:
-    """
-    Возвращает цену закрытия для заданного тикера на target_date
-    или на ближайший торговый день до target_date.
-    """
     from_date = (target_date - datetime.timedelta(days=10)).strftime("%Y-%m-%d")
     till_date = target_date.strftime("%Y-%m-%d")
     df = await get_historical_shares(from_date, till_date)
@@ -225,7 +221,6 @@ async def get_historical_close(ticker: str, target_date: datetime.date) -> float
     ticker_data = ticker_data.sort_values('TRADEDATE')
     return ticker_data.iloc[-1]['CLOSE']
 
-# ---------- ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ ДАННЫХ ДЛЯ ИЗБРАННОГО (УЛУЧШЕННАЯ) ----------
 async def get_favorites_data(chat_id: int):
     favs = get_favorites(chat_id)
     if not favs:
@@ -248,37 +243,26 @@ async def get_favorites_data(chat_id: int):
         fav_df['SHORTNAME'] = fav_df['SECID']
 
     now = get_moscow_time()
-    today = now.date()
-
-    # Для недели: берём пятницу (последний день перед понедельником)
     monday = now - datetime.timedelta(days=now.weekday())
     week_reference = (monday - datetime.timedelta(days=1)).date()
-
-    # Для месяца: берём последний день предыдущего месяца
     first_of_month = now.replace(day=1)
     month_reference = (first_of_month - datetime.timedelta(days=1)).date()
 
     week_changes = []
     month_changes = []
-
     for _, row in fav_df.iterrows():
         ticker = row['SECID']
         current_price = row['LAST']
-
-        # Цена закрытия на пятницу (или ближайший торговый день)
         week_price = await get_historical_close(ticker, week_reference)
         if week_price is not None and week_price > 0:
             week_change = ((current_price - week_price) / week_price) * 100
         else:
             week_change = None
-
-        # Цена закрытия на последний день предыдущего месяца
         month_price = await get_historical_close(ticker, month_reference)
         if month_price is not None and month_price > 0:
             month_change = ((current_price - month_price) / month_price) * 100
         else:
             month_change = None
-
         week_changes.append(week_change)
         month_changes.append(month_change)
 
@@ -289,7 +273,7 @@ async def get_favorites_data(chat_id: int):
     fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
     return fav_df, None
 
-# ---------- УНИВЕРСАЛЬНАЯ ФУНКЦИЯ ПОСТРОЕНИЯ ТАБЛИЦ (ТЕКСТ) ----------
+# ---------- ФОРМАТИРОВАНИЕ ТАБЛИЦ ----------
 def build_table_universal(df, title, headers, data_columns):
     if df.empty:
         return ""
@@ -329,7 +313,7 @@ def format_historical_table(gainers, losers, period_name, from_date, till_date):
     text += build_table_universal(losers, "📉 Падение", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
     return text
 
-# ---------- ГЕНЕРАЦИЯ КАРТИНКИ ДЛЯ ИЗБРАННОГО ----------
+# ---------- ГЕНЕРАЦИЯ КАРТИНКИ ИЗБРАННОГО ----------
 def generate_favorites_image(fav_df) -> io.BytesIO:
     if fav_df.empty:
         return None
@@ -366,7 +350,7 @@ def generate_favorites_image(fav_df) -> io.BytesIO:
     plt.close()
     return buf
 
-# ---------- УНИВЕРСАЛЬНАЯ ОТПРАВКА ТОПА ----------
+# ---------- ОТПРАВКА ТОПА И АВТООБНОВЛЕНИЕ ----------
 async def send_top(message: types.Message, period: str = 'day'):
     loading_msg = await message.answer("⏳ Загружаю данные...")
     try:
@@ -427,7 +411,6 @@ async def send_top(message: types.Message, period: str = 'day'):
         logging.error(f"❌ Ошибка в send_top (period={period}): {e}", exc_info=True)
         await message.answer(f"❌ Ошибка при загрузке данных: {e}")
 
-# ---------- АВТООБНОВЛЕНИЕ ----------
 async def auto_update_task(chat_id: int, message_id: int):
     while True:
         await asyncio.sleep(30)
@@ -449,7 +432,7 @@ async def auto_update_task(chat_id: int, message_id: int):
             logging.error(f"Ошибка автообновления для чата {chat_id}: {e}")
             break
 
-# ---------- ОБРАБОТЧИКИ КОМАНД И КНОПОК ----------
+# ---------- ОБРАБОТЧИКИ КОМАНД ----------
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     chat_id = message.chat.id
@@ -579,7 +562,9 @@ async def process_refresh(callback: CallbackQuery):
 # ---------- FASTAPI ПРИЛОЖЕНИЕ ----------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global http_session
     logging.info("Запуск lifespan...")
+    http_session = aiohttp.ClientSession()
     try:
         # Проверка Supabase
         try:
@@ -608,10 +593,10 @@ async def lifespan(app: FastAPI):
         if not task.done():
             task.cancel()
     await bot.delete_webhook()
+    await http_session.close()
 
 app = FastAPI(lifespan=lifespan)
 
-# ---- ОБРАБОТЧИКИ HEAD ДЛЯ RENDER ----
 @app.head("/")
 async def head_root():
     return Response(status_code=200)
@@ -624,7 +609,6 @@ async def head_webhook():
 async def head_health():
     return Response(status_code=200)
 
-# ---- ОБЫЧНЫЕ ЭНДПОИНТЫ ----
 @app.get("/")
 async def index():
     return {"status": "Bot is running!"}
