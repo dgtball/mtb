@@ -7,13 +7,16 @@ import io
 from contextlib import asynccontextmanager
 
 import matplotlib
-matplotlib.use('Agg')  # обязательно для работы на сервере
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from fastapi import FastAPI, Request, Response
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import Update, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, InputFile
+from aiogram.types import (
+    Update, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
+    ReplyKeyboardMarkup, KeyboardButton, BufferedInputFile
+)
 import aiohttp
 import pandas as pd
 from tabulate import tabulate
@@ -60,6 +63,13 @@ def main_keyboard():
         [KeyboardButton(text="➕ Добавить тикер"), KeyboardButton(text="➖ Удалить тикер")],
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=False)
+
+# ---------- УДАЛЕНИЕ СООБЩЕНИЙ ----------
+async def safe_delete_message(chat_id: int, message_id: int):
+    try:
+        await bot.delete_message(chat_id, message_id)
+    except Exception as e:
+        logging.warning(f"Не удалось удалить сообщение {message_id}: {e}")
 
 # ---------- РАБОТА С БАЗОЙ ДАННЫХ (SUPABASE) ----------
 def add_favorite(chat_id: int, ticker: str) -> bool:
@@ -119,7 +129,7 @@ async def get_all_shares():
                 sec_columns = json_data['securities']['columns']
                 sec_rows = json_data['securities']['data']
                 sec_df = pd.DataFrame(sec_rows, columns=sec_columns)
-                sec_df = sec_df[['SECID', 'SHORTNAME', 'LISTLEVEL']]
+                sec_df = sec_df[['SECID', 'SHORTNAME', 'LISTLEVEL']].copy()
                 merged = pd.merge(market_df, sec_df, on='SECID', how='left')
                 return merged
         except Exception as e:
@@ -145,7 +155,7 @@ def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool 
     if data.empty:
         return pd.DataFrame(), pd.DataFrame()
     if exclude_level3 and 'LISTLEVEL' in data.columns:
-        data = data[data['LISTLEVEL'] < 3]
+        data = data[data['LISTLEVEL'] < 3].copy()
     data = data.copy()
     if 'CHANGEPERCENT' not in data.columns:
         if 'OPEN' in data.columns and 'LAST' in data.columns:
@@ -188,6 +198,7 @@ async def get_historical_shares(from_date: str, till_date: str):
 def calc_period_change(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
+    df = df.copy()
     df['TRADEDATE'] = pd.to_datetime(df['TRADEDATE'])
     df = df.sort_values('TRADEDATE')
     first = df.groupby('SECID').first()[['OPEN']]
@@ -314,7 +325,7 @@ def generate_favorites_image(fav_df) -> io.BytesIO:
                     table[(i+1, j)].set_facecolor('lightgreen')
                 elif val != "—" and val.startswith('-'):
                     table[(i+1, j)].set_facecolor('lightcoral')
-    ax.set_title("⭐ Избранные акции", fontsize=14, fontweight='bold', pad=20)
+    ax.set_title("Избранные акции", fontsize=14, fontweight='bold', pad=20)
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.2)
     buf.seek(0)
@@ -423,14 +434,17 @@ async def cmd_start(message: types.Message):
 @dp.message(lambda msg: msg.text == "📈 Топ дня")
 async def top_day_button(message: types.Message):
     await send_top(message, 'day')
+    await safe_delete_message(message.chat.id, message.message_id)
 
 @dp.message(lambda msg: msg.text == "📊 Топ недели")
 async def top_week_button(message: types.Message):
     await send_top(message, 'week')
+    await safe_delete_message(message.chat.id, message.message_id)
 
 @dp.message(lambda msg: msg.text == "📉 Топ месяца")
 async def top_month_button(message: types.Message):
     await send_top(message, 'month')
+    await safe_delete_message(message.chat.id, message.message_id)
 
 @dp.message(lambda msg: msg.text == "⭐ Избранные")
 async def favorites_button(message: types.Message):
@@ -440,28 +454,36 @@ async def favorites_button(message: types.Message):
         if error:
             await loading_msg.delete()
             await message.answer(error)
+            await safe_delete_message(message.chat.id, message.message_id)
             return
         img_buf = generate_favorites_image(fav_df)
         if img_buf is None:
             await loading_msg.delete()
             await message.answer("Нет данных для отображения.")
+            await safe_delete_message(message.chat.id, message.message_id)
             return
-        await message.answer_photo(photo=InputFile(img_buf, filename="favorites.png"))
+        await message.answer_photo(
+            photo=BufferedInputFile(img_buf.getvalue(), filename="favorites.png")
+        )
         await loading_msg.delete()
+        await safe_delete_message(message.chat.id, message.message_id)
     except Exception as e:
         await loading_msg.delete()
         logging.error(f"❌ Ошибка в favorites: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка при загрузке избранного: {e}")
+        await safe_delete_message(message.chat.id, message.message_id)
 
 @dp.message(lambda msg: msg.text == "➕ Добавить тикер")
 async def add_ticker_button(message: types.Message):
     user_state[message.chat.id] = 'add'
     await message.answer("Введите тикер для добавления (например, SBER или SBER, GAZP):")
+    await safe_delete_message(message.chat.id, message.message_id)
 
 @dp.message(lambda msg: msg.text == "➖ Удалить тикер")
 async def remove_ticker_button(message: types.Message):
     user_state[message.chat.id] = 'remove'
     await message.answer("Введите тикер для удаления (например, SBER или SBER, GAZP):")
+    await safe_delete_message(message.chat.id, message.message_id)
 
 @dp.message()
 async def handle_text(message: types.Message):
@@ -485,8 +507,10 @@ async def handle_text(message: types.Message):
         await message.answer("\n".join(results) if results else "Ничего не сделано.")
         del user_state[chat_id]
         await message.answer("✅ Готово. Выберите действие из меню.", reply_markup=main_keyboard())
+        await safe_delete_message(chat_id, message.message_id)
     else:
         await message.answer("Используйте кнопки меню.", reply_markup=main_keyboard())
+        await safe_delete_message(chat_id, message.message_id)
 
 @dp.callback_query(lambda c: c.data == "refresh")
 async def process_refresh(callback: CallbackQuery):
