@@ -566,13 +566,13 @@ async def lifespan(app: FastAPI):
     logging.info("Запуск lifespan...")
     http_session = aiohttp.ClientSession()
     try:
-        # Проверка Supabase
+        # проверка Supabase
         try:
             supabase.table("favorites").select("ticker").limit(1).execute()
             logging.info("✅ Подключение к Supabase установлено")
         except Exception as e:
             logging.error(f"❌ Ошибка подключения к Supabase: {e}")
-
+        # установка вебхука
         webhook_url = f"{BASE_URL}/webhook"
         for attempt in range(5):
             try:
@@ -589,10 +589,11 @@ async def lifespan(app: FastAPI):
         logging.error(f"❌ Критическая ошибка в lifespan: {e}", exc_info=True)
     yield
     logging.info("Завершение lifespan...")
+    # Отмена задач автообновления
     for task in update_tasks.values():
         if not task.done():
             task.cancel()
-    await bot.delete_webhook()
+    # Закрытие сессии
     await http_session.close()
 
 app = FastAPI(lifespan=lifespan)
