@@ -440,15 +440,21 @@ async def process_refresh(callback: CallbackQuery):
 # ---------- FASTAPI ПРИЛОЖЕНИЕ ----------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Инициализация БД
     init_db()
-    # Установка вебхука при старте
     webhook_url = f"{BASE_URL}/webhook"
-    await bot.delete_webhook(drop_pending_updates=True)
-    await bot.set_webhook(webhook_url)
-    logging.info(f"Webhook установлен на {webhook_url}")
+    # Пытаемся установить вебхук с повторными попытками
+    for attempt in range(5):
+        try:
+            await bot.delete_webhook(drop_pending_updates=True)
+            await bot.set_webhook(webhook_url)
+            logging.info(f"✅ Webhook установлен на {webhook_url} (попытка {attempt+1})")
+            break
+        except Exception as e:
+            logging.error(f"❌ Ошибка установки вебхука (попытка {attempt+1}): {e}")
+            await asyncio.sleep(2)
+    else:
+        logging.error("❌ Не удалось установить вебхук после 5 попыток")
     yield
-    # При завершении — удаляем вебхук
     await bot.delete_webhook()
 
 app = FastAPI(lifespan=lifespan)
@@ -474,6 +480,16 @@ async def webhook(request: Request):
 @app.get("/webhook")
 async def webhook_get():
     return {"status": "webhook is ready"}
+
+@app.get("/set_webhook")
+async def set_webhook():
+    webhook_url = f"{BASE_URL}/webhook"
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        await bot.set_webhook(webhook_url)
+        return {"status": "ok", "url": webhook_url}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 # ---------- ЗАПУСК ----------
 if __name__ == "__main__":
