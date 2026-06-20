@@ -4,6 +4,7 @@ import time
 import asyncio
 import sqlite3
 from io import BytesIO
+import re
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -66,6 +67,11 @@ def get_favorites(chat_id: int) -> list:
     rows = c.fetchall()
     conn.close()
     return [row[0] for row in rows]
+
+def escape_markdown(text: str) -> str:
+    """Экранирует специальные символы для MarkdownV2."""
+    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    return re.sub(r'([{}])'.format(re.escape(escape_chars)), r'\\\1', str(text))
 
 # ---------- ФУНКЦИИ ДЛЯ РАБОТЫ С MOEX ----------
 async def get_all_shares():
@@ -154,27 +160,28 @@ def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool 
 
 # ---------- ФОРМАТИРОВАНИЕ СООБЩЕНИЙ ----------
 def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, update_time: str) -> str:
-    """
-    Формирует сообщение в виде Markdown-таблицы (без моноширинного блока).
-    """
     if index_value is not None:
-        header = f"📊 *Индекс МосБиржи* {index_value:.2f}\n"
+        header = f"📊 *Индекс МосБиржи* {escape_markdown(f'{index_value:.2f}')}\n"
     else:
         header = "📊 *Индекс МосБиржи* временно недоступен\n"
-    header += f"🕒 Обновлено: {update_time}\n\n"
+    header += f"🕒 Обновлено: {escape_markdown(update_time)}\n\n"
 
     def build_table(df, title):
         if df.empty:
             return ""
         rows = []
         for _, row in df.iterrows():
-            ticker = row['SECID']
-            name = row.get('SECNAME', ticker)
+            ticker = escape_markdown(row['SECID'])
+            name = row.get('SECNAME', row['SECID'])
+            # Обрезаем и экранируем
             if len(name) > 25:
                 name = name[:22] + "…"
+            name = escape_markdown(name)
             price = f"{row['LAST']:.2f}" if isinstance(row['LAST'], (int, float)) else str(row['LAST'])
+            price = escape_markdown(price)
             change = row['CHANGEPERCENT']
             sign = "▲" if change > 0 else "▼"
+            # Изменение НЕ экранируем, потому что мы сами ставим звёздочки
             change_str = f"*{sign} {change:.2f}%*"
             rows.append([ticker, name, price, change_str])
         table = f"### {title}\n"
@@ -188,7 +195,6 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
     text += build_table(gainers, "📈 Лидеры роста")
     text += build_table(losers, "📉 Лидеры падения")
     return text
-
 # ---------- ГЕНЕРАЦИЯ КАРТИНКИ (Идея 3) ----------
 def create_table_image(df: pd.DataFrame, title: str) -> BytesIO:
     """
@@ -365,7 +371,8 @@ async def main():
     # Инициализация БД
     init_db()
     # Удаляем вебхук (на случай, если он остался)
-    await bot.delete_webhook()
+    await bot.delete_webhook(drop_pending_updates=True)   # добавили drop_pending_updates
+    await asyncio.sleep(0.5)
     # Запускаем polling
     await dp.start_polling(bot)
 
