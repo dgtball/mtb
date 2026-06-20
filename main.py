@@ -93,7 +93,7 @@ async def get_all_shares():
                 sec_columns = json_data['securities']['columns']
                 sec_rows = json_data['securities']['data']
                 sec_df = pd.DataFrame(sec_rows, columns=sec_columns)
-                sec_df = sec_df[['SECID', 'SECNAME', 'LISTLEVEL']]
+                sec_df = sec_df[['SECID', 'SHORTNAME', 'LISTLEVEL']]
                 merged = pd.merge(market_df, sec_df, on='SECID', how='left')
                 return merged
         except Exception as e:
@@ -125,11 +125,11 @@ def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool 
             data['CHANGEPERCENT'] = ((data['LAST'] - data['OPEN']) / data['OPEN']) * 100
         else:
             return pd.DataFrame(), pd.DataFrame()
-    required = ['SECID', 'CHANGEPERCENT', 'LAST', 'SECNAME']
+    required = ['SECID', 'CHANGEPERCENT', 'LAST', 'SHORTNAME']
     for col in required:
         if col not in data.columns:
-            if col == 'SECNAME':
-                data['SECNAME'] = data['SECID']
+            if col == 'SHORTNAME':
+                data['SHORTNAME'] = data['SECID']
             else:
                 return pd.DataFrame(), pd.DataFrame()
     data = data.dropna(subset=['SECID', 'CHANGEPERCENT', 'LAST'])
@@ -198,7 +198,7 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
         table_data = []
         for _, row in df.iterrows():
             ticker = row['SECID']
-            name = row.get('SECNAME', ticker)
+            name = row.get('SHORTNAME', ticker)
             if len(name) > 25:
                 name = name[:22] + "…"
             price = f"{row['LAST']:.2f}" if isinstance(row['LAST'], (int, float)) else str(row['LAST'])
@@ -218,7 +218,7 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
 def create_table_image(df: pd.DataFrame, title: str) -> BytesIO:
     if df.empty:
         return None
-    data = df[['SECID', 'SECNAME', 'LAST', 'CHANGEPERCENT']].head(TOP_N).copy()
+    data = df[['SECID', 'SHORTNAME', 'LAST', 'CHANGEPERCENT']].head(TOP_N).copy()
     data['CHANGEPERCENT'] = data['CHANGEPERCENT'].apply(lambda x: f"{x:+.2f}%")
     data['LAST'] = data['LAST'].apply(lambda x: f"{x:.2f}")
     data.columns = ['Тикер', 'Название', 'Цена', 'Изменение']
@@ -412,7 +412,7 @@ async def cmd_favorites(message: types.Message):
             return
     text = "⭐ Ваши избранные акции:\n\n"
     for _, row in fav_df.iterrows():
-        name = row.get('SECNAME', row['SECID'])
+        name = row.get('SHORTNAME', row['SECID'])
         price = row['LAST']
         change = row['CHANGEPERCENT']
         sign = "▲" if change > 0 else "▼"
