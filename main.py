@@ -2,7 +2,6 @@ import os
 import logging
 import time
 import asyncio
-import sqlite3
 import datetime
 from contextlib import asynccontextmanager
 
@@ -13,6 +12,7 @@ from aiogram.types import Update, InlineKeyboardMarkup, InlineKeyboardButton, Ca
 import aiohttp
 import pandas as pd
 from tabulate import tabulate
+from supabase import create_client, Client
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -23,54 +23,72 @@ BASE_URL = os.getenv("RENDER_EXTERNAL_URL")
 if not BASE_URL:
     raise ValueError("RENDER_EXTERNAL_URL не задан")
 
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("SUPABASE_URL и SUPABASE_KEY должны быть заданы")
+
 TOP_N = 10
-DB_PATH = "favorites.db"
 
 # ---------- ЛОГИРОВАНИЕ ----------
 logging.basicConfig(level=logging.INFO)
+
+# ---------- ИНИЦИАЛИЗАЦИЯ SUPABASE ----------
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ---------- ИНИЦИАЛИЗАЦИЯ БОТА ----------
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
-# ---------- РАБОТА С БАЗОЙ ДАННЫХ ----------
+# ---------- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ДЛЯ АВТООБНОВЛЕНИЯ ----------
+last_messages = {}       # chat_id -> message_id
+update_tasks = {}        # chat_id -> asyncio.Task
+auto_update_enabled = {} # chat_id -> True/False
+
+# ---------- РАБОТА С БАЗОЙ ДАННЫХ (SUPABASE) ----------
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS favorites
-                 (chat_id INTEGER, ticker TEXT, 
-                  PRIMARY KEY (chat_id, ticker))''')
-    conn.commit()
-    conn.close()
+    # Таблица создаётся один раз вручную через SQL-запрос в Supabase:
+    # CREATE TABLE IF NOT EXISTS favorites (
+    #     chat_id BIGINT NOT NULL,
+    #     ticker TEXT NOT NULL,
+    #     PRIMARY KEY (chat_id, ticker)
+    # );
+    # Функция оставлена для совместимости.
+    pass
 
 def add_favorite(chat_id: int, ticker: str) -> bool:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
     try:
-        c.execute("INSERT INTO favorites (chat_id, ticker) VALUES (?, ?)", (chat_id, ticker.upper()))
-        conn.commit()
-        result = True
-    except sqlite3.IntegrityError:
-        result = False
-    conn.close()
-    return result
+        supabase.table("favorites").insert({
+            "chat_id": chat_id,
+            "ticker": ticker.upper()
+        }).execute()
+        return True
+    except Exception as e:
+        logging.error(f"Ошибка добавления в Supabase: {e}")
+        return False
 
 def remove_favorite(chat_id: int, ticker: str) -> bool:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("DELETE FROM favorites WHERE chat_id = ? AND ticker = ?", (chat_id, ticker.upper()))
-    conn.commit()
-    deleted = c.rowcount > 0
-    conn.close()
-    return deleted
+    try:
+        result = supabase.table("favorites")\
+            .delete()\
+            .eq("chat_id", chat_id)\
+            .eq("ticker", ticker.upper())\
+            .execute()
+        return len(result.data) > 0
+    except Exception as e:
+        logging.error(f"Ошибка удаления из Supabase: {e}")
+        return False
 
 def get_favorites(chat_id: int) -> list:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT ticker FROM favorites WHERE chat_id = ?", (chat_id,))
-    rows = c.fetchall()
-    conn.close()
-    return [row[0] for row in rows]
+    try:
+        result = supabase.table("favorites")\
+            .select("ticker")\
+            .eq("chat_id", chat_id)\
+            .execute()
+        return [row["ticker"] for row in result.data]
+    except Exception as e:
+        logging.error(f"Ошибка получения избранного из Supabase: {e}")
+        return []
 
 # ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
 def get_moscow_time():
@@ -122,6 +140,7 @@ def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool 
         return pd.DataFrame(), pd.DataFrame()
     if exclude_level3 and 'LISTLEVEL' in data.columns:
         data = data[data['LISTLEVEL'] < 3]
+    data = data.copy()
     if 'CHANGEPERCENT' not in data.columns:
         if 'OPEN' in data.columns and 'LAST' in data.columns:
             data['CHANGEPERCENT'] = ((data['LAST'] - data['OPEN']) / data['OPEN']) * 100
@@ -211,6 +230,70 @@ def format_historical_table(gainers, losers, period_name, from_date, till_date):
     text += build_table_universal(losers, "📉 Падение", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
     return text
 
+# ---------- ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ ДАННЫХ ДЛЯ ИЗБРАННОГО ----------
+async def get_favorites_data(chat_id: int):
+    favs = get_favorites(chat_id)
+    if not favs:
+        return None, "У вас пока нет избранных акций. Добавьте через /add TICKER"
+    shares_df = await get_all_shares()
+    if shares_df.empty:
+        if is_weekend():
+            return None, "📊 Сессия выходного дня. Избранное обновится в рабочие дни."
+        else:
+            return None, "📊 Биржа закрыта. Попробуйте позже."
+    fav_df = shares_df[shares_df['SECID'].isin(favs)].copy()
+    if fav_df.empty:
+        return None, "По вашему списку нет актуальных данных."
+    now = get_moscow_time()
+    monday = now - datetime.timedelta(days=now.weekday())
+    week_from = monday.strftime("%Y-%m-%d")
+    week_till = now.strftime("%Y-%m-%d")
+    month_from = now.replace(day=1).strftime("%Y-%m-%d")
+    month_till = now.strftime("%Y-%m-%d")
+
+    week_df = await get_historical_shares(week_from, week_till)
+    month_df = await get_historical_shares(month_from, month_till)
+
+    def get_change(df, ticker):
+        if df.empty:
+            return None
+        ticker_data = df[df['SECID'] == ticker]
+        if ticker_data.empty:
+            return None
+        changes = calc_period_change(ticker_data)
+        if changes.empty:
+            return None
+        return changes.iloc[0]['CHANGE_PCT']
+
+    fav_df['change_week'] = fav_df['SECID'].apply(lambda t: get_change(week_df, t))
+    fav_df['change_month'] = fav_df['SECID'].apply(lambda t: get_change(month_df, t))
+    fav_df['change_week'] = fav_df['change_week'].fillna(float('nan'))
+    fav_df['change_month'] = fav_df['change_month'].fillna(float('nan'))
+    fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
+    return fav_df, None
+
+# ---------- АВТООБНОВЛЕНИЕ ----------
+async def auto_update_task(chat_id: int, message_id: int):
+    while True:
+        await asyncio.sleep(30)
+        try:
+            shares_df = await get_all_shares()
+            gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
+            if gainers.empty and losers.empty:
+                continue
+            index_val = await get_moex_index()
+            update_time = time.strftime("%Y-%m-%d %H:%M:%S")
+            text = format_message(gainers, losers, index_val, update_time, is_weekend=is_weekend())
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
+                ]
+            )
+            await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, parse_mode="HTML", reply_markup=keyboard)
+        except Exception as e:
+            logging.error(f"Ошибка автообновления для чата {chat_id}: {e}")
+            break
+
 # ---------- ОБРАБОТЧИКИ КОМАНД ----------
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -220,18 +303,20 @@ async def cmd_start(message: types.Message):
         "/top — показать лидеров роста и падения (текущий день)\n"
         "/week — топ за неделю (с понедельника)\n"
         "/month — топ за месяц (с 1 числа)\n"
+        "/autoupdate — включить/отключить автообновление для новых /top\n"
         "/add TICKER — добавить акцию в избранное\n"
         "/remove TICKER — удалить из избранного\n"
-        "/favorites — показать избранные акции"
+        "/favorites — показать избранные акции с изменениями за день/неделю/месяц"
     )
 
 @dp.message(Command("top"))
 async def cmd_top(message: types.Message):
-    await message.answer("⏳ Загружаю данные...")
+    loading_msg = await message.answer("⏳ Загружаю данные...")
     try:
         shares_df = await get_all_shares()
         gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
         if gainers.empty and losers.empty:
+            await loading_msg.delete()
             if is_weekend():
                 await message.answer("📊 Сессия выходного дня. Данные обновятся в рабочие дни.")
             else:
@@ -245,14 +330,21 @@ async def cmd_top(message: types.Message):
                 [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
             ]
         )
-        await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+        sent_msg = await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+        last_messages[message.chat.id] = sent_msg.message_id
+        if auto_update_enabled.get(message.chat.id, False):
+            if message.chat.id not in update_tasks or update_tasks[message.chat.id].done():
+                task = asyncio.create_task(auto_update_task(message.chat.id, sent_msg.message_id))
+                update_tasks[message.chat.id] = task
+        await loading_msg.delete()
     except Exception as e:
+        await loading_msg.delete()
         logging.error(f"Ошибка в /top: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}")
 
 @dp.message(Command("week"))
 async def cmd_week(message: types.Message):
-    await message.answer("⏳ Загружаю данные за неделю...")
+    loading_msg = await message.answer("⏳ Загружаю данные за неделю...")
     try:
         now = get_moscow_time()
         monday = now - datetime.timedelta(days=now.weekday())
@@ -260,6 +352,7 @@ async def cmd_week(message: types.Message):
         till_date = now.strftime("%Y-%m-%d")
         df = await get_historical_shares(from_date, till_date)
         if df.empty:
+            await loading_msg.delete()
             await message.answer("Нет данных за неделю.")
             return
         changes = calc_period_change(df)
@@ -273,13 +366,15 @@ async def cmd_week(message: types.Message):
         losers = changes.nsmallest(TOP_N, 'CHANGE_PCT')
         text = format_historical_table(gainers, losers, "неделю", from_date, till_date)
         await message.answer(text, parse_mode="HTML")
+        await loading_msg.delete()
     except Exception as e:
+        await loading_msg.delete()
         logging.error(f"Ошибка в /week: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}")
 
 @dp.message(Command("month"))
 async def cmd_month(message: types.Message):
-    await message.answer("⏳ Загружаю данные за месяц...")
+    loading_msg = await message.answer("⏳ Загружаю данные за месяц...")
     try:
         now = get_moscow_time()
         first_day = now.replace(day=1)
@@ -287,6 +382,7 @@ async def cmd_month(message: types.Message):
         till_date = now.strftime("%Y-%m-%d")
         df = await get_historical_shares(from_date, till_date)
         if df.empty:
+            await loading_msg.delete()
             await message.answer("Нет данных за месяц.")
             return
         changes = calc_period_change(df)
@@ -300,9 +396,29 @@ async def cmd_month(message: types.Message):
         losers = changes.nsmallest(TOP_N, 'CHANGE_PCT')
         text = format_historical_table(gainers, losers, "месяц", from_date, till_date)
         await message.answer(text, parse_mode="HTML")
+        await loading_msg.delete()
     except Exception as e:
+        await loading_msg.delete()
         logging.error(f"Ошибка в /month: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}")
+
+@dp.message(Command("autoupdate"))
+async def cmd_autoupdate(message: types.Message):
+    chat_id = message.chat.id
+    current = auto_update_enabled.get(chat_id, False)
+    new_state = not current
+    auto_update_enabled[chat_id] = new_state
+
+    if new_state:
+        if chat_id in last_messages and (chat_id not in update_tasks or update_tasks[chat_id].done()):
+            task = asyncio.create_task(auto_update_task(chat_id, last_messages[chat_id]))
+            update_tasks[chat_id] = task
+        await message.answer("🔄 Автообновление включено. Теперь все новые /top будут обновляться каждые 30 секунд.")
+    else:
+        if chat_id in update_tasks and not update_tasks[chat_id].done():
+            update_tasks[chat_id].cancel()
+            del update_tasks[chat_id]
+        await message.answer("🔄 Автообновление отключено.")
 
 @dp.message(Command("add"))
 async def cmd_add(message: types.Message):
@@ -330,37 +446,28 @@ async def cmd_remove(message: types.Message):
 
 @dp.message(Command("favorites"))
 async def cmd_favorites(message: types.Message):
-    favs = get_favorites(message.chat.id)
-    if not favs:
-        await message.answer("У вас пока нет избранных акций. Добавьте через /add TICKER")
+    fav_df, error = await get_favorites_data(message.chat.id)
+    if error:
+        await message.answer(error)
         return
-    shares_df = await get_all_shares()
-    if shares_df.empty:
-        if is_weekend():
-            await message.answer("📊 Сессия выходного дня. Избранное обновится в рабочие дни.")
-        else:
-            await message.answer("📊 Биржа закрыта. Попробуйте позже.")
-        return
-    fav_df = shares_df[shares_df['SECID'].isin(favs)]
-    if fav_df.empty:
-        await message.answer("По вашему списку нет актуальных данных.")
-        return
-    if 'CHANGEPERCENT' in fav_df.columns:
-        fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
-    else:
-        if 'OPEN' in fav_df.columns and 'LAST' in fav_df.columns:
-            fav_df['CHANGEPERCENT'] = ((fav_df['LAST'] - fav_df['OPEN']) / fav_df['OPEN']) * 100
-            fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
-        else:
-            await message.answer("Недостаточно данных для сортировки.")
-            return
-    text = "⭐ Ваши избранные акции:\n\n"
+    table_data = []
     for _, row in fav_df.iterrows():
         name = row.get('SHORTNAME', row['SECID'])
-        price = row['LAST']
-        change = row['CHANGEPERCENT']
-        text += f"• {row['SECID']} ({name}) — {price:.2f}  {change:+.2f}%\n"
-    await message.answer(text)
+        if len(name) > 25:
+            name = name[:22] + "…"
+        price = f"{row['LAST']:.2f}" if isinstance(row['LAST'], (int, float)) else str(row['LAST'])
+        day_change = f"{row['CHANGEPERCENT']:+.2f}%" if pd.notna(row['CHANGEPERCENT']) else "—"
+        week_change = f"{row['change_week']:+.2f}%" if pd.notna(row['change_week']) else "—"
+        month_change = f"{row['change_month']:+.2f}%" if pd.notna(row['change_month']) else "—"
+        table_data.append([name, price, day_change, week_change, month_change])
+    if not table_data:
+        await message.answer("Нет данных для отображения.")
+        return
+    headers = ["Название", "Цена", "День", "Неделя", "Месяц"]
+    header_line = "  ".join(f"<b>{h}</b>" for h in headers)
+    table = tabulate(table_data, headers=[], tablefmt="simple", numalign="right", stralign="left")
+    text = f"⭐ <b>Избранные акции</b>\n{header_line}\n<pre>{table}</pre>"
+    await message.answer(text, parse_mode="HTML")
 
 @dp.callback_query(lambda c: c.data == "refresh")
 async def process_refresh(callback: CallbackQuery):
@@ -385,6 +492,7 @@ async def process_refresh(callback: CallbackQuery):
                 [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
             ]
         )
+        last_messages[callback.message.chat.id] = callback.message.message_id
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
     except Exception as e:
         logging.error(f"Ошибка обновления: {e}")
@@ -395,7 +503,7 @@ async def process_refresh(callback: CallbackQuery):
 async def lifespan(app: FastAPI):
     logging.info("Запуск lifespan...")
     try:
-        init_db()
+        init_db()  # заглушка
         webhook_url = f"{BASE_URL}/webhook"
         for attempt in range(5):
             try:
@@ -412,6 +520,9 @@ async def lifespan(app: FastAPI):
         logging.error(f"❌ Критическая ошибка в lifespan: {e}", exc_info=True)
     yield
     logging.info("Завершение lifespan...")
+    for task in update_tasks.values():
+        if not task.done():
+            task.cancel()
     await bot.delete_webhook()
 
 app = FastAPI(lifespan=lifespan)
