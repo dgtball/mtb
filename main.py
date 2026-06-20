@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import Update, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import Update, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton
 import aiohttp
 import pandas as pd
 from tabulate import tabulate
@@ -40,22 +40,23 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
-# ---------- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ДЛЯ АВТООБНОВЛЕНИЯ ----------
+# ---------- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ----------
 last_messages = {}       # chat_id -> message_id
 update_tasks = {}        # chat_id -> asyncio.Task
 auto_update_enabled = {} # chat_id -> True/False
+user_state = {}          # chat_id -> 'add' / 'remove'
+
+# ---------- КЛАВИАТУРА ----------
+def main_keyboard():
+    kb = [
+        [KeyboardButton(text="📈 Топ дня")],
+        [KeyboardButton(text="📊 Топ недели"), KeyboardButton(text="📉 Топ месяца")],
+        [KeyboardButton(text="⭐ Избранные")],
+        [KeyboardButton(text="➕ Добавить тикер"), KeyboardButton(text="➖ Удалить тикер")],
+    ]
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=False)
 
 # ---------- РАБОТА С БАЗОЙ ДАННЫХ (SUPABASE) ----------
-def init_db():
-    # Таблица создаётся один раз вручную через SQL-запрос в Supabase:
-    # CREATE TABLE IF NOT EXISTS favorites (
-    #     chat_id BIGINT NOT NULL,
-    #     ticker TEXT NOT NULL,
-    #     PRIMARY KEY (chat_id, ticker)
-    # );
-    # Функция оставлена для совместимости.
-    pass
-
 def add_favorite(chat_id: int, ticker: str) -> bool:
     try:
         supabase.table("favorites").insert({
@@ -272,6 +273,73 @@ async def get_favorites_data(chat_id: int):
     fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
     return fav_df, None
 
+# ---------- УНИВЕРСАЛЬНАЯ ОТПРАВКА ТОПА ----------
+async def send_top(message: types.Message, period: str = 'day'):
+    loading_msg = await message.answer("⏳ Загружаю данные...")
+    try:
+        if period == 'day':
+            shares_df = await get_all_shares()
+            gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
+            if gainers.empty and losers.empty:
+                await loading_msg.delete()
+                if is_weekend():
+                    await message.answer("📊 Сессия выходного дня. Данные обновятся в рабочие дни.")
+                else:
+                    await message.answer("📊 Биржа закрыта. Попробуйте позже.")
+                return
+            index_val = await get_moex_index()
+            update_time = time.strftime("%Y-%m-%d %H:%M:%S")
+            text = format_message(gainers, losers, index_val, update_time, is_weekend=is_weekend())
+        else:
+            # week или month
+            now = get_moscow_time()
+            if period == 'week':
+                start = now - datetime.timedelta(days=now.weekday())
+                from_date = start.strftime("%Y-%m-%d")
+                period_name = "неделю"
+            else:  # month
+                from_date = now.replace(day=1).strftime("%Y-%m-%d")
+                period_name = "месяц"
+            till_date = now.strftime("%Y-%m-%d")
+            df = await get_historical_shares(from_date, till_date)
+            if df.empty:
+                await loading_msg.delete()
+                await message.answer(f"Нет данных за {period_name}.")
+                return
+            changes = calc_period_change(df)
+            shares_all = await get_all_shares()
+            if not shares_all.empty:
+                allowed_tickers = shares_all[shares_all['LISTLEVEL'] < 3]['SECID'].unique()
+                changes = changes[changes['SECID'].isin(allowed_tickers)]
+                names = shares_all[['SECID', 'SHORTNAME']].drop_duplicates('SECID')
+                changes = changes.merge(names, on='SECID', how='left')
+            gainers = changes.nlargest(TOP_N, 'CHANGE_PCT')
+            losers = changes.nsmallest(TOP_N, 'CHANGE_PCT')
+            text = format_historical_table(gainers, losers, period_name, from_date, till_date)
+
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
+            ]
+        )
+        sent_msg = await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+
+        # Сохраняем последнее сообщение для автообновления
+        chat_id = message.chat.id
+        last_messages[chat_id] = sent_msg.message_id
+
+        # Если это Топ дня и включено автообновление — запускаем задачу
+        if period == 'day' and auto_update_enabled.get(chat_id, False):
+            if chat_id not in update_tasks or update_tasks[chat_id].done():
+                task = asyncio.create_task(auto_update_task(chat_id, sent_msg.message_id))
+                update_tasks[chat_id] = task
+
+        await loading_msg.delete()
+    except Exception as e:
+        await loading_msg.delete()
+        logging.error(f"Ошибка в send_top: {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка: {e}")
+
 # ---------- АВТООБНОВЛЕНИЕ ----------
 async def auto_update_task(chat_id: int, message_id: int):
     while True:
@@ -294,158 +362,35 @@ async def auto_update_task(chat_id: int, message_id: int):
             logging.error(f"Ошибка автообновления для чата {chat_id}: {e}")
             break
 
-# ---------- ОБРАБОТЧИКИ КОМАНД ----------
+# ---------- ОБРАБОТЧИКИ КОМАНД И КНОПОК ----------
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
+    chat_id = message.chat.id
+    # Включаем автообновление по умолчанию
+    auto_update_enabled[chat_id] = True
+    # Показываем клавиатуру
     await message.answer(
         "👋 Привет! Я бот для отслеживания топ-акций Мосбиржи.\n\n"
-        "📌 Доступные команды:\n"
-        "/top — показать лидеров роста и падения (текущий день)\n"
-        "/week — топ за неделю (с понедельника)\n"
-        "/month — топ за месяц (с 1 числа)\n"
-        "/autoupdate — включить/отключить автообновление для новых /top\n"
-        "/add TICKER — добавить акцию в избранное\n"
-        "/remove TICKER — удалить из избранного\n"
-        "/favorites — показать избранные акции с изменениями за день/неделю/месяц"
+        "Используйте кнопки ниже для навигации.",
+        reply_markup=main_keyboard()
     )
+    # Автоматически показываем топ дня с автообновлением
+    await send_top(message, 'day')
 
-@dp.message(Command("top"))
-async def cmd_top(message: types.Message):
-    loading_msg = await message.answer("⏳ Загружаю данные...")
-    try:
-        shares_df = await get_all_shares()
-        gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
-        if gainers.empty and losers.empty:
-            await loading_msg.delete()
-            if is_weekend():
-                await message.answer("📊 Сессия выходного дня. Данные обновятся в рабочие дни.")
-            else:
-                await message.answer("📊 Биржа закрыта. Попробуйте позже.")
-            return
-        index_val = await get_moex_index()
-        update_time = time.strftime("%Y-%m-%d %H:%M:%S")
-        text = format_message(gainers, losers, index_val, update_time, is_weekend=is_weekend())
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
-            ]
-        )
-        sent_msg = await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
-        last_messages[message.chat.id] = sent_msg.message_id
-        if auto_update_enabled.get(message.chat.id, False):
-            if message.chat.id not in update_tasks or update_tasks[message.chat.id].done():
-                task = asyncio.create_task(auto_update_task(message.chat.id, sent_msg.message_id))
-                update_tasks[message.chat.id] = task
-        await loading_msg.delete()
-    except Exception as e:
-        await loading_msg.delete()
-        logging.error(f"Ошибка в /top: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка: {e}")
+@dp.message(lambda msg: msg.text == "📈 Топ дня")
+async def top_day_button(message: types.Message):
+    await send_top(message, 'day')
 
-@dp.message(Command("week"))
-async def cmd_week(message: types.Message):
-    loading_msg = await message.answer("⏳ Загружаю данные за неделю...")
-    try:
-        now = get_moscow_time()
-        monday = now - datetime.timedelta(days=now.weekday())
-        from_date = monday.strftime("%Y-%m-%d")
-        till_date = now.strftime("%Y-%m-%d")
-        df = await get_historical_shares(from_date, till_date)
-        if df.empty:
-            await loading_msg.delete()
-            await message.answer("Нет данных за неделю.")
-            return
-        changes = calc_period_change(df)
-        shares_all = await get_all_shares()
-        if not shares_all.empty:
-            allowed_tickers = shares_all[shares_all['LISTLEVEL'] < 3]['SECID'].unique()
-            changes = changes[changes['SECID'].isin(allowed_tickers)]
-            names = shares_all[['SECID', 'SHORTNAME']].drop_duplicates('SECID')
-            changes = changes.merge(names, on='SECID', how='left')
-        gainers = changes.nlargest(TOP_N, 'CHANGE_PCT')
-        losers = changes.nsmallest(TOP_N, 'CHANGE_PCT')
-        text = format_historical_table(gainers, losers, "неделю", from_date, till_date)
-        await message.answer(text, parse_mode="HTML")
-        await loading_msg.delete()
-    except Exception as e:
-        await loading_msg.delete()
-        logging.error(f"Ошибка в /week: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка: {e}")
+@dp.message(lambda msg: msg.text == "📊 Топ недели")
+async def top_week_button(message: types.Message):
+    await send_top(message, 'week')
 
-@dp.message(Command("month"))
-async def cmd_month(message: types.Message):
-    loading_msg = await message.answer("⏳ Загружаю данные за месяц...")
-    try:
-        now = get_moscow_time()
-        first_day = now.replace(day=1)
-        from_date = first_day.strftime("%Y-%m-%d")
-        till_date = now.strftime("%Y-%m-%d")
-        df = await get_historical_shares(from_date, till_date)
-        if df.empty:
-            await loading_msg.delete()
-            await message.answer("Нет данных за месяц.")
-            return
-        changes = calc_period_change(df)
-        shares_all = await get_all_shares()
-        if not shares_all.empty:
-            allowed_tickers = shares_all[shares_all['LISTLEVEL'] < 3]['SECID'].unique()
-            changes = changes[changes['SECID'].isin(allowed_tickers)]
-            names = shares_all[['SECID', 'SHORTNAME']].drop_duplicates('SECID')
-            changes = changes.merge(names, on='SECID', how='left')
-        gainers = changes.nlargest(TOP_N, 'CHANGE_PCT')
-        losers = changes.nsmallest(TOP_N, 'CHANGE_PCT')
-        text = format_historical_table(gainers, losers, "месяц", from_date, till_date)
-        await message.answer(text, parse_mode="HTML")
-        await loading_msg.delete()
-    except Exception as e:
-        await loading_msg.delete()
-        logging.error(f"Ошибка в /month: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка: {e}")
+@dp.message(lambda msg: msg.text == "📉 Топ месяца")
+async def top_month_button(message: types.Message):
+    await send_top(message, 'month')
 
-@dp.message(Command("autoupdate"))
-async def cmd_autoupdate(message: types.Message):
-    chat_id = message.chat.id
-    current = auto_update_enabled.get(chat_id, False)
-    new_state = not current
-    auto_update_enabled[chat_id] = new_state
-
-    if new_state:
-        if chat_id in last_messages and (chat_id not in update_tasks or update_tasks[chat_id].done()):
-            task = asyncio.create_task(auto_update_task(chat_id, last_messages[chat_id]))
-            update_tasks[chat_id] = task
-        await message.answer("🔄 Автообновление включено. Теперь все новые /top будут обновляться каждые 30 секунд.")
-    else:
-        if chat_id in update_tasks and not update_tasks[chat_id].done():
-            update_tasks[chat_id].cancel()
-            del update_tasks[chat_id]
-        await message.answer("🔄 Автообновление отключено.")
-
-@dp.message(Command("add"))
-async def cmd_add(message: types.Message):
-    args = message.text.split()
-    if len(args) < 2:
-        await message.answer("Укажите тикер, например: /add SBER")
-        return
-    ticker = args[1].upper()
-    if add_favorite(message.chat.id, ticker):
-        await message.answer(f"✅ {ticker} добавлен в избранное.")
-    else:
-        await message.answer(f"ℹ️ {ticker} уже есть в избранном.")
-
-@dp.message(Command("remove"))
-async def cmd_remove(message: types.Message):
-    args = message.text.split()
-    if len(args) < 2:
-        await message.answer("Укажите тикер, например: /remove SBER")
-        return
-    ticker = args[1].upper()
-    if remove_favorite(message.chat.id, ticker):
-        await message.answer(f"✅ {ticker} удалён из избранного.")
-    else:
-        await message.answer(f"ℹ️ {ticker} не найден в избранном.")
-
-@dp.message(Command("favorites"))
-async def cmd_favorites(message: types.Message):
+@dp.message(lambda msg: msg.text == "⭐ Избранные")
+async def favorites_button(message: types.Message):
     fav_df, error = await get_favorites_data(message.chat.id)
     if error:
         await message.answer(error)
@@ -468,6 +413,38 @@ async def cmd_favorites(message: types.Message):
     table = tabulate(table_data, headers=[], tablefmt="simple", numalign="right", stralign="left")
     text = f"⭐ <b>Избранные акции</b>\n{header_line}\n<pre>{table}</pre>"
     await message.answer(text, parse_mode="HTML")
+
+@dp.message(lambda msg: msg.text == "➕ Добавить тикер")
+async def add_ticker_button(message: types.Message):
+    user_state[message.chat.id] = 'add'
+    await message.answer("Введите тикер для добавления (например, SBER):")
+
+@dp.message(lambda msg: msg.text == "➖ Удалить тикер")
+async def remove_ticker_button(message: types.Message):
+    user_state[message.chat.id] = 'remove'
+    await message.answer("Введите тикер для удаления (например, SBER):")
+
+@dp.message()
+async def handle_text(message: types.Message):
+    chat_id = message.chat.id
+    if chat_id in user_state:
+        state = user_state[chat_id]
+        ticker = message.text.strip().upper()
+        if state == 'add':
+            if add_favorite(chat_id, ticker):
+                await message.answer(f"✅ {ticker} добавлен в избранное.")
+            else:
+                await message.answer(f"ℹ️ {ticker} уже есть в избранном.")
+        elif state == 'remove':
+            if remove_favorite(chat_id, ticker):
+                await message.answer(f"✅ {ticker} удалён из избранного.")
+            else:
+                await message.answer(f"ℹ️ {ticker} не найден в избранном.")
+        del user_state[chat_id]
+        # Возвращаем клавиатуру
+        await message.answer("Что дальше?", reply_markup=main_keyboard())
+    else:
+        await message.answer("Используйте кнопки меню.", reply_markup=main_keyboard())
 
 @dp.callback_query(lambda c: c.data == "refresh")
 async def process_refresh(callback: CallbackQuery):
@@ -492,7 +469,8 @@ async def process_refresh(callback: CallbackQuery):
                 [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
             ]
         )
-        last_messages[callback.message.chat.id] = callback.message.message_id
+        chat_id = callback.message.chat.id
+        last_messages[chat_id] = callback.message.message_id
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
     except Exception as e:
         logging.error(f"Ошибка обновления: {e}")
@@ -503,7 +481,6 @@ async def process_refresh(callback: CallbackQuery):
 async def lifespan(app: FastAPI):
     logging.info("Запуск lifespan...")
     try:
-        init_db()  # заглушка
         webhook_url = f"{BASE_URL}/webhook"
         for attempt in range(5):
             try:
@@ -556,7 +533,6 @@ async def webhook(request: Request):
 async def webhook_get():
     return {"status": "webhook is ready"}
 
-# ---------- ЗАПУСК (для локального теста, на Render не используется) ----------
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
