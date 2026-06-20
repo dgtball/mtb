@@ -101,9 +101,9 @@ def is_weekend():
 
 # ---------- ЗАПРОСЫ К MOEX ----------
 async def get_all_shares():
-    async with aiohttp.ClientSession() as session:
-        url = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=marketdata,securities"
-        try:
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=marketdata,securities"
             async with session.get(url) as resp:
                 json_data = await resp.json()
                 if 'marketdata' not in json_data or 'securities' not in json_data:
@@ -117,14 +117,14 @@ async def get_all_shares():
                 sec_df = sec_df[['SECID', 'SHORTNAME', 'LISTLEVEL']]
                 merged = pd.merge(market_df, sec_df, on='SECID', how='left')
                 return merged
-        except Exception as e:
-            logging.error(f"Ошибка загрузки: {e}")
-            return pd.DataFrame()
+    except Exception as e:
+        logging.error(f"Ошибка загрузки get_all_shares: {e}", exc_info=True)
+        return pd.DataFrame()
 
 async def get_moex_index():
-    async with aiohttp.ClientSession() as session:
-        url = "https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX.json?iss.meta=off"
-        try:
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = "https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX.json?iss.meta=off"
             async with session.get(url) as resp:
                 json_data = await resp.json()
                 columns = json_data['securities']['columns']
@@ -132,9 +132,9 @@ async def get_moex_index():
                 if data_rows:
                     last_idx = columns.index('LAST')
                     return float(data_rows[0][last_idx])
-        except Exception:
-            return None
+    except Exception:
         return None
+    return None
 
 def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool = True):
     if data.empty:
@@ -166,9 +166,9 @@ def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool 
 
 # ---------- ИСТОРИЧЕСКИЕ ДАННЫЕ ----------
 async def get_historical_shares(from_date: str, till_date: str):
-    async with aiohttp.ClientSession() as session:
-        url = f"https://iss.moex.com/iss/history/engines/stock/markets/shares/boards/TQBR/securities.json?from={from_date}&till={till_date}&iss.meta=off&iss.only=history"
-        try:
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = f"https://iss.moex.com/iss/history/engines/stock/markets/shares/boards/TQBR/securities.json?from={from_date}&till={till_date}&iss.meta=off&iss.only=history"
             async with session.get(url) as resp:
                 json_data = await resp.json()
                 if 'history' not in json_data:
@@ -177,8 +177,8 @@ async def get_historical_shares(from_date: str, till_date: str):
                 data_rows = json_data['history']['data']
                 df = pd.DataFrame(data_rows, columns=columns)
                 return df
-        except Exception:
-            return pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
 
 def calc_period_change(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -275,8 +275,9 @@ async def get_favorites_data(chat_id: int):
 
 # ---------- УНИВЕРСАЛЬНАЯ ОТПРАВКА ТОПА ----------
 async def send_top(message: types.Message, period: str = 'day'):
-    loading_msg = await message.answer("⏳ Загружаю данные...")
+    loading_msg = None
     try:
+        loading_msg = await message.answer("⏳ Загружаю данные...")
         if period == 'day':
             shares_df = await get_all_shares()
             gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
@@ -328,10 +329,12 @@ async def send_top(message: types.Message, period: str = 'day'):
             if chat_id not in update_tasks or update_tasks[chat_id].done():
                 task = asyncio.create_task(auto_update_task(chat_id, sent_msg.message_id))
                 update_tasks[chat_id] = task
-        await loading_msg.delete()
+        if loading_msg:
+            await loading_msg.delete()
     except Exception as e:
-        await loading_msg.delete()
-        logging.error(f"❌ Ошибка в send_top (period={period}): {e}", exc_info=True)
+        if loading_msg:
+            await loading_msg.delete()
+        logging.error(f"❌ Критическая ошибка в send_top (period={period}): {e}", exc_info=True)
         await message.answer(f"❌ Ошибка при загрузке данных: {e}")
 
 # ---------- АВТООБНОВЛЕНИЕ ----------
