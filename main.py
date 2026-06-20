@@ -101,9 +101,9 @@ def is_weekend():
 
 # ---------- ЗАПРОСЫ К MOEX ----------
 async def get_all_shares():
-    try:
-        async with aiohttp.ClientSession() as session:
-            url = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=marketdata,securities"
+    async with aiohttp.ClientSession() as session:
+        url = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=marketdata,securities"
+        try:
             async with session.get(url) as resp:
                 json_data = await resp.json()
                 if 'marketdata' not in json_data or 'securities' not in json_data:
@@ -117,14 +117,14 @@ async def get_all_shares():
                 sec_df = sec_df[['SECID', 'SHORTNAME', 'LISTLEVEL']]
                 merged = pd.merge(market_df, sec_df, on='SECID', how='left')
                 return merged
-    except Exception as e:
-        logging.error(f"Ошибка загрузки get_all_shares: {e}", exc_info=True)
-        return pd.DataFrame()
+        except Exception as e:
+            logging.error(f"Ошибка загрузки: {e}")
+            return pd.DataFrame()
 
 async def get_moex_index():
-    try:
-        async with aiohttp.ClientSession() as session:
-            url = "https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX.json?iss.meta=off"
+    async with aiohttp.ClientSession() as session:
+        url = "https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX.json?iss.meta=off"
+        try:
             async with session.get(url) as resp:
                 json_data = await resp.json()
                 columns = json_data['securities']['columns']
@@ -132,9 +132,9 @@ async def get_moex_index():
                 if data_rows:
                     last_idx = columns.index('LAST')
                     return float(data_rows[0][last_idx])
-    except Exception:
+        except Exception:
+            return None
         return None
-    return None
 
 def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool = True):
     if data.empty:
@@ -166,9 +166,9 @@ def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool 
 
 # ---------- ИСТОРИЧЕСКИЕ ДАННЫЕ ----------
 async def get_historical_shares(from_date: str, till_date: str):
-    try:
-        async with aiohttp.ClientSession() as session:
-            url = f"https://iss.moex.com/iss/history/engines/stock/markets/shares/boards/TQBR/securities.json?from={from_date}&till={till_date}&iss.meta=off&iss.only=history"
+    async with aiohttp.ClientSession() as session:
+        url = f"https://iss.moex.com/iss/history/engines/stock/markets/shares/boards/TQBR/securities.json?from={from_date}&till={till_date}&iss.meta=off&iss.only=history"
+        try:
             async with session.get(url) as resp:
                 json_data = await resp.json()
                 if 'history' not in json_data:
@@ -177,8 +177,8 @@ async def get_historical_shares(from_date: str, till_date: str):
                 data_rows = json_data['history']['data']
                 df = pd.DataFrame(data_rows, columns=columns)
                 return df
-    except Exception:
-        return pd.DataFrame()
+        except Exception:
+            return pd.DataFrame()
 
 def calc_period_change(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -245,13 +245,20 @@ async def get_favorites_data(chat_id: int):
     fav_df = shares_df[shares_df['SECID'].isin(favs)].copy()
     if fav_df.empty:
         return None, "По вашему списку нет актуальных данных."
+    # Убедимся, что есть CHANGEPERCENT
+    if 'CHANGEPERCENT' not in fav_df.columns:
+        if 'OPEN' in fav_df.columns and 'LAST' in fav_df.columns:
+            fav_df['CHANGEPERCENT'] = ((fav_df['LAST'] - fav_df['OPEN']) / fav_df['OPEN']) * 100
+        else:
+            return None, "Недостаточно данных для расчёта изменений."
+    if 'SHORTNAME' not in fav_df.columns:
+        fav_df['SHORTNAME'] = fav_df['SECID']
     now = get_moscow_time()
     monday = now - datetime.timedelta(days=now.weekday())
     week_from = monday.strftime("%Y-%m-%d")
     week_till = now.strftime("%Y-%m-%d")
     month_from = now.replace(day=1).strftime("%Y-%m-%d")
     month_till = now.strftime("%Y-%m-%d")
-
     week_df = await get_historical_shares(week_from, week_till)
     month_df = await get_historical_shares(month_from, month_till)
 
@@ -275,9 +282,8 @@ async def get_favorites_data(chat_id: int):
 
 # ---------- УНИВЕРСАЛЬНАЯ ОТПРАВКА ТОПА ----------
 async def send_top(message: types.Message, period: str = 'day'):
-    loading_msg = None
+    loading_msg = await message.answer("⏳ Загружаю данные...")
     try:
-        loading_msg = await message.answer("⏳ Загружаю данные...")
         if period == 'day':
             shares_df = await get_all_shares()
             gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
@@ -329,12 +335,10 @@ async def send_top(message: types.Message, period: str = 'day'):
             if chat_id not in update_tasks or update_tasks[chat_id].done():
                 task = asyncio.create_task(auto_update_task(chat_id, sent_msg.message_id))
                 update_tasks[chat_id] = task
-        if loading_msg:
-            await loading_msg.delete()
+        await loading_msg.delete()
     except Exception as e:
-        if loading_msg:
-            await loading_msg.delete()
-        logging.error(f"❌ Критическая ошибка в send_top (period={period}): {e}", exc_info=True)
+        await loading_msg.delete()
+        logging.error(f"❌ Ошибка в send_top (period={period}): {e}", exc_info=True)
         await message.answer(f"❌ Ошибка при загрузке данных: {e}")
 
 # ---------- АВТООБНОВЛЕНИЕ ----------
@@ -396,7 +400,6 @@ async def favorites_button(message: types.Message):
         if not favs:
             await message.answer("У вас пока нет избранных акций. Добавьте через /add TICKER")
             return
-
         shares_df = await get_all_shares()
         if shares_df.empty:
             if is_weekend():
@@ -404,12 +407,10 @@ async def favorites_button(message: types.Message):
             else:
                 await message.answer("📊 Биржа закрыта. Попробуйте позже.")
             return
-
         fav_df = shares_df[shares_df['SECID'].isin(favs)].copy()
         if fav_df.empty:
             await message.answer("По вашему списку нет актуальных данных.")
             return
-
         # Убедимся, что есть CHANGEPERCENT
         if 'CHANGEPERCENT' not in fav_df.columns:
             if 'OPEN' in fav_df.columns and 'LAST' in fav_df.columns:
@@ -417,20 +418,15 @@ async def favorites_button(message: types.Message):
             else:
                 await message.answer("Недостаточно данных для расчёта изменений.")
                 return
-
-        # Убедимся, что есть SHORTNAME
         if 'SHORTNAME' not in fav_df.columns:
             fav_df['SHORTNAME'] = fav_df['SECID']
-
         logging.info(f"fav_df получен, строк: {len(fav_df)}")
-
         now = get_moscow_time()
         monday = now - datetime.timedelta(days=now.weekday())
         week_from = monday.strftime("%Y-%m-%d")
         week_till = now.strftime("%Y-%m-%d")
         month_from = now.replace(day=1).strftime("%Y-%m-%d")
         month_till = now.strftime("%Y-%m-%d")
-
         week_df = await get_historical_shares(week_from, week_till)
         month_df = await get_historical_shares(month_from, month_till)
 
@@ -450,9 +446,7 @@ async def favorites_button(message: types.Message):
         fav_df['change_week'] = fav_df['change_week'].fillna(float('nan'))
         fav_df['change_month'] = fav_df['change_month'].fillna(float('nan'))
         fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
-
         logging.info(f"Таблица fav_df готова, колонки: {fav_df.columns.tolist()}")
-
         table_data = []
         for _, row in fav_df.iterrows():
             name = row.get('SHORTNAME', row['SECID'])
@@ -463,11 +457,9 @@ async def favorites_button(message: types.Message):
             week_change = f"{row['change_week']:+.2f}%" if pd.notna(row['change_week']) else "—"
             month_change = f"{row['change_month']:+.2f}%" if pd.notna(row['change_month']) else "—"
             table_data.append([name, price, day_change, week_change, month_change])
-
         if not table_data:
             await message.answer("Нет данных для отображения.")
             return
-
         headers = ["Название", "Цена", "День", "Неделя", "Месяц"]
         table = tabulate(table_data, headers=headers, tablefmt="simple", numalign="right", stralign="left")
         text = f"⭐ <b>Избранные акции</b>\n<pre>{table}</pre>"
@@ -480,12 +472,12 @@ async def favorites_button(message: types.Message):
 @dp.message(lambda msg: msg.text == "➕ Добавить тикер")
 async def add_ticker_button(message: types.Message):
     user_state[message.chat.id] = 'add'
-    await message.answer("Введите тикер для добавления (например, SBER):")
+    await message.answer("Введите тикер для добавления (например, SBER или SBER, GAZP):")
 
 @dp.message(lambda msg: msg.text == "➖ Удалить тикер")
 async def remove_ticker_button(message: types.Message):
     user_state[message.chat.id] = 'remove'
-    await message.answer("Введите тикер для удаления (например, SBER):")
+    await message.answer("Введите тикер для удаления (например, SBER или SBER, GAZP):")
 
 @dp.message()
 async def handle_text(message: types.Message):
@@ -499,7 +491,7 @@ async def handle_text(message: types.Message):
         for ticker in tickers:
             if state == 'add':
                 if add_favorite(chat_id, ticker):
-                    results.append(f"✅ {ticker}")
+                    results.append(f"✅ {ticker} добавлен")
                 else:
                     results.append(f"ℹ️ {ticker} уже есть")
             elif state == 'remove':
@@ -548,6 +540,13 @@ async def process_refresh(callback: CallbackQuery):
 async def lifespan(app: FastAPI):
     logging.info("Запуск lifespan...")
     try:
+        # Проверка подключения к Supabase
+        try:
+            supabase.table("favorites").select("ticker").limit(1).execute()
+            logging.info("✅ Подключение к Supabase установлено")
+        except Exception as e:
+            logging.error(f"❌ Ошибка подключения к Supabase: {e}")
+
         webhook_url = f"{BASE_URL}/webhook"
         for attempt in range(5):
             try:
@@ -574,6 +573,11 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/")
 async def index():
     return {"status": "Bot is running!"}
+
+@app.get("/health")
+async def health():
+    """Эндпоинт для проверки состояния (используется для пинга)"""
+    return {"status": "ok", "webhook_set": True}
 
 @app.get("/set_webhook")
 async def set_webhook():
