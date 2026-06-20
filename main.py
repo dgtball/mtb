@@ -90,7 +90,6 @@ async def get_all_shares():
                 sec_columns = json_data['securities']['columns']
                 sec_rows = json_data['securities']['data']
                 sec_df = pd.DataFrame(sec_rows, columns=sec_columns)
-                # Используем SHORTNAME
                 sec_df = sec_df[['SECID', 'SHORTNAME', 'LISTLEVEL']]
                 merged = pd.merge(market_df, sec_df, on='SECID', how='left')
                 return merged
@@ -167,19 +166,7 @@ def calc_period_change(df: pd.DataFrame) -> pd.DataFrame:
     combined['CHANGE_PCT'] = ((combined['CLOSE'] - combined['OPEN']) / combined['OPEN']) * 100
     return combined.reset_index()
 
-def format_historical(gainers, losers, period_name, from_date, till_date):
-    text = f"📊 Топ за {period_name}\n📅 Период: {from_date} – {till_date}\n\n"
-    if not gainers.empty:
-        text += "📈 Рост:\n"
-        for _, row in gainers.iterrows():
-            text += f"• {row['SECID']}: {row['CHANGE_PCT']:.2f}%\n"
-    if not losers.empty:
-        text += "📉 Падение:\n"
-        for _, row in losers.iterrows():
-            text += f"• {row['SECID']}: {row['CHANGE_PCT']:.2f}%\n"
-    return text
-
-# ---------- ФОРМАТИРОВАНИЕ ТАБЛИЦЫ (без значков, без рамок, с SHORTNAME) ----------
+# ---------- ФОРМАТИРОВАНИЕ ТАБЛИЦ ----------
 def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, update_time: str, is_weekend: bool = False) -> str:
     if index_value is not None:
         header = f"📊 Индекс МосБиржи: {index_value:.2f}\n"
@@ -204,12 +191,37 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
             change_str = f"{change:+.2f}%"
             table_data.append([ticker, name, price, change_str])
         headers = ["Тикер", "Название", "Цена", "Изменение"]
-        table = tabulate(table_data, headers=headers, tablefmt="plain", numalign="right", stralign="left")
-        return f"<b>{title}</b>\n<pre>{table}</pre>\n"
+        header_line = "  ".join(f"<b>{h}</b>" for h in headers)
+        table = tabulate(table_data, headers=[], tablefmt="plain", numalign="right", stralign="left")
+        return f"<b>{title}</b>\n{header_line}\n<pre>{table}</pre>\n"
 
     text = header
     text += build_table(gainers, "📈 Лидеры роста")
     text += build_table(losers, "📉 Лидеры падения")
+    return text
+
+def format_historical_table(gainers, losers, period_name, from_date, till_date):
+    text = f"📊 Топ за {period_name}\n📅 Период: {from_date} – {till_date}\n\n"
+
+    def build_hist_table(df, title):
+        if df.empty:
+            return ""
+        table_data = []
+        for _, row in df.iterrows():
+            ticker = row['SECID']
+            name = row.get('SHORTNAME', ticker)
+            if len(name) > 25:
+                name = name[:22] + "…"
+            change = row['CHANGE_PCT']
+            change_str = f"{change:+.2f}%"
+            table_data.append([ticker, name, change_str])
+        headers = ["Тикер", "Название", "Изменение"]
+        header_line = "  ".join(f"<b>{h}</b>" for h in headers)
+        table = tabulate(table_data, headers=[], tablefmt="plain", numalign="right", stralign="left")
+        return f"<b>{title}</b>\n{header_line}\n<pre>{table}</pre>\n"
+
+    text += build_hist_table(gainers, "📈 Рост")
+    text += build_hist_table(losers, "📉 Падение")
     return text
 
 # ---------- ОБРАБОТЧИКИ КОМАНД ----------
@@ -219,8 +231,8 @@ async def cmd_start(message: types.Message):
         "👋 Привет! Я бот для отслеживания топ-акций Мосбиржи.\n\n"
         "📌 Доступные команды:\n"
         "/top — показать лидеров роста и падения (текущий день)\n"
-        "/week — топ за неделю\n"
-        "/month — топ за месяц\n"
+        "/week — топ за неделю (с понедельника)\n"
+        "/month — топ за месяц (с 1 числа)\n"
         "/add TICKER — добавить акцию в избранное\n"
         "/remove TICKER — удалить из избранного\n"
         "/favorites — показать избранные акции"
@@ -254,14 +266,13 @@ async def cmd_top(message: types.Message):
         logging.error(f"Ошибка в /top: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}")
 
-# Команда /top_image убрана, т.к. matplotlib исключён из зависимостей
-
 @dp.message(Command("week"))
 async def cmd_week(message: types.Message):
     loading_msg = await message.answer("⏳ Загружаю данные за неделю...")
     try:
         now = get_moscow_time()
-        from_date = (now - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
+        monday = now - datetime.timedelta(days=now.weekday())
+        from_date = monday.strftime("%Y-%m-%d")
         till_date = now.strftime("%Y-%m-%d")
         df = await get_historical_shares(from_date, till_date)
         if df.empty:
@@ -269,10 +280,14 @@ async def cmd_week(message: types.Message):
             await message.answer("Нет данных за неделю.")
             return
         changes = calc_period_change(df)
+        shares_all = await get_all_shares()
+        if not shares_all.empty:
+            names = shares_all[['SECID', 'SHORTNAME']].drop_duplicates('SECID')
+            changes = changes.merge(names, on='SECID', how='left')
         gainers = changes.nlargest(TOP_N, 'CHANGE_PCT')
         losers = changes.nsmallest(TOP_N, 'CHANGE_PCT')
-        text = format_historical(gainers, losers, "неделю", from_date, till_date)
-        await message.answer(text)
+        text = format_historical_table(gainers, losers, "неделю", from_date, till_date)
+        await message.answer(text, parse_mode="HTML")
         await loading_msg.delete()
     except Exception as e:
         await loading_msg.delete()
@@ -284,7 +299,8 @@ async def cmd_month(message: types.Message):
     loading_msg = await message.answer("⏳ Загружаю данные за месяц...")
     try:
         now = get_moscow_time()
-        from_date = (now - datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+        first_day = now.replace(day=1)
+        from_date = first_day.strftime("%Y-%m-%d")
         till_date = now.strftime("%Y-%m-%d")
         df = await get_historical_shares(from_date, till_date)
         if df.empty:
@@ -292,10 +308,14 @@ async def cmd_month(message: types.Message):
             await message.answer("Нет данных за месяц.")
             return
         changes = calc_period_change(df)
+        shares_all = await get_all_shares()
+        if not shares_all.empty:
+            names = shares_all[['SECID', 'SHORTNAME']].drop_duplicates('SECID')
+            changes = changes.merge(names, on='SECID', how='left')
         gainers = changes.nlargest(TOP_N, 'CHANGE_PCT')
         losers = changes.nsmallest(TOP_N, 'CHANGE_PCT')
-        text = format_historical(gainers, losers, "месяц", from_date, till_date)
-        await message.answer(text)
+        text = format_historical_table(gainers, losers, "месяц", from_date, till_date)
+        await message.answer(text, parse_mode="HTML")
         await loading_msg.delete()
     except Exception as e:
         await loading_msg.delete()
