@@ -166,7 +166,27 @@ def calc_period_change(df: pd.DataFrame) -> pd.DataFrame:
     combined['CHANGE_PCT'] = ((combined['CLOSE'] - combined['OPEN']) / combined['OPEN']) * 100
     return combined.reset_index()
 
-# ---------- ФОРМАТИРОВАНИЕ ТАБЛИЦ ----------
+# ---------- УНИВЕРСАЛЬНАЯ ФУНКЦИЯ ПОСТРОЕНИЯ ТАБЛИЦ (с simple) ----------
+def build_table_universal(df, title, headers, data_columns):
+    if df.empty:
+        return ""
+    table_data = []
+    for _, row in df.iterrows():
+        row_data = []
+        for col in data_columns:
+            val = row.get(col, "")
+            if col == 'SHORTNAME' and len(str(val)) > 25:
+                val = str(val)[:22] + "…"
+            elif col == 'LAST' and isinstance(val, (int, float)):
+                val = f"{val:.2f}"
+            elif col in ('CHANGEPERCENT', 'CHANGE_PCT') and isinstance(val, (int, float)):
+                val = f"{val:+.2f}%"
+            row_data.append(val)
+        table_data.append(row_data)
+    table = tabulate(table_data, headers=headers, tablefmt="simple", numalign="right", stralign="left")
+    return f"<b>{title}</b>\n<pre>{table}</pre>\n"
+
+# ---------- ФОРМАТИРОВАНИЕ СООБЩЕНИЙ ----------
 def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, update_time: str, is_weekend: bool = False) -> str:
     if index_value is not None:
         header = f"📊 Индекс МосБиржи: {index_value:.2f}\n"
@@ -177,51 +197,15 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
             header = "📊 Биржа закрыта\n"
     header += f"🕒 Обновлено: {update_time}\n\n"
 
-    def build_table(df, title):
-        if df.empty:
-            return ""
-        table_data = []
-        for _, row in df.iterrows():
-            ticker = row['SECID']
-            name = row.get('SHORTNAME', ticker)
-            if len(name) > 25:
-                name = name[:22] + "…"
-            price = f"{row['LAST']:.2f}" if isinstance(row['LAST'], (int, float)) else str(row['LAST'])
-            change = row['CHANGEPERCENT']
-            change_str = f"{change:+.2f}%"
-            table_data.append([ticker, name, price, change_str])
-        headers = ["Тикер", "Название", "Цена", "Изменение"]
-        header_line = "  ".join(f"<b>{h}</b>" for h in headers)
-        table = tabulate(table_data, headers=[], tablefmt="plain", numalign="right", stralign="left")
-        return f"<b>{title}</b>\n{header_line}\n<pre>{table}</pre>\n"
-
     text = header
-    text += build_table(gainers, "📈 Лидеры роста")
-    text += build_table(losers, "📉 Лидеры падения")
+    text += build_table_universal(gainers, "📈 Лидеры роста", ["Тикер", "Название", "Цена", "Изменение"], ['SECID', 'SHORTNAME', 'LAST', 'CHANGEPERCENT'])
+    text += build_table_universal(losers, "📉 Лидеры падения", ["Тикер", "Название", "Цена", "Изменение"], ['SECID', 'SHORTNAME', 'LAST', 'CHANGEPERCENT'])
     return text
 
 def format_historical_table(gainers, losers, period_name, from_date, till_date):
     text = f"📊 Топ за {period_name}\n📅 Период: {from_date} – {till_date}\n\n"
-
-    def build_hist_table(df, title):
-        if df.empty:
-            return ""
-        table_data = []
-        for _, row in df.iterrows():
-            ticker = row['SECID']
-            name = row.get('SHORTNAME', ticker)
-            if len(name) > 25:
-                name = name[:22] + "…"
-            change = row['CHANGE_PCT']
-            change_str = f"{change:+.2f}%"
-            table_data.append([ticker, name, change_str])
-        headers = ["Тикер", "Название", "Изменение"]
-        header_line = "  ".join(f"<b>{h}</b>" for h in headers)
-        table = tabulate(table_data, headers=[], tablefmt="plain", numalign="right", stralign="left")
-        return f"<b>{title}</b>\n{header_line}\n<pre>{table}</pre>\n"
-
-    text += build_hist_table(gainers, "📈 Рост")
-    text += build_hist_table(losers, "📉 Падение")
+    text += build_table_universal(gainers, "📈 Рост", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
+    text += build_table_universal(losers, "📉 Падение", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
     return text
 
 # ---------- ОБРАБОТЧИКИ КОМАНД ----------
@@ -280,8 +264,11 @@ async def cmd_week(message: types.Message):
             await message.answer("Нет данных за неделю.")
             return
         changes = calc_period_change(df)
+        # Один вызов get_all_shares для фильтрации и получения названий
         shares_all = await get_all_shares()
         if not shares_all.empty:
+            allowed_tickers = shares_all[shares_all['LISTLEVEL'] < 3]['SECID'].unique()
+            changes = changes[changes['SECID'].isin(allowed_tickers)]
             names = shares_all[['SECID', 'SHORTNAME']].drop_duplicates('SECID')
             changes = changes.merge(names, on='SECID', how='left')
         gainers = changes.nlargest(TOP_N, 'CHANGE_PCT')
@@ -308,8 +295,11 @@ async def cmd_month(message: types.Message):
             await message.answer("Нет данных за месяц.")
             return
         changes = calc_period_change(df)
+        # Один вызов get_all_shares
         shares_all = await get_all_shares()
         if not shares_all.empty:
+            allowed_tickers = shares_all[shares_all['LISTLEVEL'] < 3]['SECID'].unique()
+            changes = changes[changes['SECID'].isin(allowed_tickers)]
             names = shares_all[['SECID', 'SHORTNAME']].drop_duplicates('SECID')
             changes = changes.merge(names, on='SECID', how='left')
         gainers = changes.nlargest(TOP_N, 'CHANGE_PCT')
