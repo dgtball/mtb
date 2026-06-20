@@ -15,7 +15,7 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
     ReplyKeyboardMarkup, KeyboardButton, BufferedInputFile
 )
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler
 from aiohttp import web
 import aiohttp
 import pandas as pd
@@ -566,14 +566,12 @@ async def on_startup(app: web.Application):
     http_session = aiohttp.ClientSession()
     logging.info("✅ HTTP сессия создана")
 
-    # Проверка Supabase
     try:
         supabase.table("favorites").select("ticker").limit(1).execute()
         logging.info("✅ Подключение к Supabase установлено")
     except Exception as e:
         logging.error(f"❌ Ошибка подключения к Supabase: {e}")
 
-    # Установка вебхука
     webhook_url = f"{BASE_URL}{WEBHOOK_PATH}"
     await bot.set_webhook(webhook_url, drop_pending_updates=True)
     logging.info(f"✅ Webhook установлен на {webhook_url}")
@@ -589,20 +587,22 @@ async def on_shutdown(app: web.Application):
     logging.info("✅ Сессии закрыты")
 
 def main():
-    # Создаём aiohttp приложение
     app = web.Application()
 
-    # Регистрируем обработчик вебхука
+    # ---- ОБРАБОТЧИК GET (чтобы не было 405) ----
+    async def webhook_get(request):
+        return web.Response(text="Webhook is ready", status=200)
+
+    app.router.add_get(WEBHOOK_PATH, webhook_get)
+
+    # ---- ОСНОВНОЙ ОБРАБОТЧИК (POST) ----
     handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
     handler.register(app, path=WEBHOOK_PATH)
 
-    # Настраиваем startup/shutdown хуки
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
 
-    # Запускаем сервер
     web.run_app(app, host="0.0.0.0", port=WEBHOOK_PORT)
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
     main()
