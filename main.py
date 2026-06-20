@@ -367,9 +367,9 @@ async def process_refresh(callback: CallbackQuery):
         await callback.message.answer(f"❌ Ошибка обновления: {e}")
 
 # ---------- ЗАПУСК ПОЛЛИНГА ----------
-sync def main():
+async def main():
     init_db()
-    # Многократная попытка сбросить вебхук и закрыть старые подключения
+    # Многократная попытка сбросить вебхук
     for attempt in range(3):
         try:
             await bot.delete_webhook(drop_pending_updates=True)
@@ -378,7 +378,7 @@ sync def main():
         except Exception as e:
             logging.warning(f"Не удалось удалить вебхук (попытка {attempt+1}): {e}")
             await asyncio.sleep(1)
-    await asyncio.sleep(2)  # даём Telegram время на обработку
+    await asyncio.sleep(2)
     
     # Закрываем старую сессию и создаём новую
     await bot.session.close()
