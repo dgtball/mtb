@@ -186,10 +186,7 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
     if index_value is not None:
         header = f"📊 Индекс МосБиржи: {index_value:.2f}\n"
     else:
-        if is_weekend:
-            header = "📊 Сессия выходного дня\n"
-        else:
-            header = "📊 Биржа закрыта\n"
+        header = "📊 Сессия выходного дня\n" if is_weekend else "📊 Биржа закрыта\n"
     header += f"🕒 Обновлено: {update_time}\n\n"
 
     def build_table(df, title):
@@ -208,7 +205,8 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
             table_data.append([ticker, name, price, change_str])
         headers = ["Тикер", "Название", "Цена", "Изменение"]
         table = tabulate(table_data, headers=headers, tablefmt="grid", numalign="right", stralign="left")
-        return f"{title}\n```\n{table}\n```\n"
+        # Оборачиваем в <pre> (HTML-тег для кода)
+        return f"<b>{title}</b>\n<pre>{table}</pre>\n"
 
     text = header
     text += build_table(gainers, "📈 Лидеры роста")
@@ -283,7 +281,7 @@ async def cmd_top(message: types.Message):
                 [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
             ]
         )
-        await message.answer(text, reply_markup=keyboard)
+        await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
         await loading_msg.delete()
     except Exception as e:
         await loading_msg.delete()
@@ -440,7 +438,7 @@ async def process_refresh(callback: CallbackQuery):
                 [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
             ]
         )
-        await callback.message.edit_text(text, reply_markup=keyboard)
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
     except Exception as e:
         logging.error(f"Ошибка обновления: {e}")
         await callback.message.answer(f"❌ Ошибка обновления: {e}")
