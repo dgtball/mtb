@@ -4,6 +4,7 @@ import time
 import asyncio
 import datetime
 import io
+import calendar
 
 import matplotlib
 matplotlib.use('Agg')
@@ -27,13 +28,11 @@ API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
 
-# На Bothost URL бота выдаётся автоматически, но можно задать вручную
-BASE_URL = os.getenv("BASE_URL")  # например, https://ваш-бот.bothost.ru
+# Для Bothost URL можно получить из переменной окружения BOTHOST_APP_URL или задать вручную
+BASE_URL = os.getenv("BASE_URL") or os.getenv("BOTHOST_APP_URL")
 if not BASE_URL:
-    # Если не задан, попробуем определить из переменной окружения Bothost
-    BASE_URL = os.getenv("BOTHOST_APP_URL")
-    if not BASE_URL:
-        raise ValueError("BASE_URL не задан. Укажите его в переменных окружения.")
+    # Если не задан, можно попробовать сгенерировать из имени бота, но лучше задать явно
+    raise ValueError("BASE_URL не задан. Укажите его в переменных окружения.")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -42,7 +41,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 TOP_N = 10
 WEBHOOK_PATH = "/webhook"
-WEBHOOK_PORT = int(os.getenv("PORT", 8000))  # Bothost обычно даёт 8000
+WEBHOOK_PORT = int(os.getenv("PORT", 8000))
 
 # ---------- ЛОГИРОВАНИЕ ----------
 logging.basicConfig(level=logging.INFO)
@@ -149,6 +148,19 @@ def get_session_status():
             return "Вечерняя сессия (19:00–23:50)"
         else:
             return "Биржа закрыта"
+
+def get_week_number(date):
+    """Возвращает номер недели в году (ISO) для заданной даты."""
+    return date.isocalendar()[1]
+
+def get_month_name_ru(month_num):
+    """Возвращает название месяца на русском в родительном падеже (для "Топ Июня")."""
+    months = {
+        1: "Января", 2: "Февраля", 3: "Марта", 4: "Апреля",
+        5: "Мая", 6: "Июня", 7: "Июля", 8: "Августа",
+        9: "Сентября", 10: "Октября", 11: "Ноября", 12: "Декабря"
+    }
+    return months.get(month_num, str(month_num))
 
 # ---------- ЗАПРОСЫ К MOEX ----------
 async def get_all_shares():
@@ -338,8 +350,22 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
     text += build_table_universal(losers, "📉 Лидеры падения", ["Тикер", "Название", "Цена", "Изменение"], ['SECID', 'SHORTNAME', 'LAST', 'CHANGEPERCENT'])
     return text
 
-def format_historical_table(gainers, losers, period_name, from_date, till_date):
-    text = f"📊 Топ за {period_name}\n📅 Период: {from_date} – {till_date}\n\n"
+def format_historical_table(gainers, losers, period, from_date_dt, till_date_dt):
+    """
+    Форматирует таблицу для недели или месяца.
+    period: 'week' или 'month'
+    from_date_dt, till_date_dt: объекты datetime (дата начала и конца периода)
+    """
+    if period == 'week':
+        week_num = get_week_number(from_date_dt)
+        title = f"📊 Топ за неделю #{week_num}"
+        period_str = f"📅 Период: {from_date_dt.strftime('%d/%m/%y')} – {till_date_dt.strftime('%d/%m/%y')}"
+    else:  # month
+        month_name = get_month_name_ru(from_date_dt.month)
+        title = f"📅 Топ {month_name}"
+        period_str = f"📅 Период: {from_date_dt.strftime('%d/%m/%y')} – {till_date_dt.strftime('%d/%m/%y')}"
+
+    text = f"{title}\n{period_str}\n\n"
     text += build_table_universal(gainers, "📈 Рост", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
     text += build_table_universal(losers, "📉 Падение", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
     return text
@@ -401,16 +427,20 @@ async def send_top(message: types.Message, period: str = 'day'):
             now = get_moscow_time()
             if period == 'week':
                 start = now - datetime.timedelta(days=now.weekday())
-                from_date = start.strftime("%Y-%m-%d")
-                period_name = "неделю"
-            else:
-                from_date = now.replace(day=1).strftime("%Y-%m-%d")
-                period_name = "месяц"
-            till_date = now.strftime("%Y-%m-%d")
-            df = await get_historical_shares(from_date, till_date)
+                from_date = start
+                from_date_str = start.strftime("%Y-%m-%d")
+                period_name_short = 'week'
+            else:  # month
+                start = now.replace(day=1)
+                from_date = start
+                from_date_str = start.strftime("%Y-%m-%d")
+                period_name_short = 'month'
+            till_date = now
+            till_date_str = now.strftime("%Y-%m-%d")
+            df = await get_historical_shares(from_date_str, till_date_str)
             if df.empty:
                 await loading_msg.delete()
-                await message.answer(f"Нет данных за {period_name}.")
+                await message.answer(f"Нет данных за {period}.")
                 return
             changes = calc_period_change(df)
             shares_all = await get_all_shares()
@@ -421,10 +451,7 @@ async def send_top(message: types.Message, period: str = 'day'):
                 changes = changes.merge(names, on='SECID', how='left')
             gainers = changes.nlargest(TOP_N, 'CHANGE_PCT')
             losers = changes.nsmallest(TOP_N, 'CHANGE_PCT')
-            session_status = get_session_status()
-            update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
-            text = format_historical_table(gainers, losers, period_name, from_date, till_date)
-            text = f"📊 {session_status}\n🕒 {update_time}\n\n" + text
+            text = format_historical_table(gainers, losers, period_name_short, from_date, till_date)
 
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -592,7 +619,7 @@ async def process_refresh(callback: CallbackQuery):
         logging.error(f"❌ Ошибка обновления: {e}", exc_info=True)
         await callback.message.answer(f"❌ Ошибка обновления: {e}")
 
-# ---------- ЗАПУСК ВЕБХУКА ЧЕРЕЗ AIOHTTP (для Bothost) ----------
+# ---------- ЗАПУСК ВЕБХУКА ЧЕРЕЗ AIOHTTP ----------
 async def on_startup(app: web.Application):
     global http_session
     http_session = aiohttp.ClientSession()
@@ -621,13 +648,11 @@ async def on_shutdown(app: web.Application):
 def main():
     app = web.Application()
 
-    # Обработчик GET для проверки доступности
     async def webhook_get(request):
         return web.Response(text="Webhook is ready", status=200)
 
     app.router.add_get(WEBHOOK_PATH, webhook_get)
 
-    # Основной обработчик POST
     handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
     handler.register(app, path=WEBHOOK_PATH)
 
