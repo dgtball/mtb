@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 4.3 (убраны inline-кнопки, новые заголовки)
+# Версия: 4.4 (исправлен порядок обработчиков)
 # ==============================================
 
 import os
@@ -78,7 +78,6 @@ def main_keyboard():
         [KeyboardButton(text="⭐ Избранные")],
         [KeyboardButton(text="✅ Добавить тикер"), KeyboardButton(text="❌ Удалить тикер")],
     ]
-    # Если токен задан, добавляем кнопки портфеля
     if TINKOFF_TOKEN:
         kb.insert(3, [KeyboardButton(text="📈 Портфель"), KeyboardButton(text="📊 График покупок")])
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=False)
@@ -595,7 +594,6 @@ async def send_top(message: types.Message, period: str = 'day'):
             losers = changes.nsmallest(TOP_N, 'CHANGE_PCT')
             text = format_historical_table(gainers, losers, period_name_short, from_date, till_date)
 
-        # Убраны inline-кнопки
         sent_msg = await message.answer(text, parse_mode="HTML")
         chat_id = message.chat.id
         last_messages[chat_id] = sent_msg.message_id
@@ -684,6 +682,7 @@ async def favorites_button(message: types.Message):
         await message.answer(f"❌ Ошибка при загрузке избранного: {e}")
         await safe_delete_message(message.chat.id, message.message_id)
 
+# ---------- ОБРАБОТЧИКИ ДЛЯ ДОБАВЛЕНИЯ/УДАЛЕНИЯ ТИКЕРОВ (состояние) ----------
 @dp.message(lambda msg: msg.text == "✅ Добавить тикер", PrivateFilter())
 async def add_ticker_button(message: types.Message):
     user_state[message.chat.id] = 'add'
@@ -696,35 +695,32 @@ async def remove_ticker_button(message: types.Message):
     await message.answer("Введите тикер для удаления (например, SBER или SBER, GAZP):")
     await safe_delete_message(message.chat.id, message.message_id)
 
+# Обработчик текстового ввода для состояний
 @dp.message(PrivateFilter())
-async def handle_text(message: types.Message):
-    # Пропускаем команды (начинаются с "/")
-    if message.text and message.text.startswith('/'):
-        return
+async def handle_state_input(message: types.Message):
     chat_id = message.chat.id
-    if chat_id in user_state:
-        state = user_state[chat_id]
-        raw = message.text.strip()
-        tickers = [t.strip().upper() for t in raw.split(',') if t.strip()]
-        results = []
-        for ticker in tickers:
-            if state == 'add':
-                if add_favorite(chat_id, ticker):
-                    results.append(f"✅ {ticker} добавлен")
-                else:
-                    results.append(f"ℹ️ {ticker} уже есть")
-            elif state == 'remove':
-                if remove_favorite(chat_id, ticker):
-                    results.append(f"✅ {ticker} удалён")
-                else:
-                    results.append(f"ℹ️ {ticker} не найден")
-        await message.answer("\n".join(results) if results else "Ничего не сделано.")
-        del user_state[chat_id]
-        await message.answer("✅ Готово. Выберите действие из меню.", reply_markup=main_keyboard())
-        await safe_delete_message(chat_id, message.message_id)
-    else:
-        await message.answer("Используйте кнопки меню.", reply_markup=main_keyboard())
-        await safe_delete_message(chat_id, message.message_id)
+    if chat_id not in user_state:
+        # Если нет состояния, передаём управление дальше (или игнорируем)
+        return
+    state = user_state[chat_id]
+    raw = message.text.strip()
+    tickers = [t.strip().upper() for t in raw.split(',') if t.strip()]
+    results = []
+    for ticker in tickers:
+        if state == 'add':
+            if add_favorite(chat_id, ticker):
+                results.append(f"✅ {ticker} добавлен")
+            else:
+                results.append(f"ℹ️ {ticker} уже есть")
+        elif state == 'remove':
+            if remove_favorite(chat_id, ticker):
+                results.append(f"✅ {ticker} удалён")
+            else:
+                results.append(f"ℹ️ {ticker} не найден")
+    await message.answer("\n".join(results) if results else "Ничего не сделано.")
+    del user_state[chat_id]
+    await message.answer("✅ Готово. Выберите действие из меню.", reply_markup=main_keyboard())
+    await safe_delete_message(chat_id, message.message_id)
 
 # ---------- КОМАНДЫ ПОРТФЕЛЯ (REST API) ----------
 @dp.message(Command("portfolio"))
@@ -784,6 +780,14 @@ async def cmd_buys(message: types.Message):
         await loading_msg.delete()
         logging.error(f"Ошибка графика покупок: {e}")
         await message.answer(f"❌ Ошибка: {e}")
+
+# ---------- ОБРАБОТЧИК ДЛЯ ВСЕХ ОСТАЛЬНЫХ СООБЩЕНИЙ (фолбэк) ----------
+@dp.message(PrivateFilter())
+async def fallback_handler(message: types.Message):
+    # Если сообщение не обработано ни одним из вышестоящих обработчиков,
+    # отправляем подсказку.
+    await message.answer("Используйте кнопки меню.", reply_markup=main_keyboard())
+    await safe_delete_message(message.chat.id, message.message_id)
 
 # ---------- ЗАПУСК (POLLING + HEALTH-SERVER) ----------
 async def health_handler(request):
