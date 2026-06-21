@@ -500,12 +500,12 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
 def format_historical_table(gainers, losers, period, from_date_dt, till_date_dt):
     if period == 'week':
         week_num = get_week_number(from_date_dt)
-        title = f"📊 Топ за неделю #{week_num}"
-        period_str = f"📅 Период: {from_date_dt.strftime('%d/%m/%y')} – {till_date_dt.strftime('%d/%m/%y')}"
+        title = f"📅 Топ за неделю #{week_num}"
+        period_str = f"Период: {from_date_dt.strftime('%d/%m/%y')} – {till_date_dt.strftime('%d/%m/%y')}"
     else:
         month_name = get_month_name_ru(from_date_dt.month)
         title = f"🗓️ Топ {month_name}"
-        period_str = f"📅 Период: {from_date_dt.strftime('%d/%m/%y')} – {till_date_dt.strftime('%d/%m/%y')}"
+        period_str = f"Период: {from_date_dt.strftime('%d/%m/%y')} – {till_date_dt.strftime('%d/%m/%y')}"
     text = f"{title}\n{period_str}\n\n"
     text += build_table_universal(gainers, "📈 Рост", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
     text += build_table_universal(losers, "📉 Падение", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
@@ -726,19 +726,28 @@ async def handle_state_input(message: types.Message):
 @dp.message(Command("portfolio"))
 @dp.message(lambda msg: msg.text == "📈 Портфель")
 async def cmd_portfolio(message: types.Message):
-    if message.from_user.id != MY_CHAT_ID:
-        await message.answer("⛔ Доступ запрещён.")
-        return
-    if not TINKOFF_TOKEN:
-        await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
-        return
-    loading_msg = await message.answer("⏳ Загружаю данные портфеля...")
+    logging.info(f"🔍 cmd_portfolio вызван для user_id={message.from_user.id}")
     try:
+        if message.from_user.id != MY_CHAT_ID:
+            await message.answer("⛔ Доступ запрещён.")
+            logging.info("⛔ Доступ запрещён для этого пользователя.")
+            return
+        if not TINKOFF_TOKEN:
+            await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
+            logging.info("❌ Токен TITN отсутствует.")
+            return
+
+        loading_msg = await message.answer("⏳ Загружаю данные портфеля...")
+        logging.info("⏳ Получаем данные портфеля...")
         data = await get_portfolio_summary()
+        logging.info(f"📊 Данные портфеля получены: {data is not None}")
+
         if not data:
             await loading_msg.delete()
             await message.answer("❌ Не удалось получить данные портфеля.")
+            logging.warning("❌ get_portfolio_summary вернула None")
             return
+
         text = f"📊 *Портфель*\n"
         text += f"💰 Сумма: {data['total_amount']:.2f} {data['currency']}\n\n"
         if not data["positions"]:
@@ -748,37 +757,43 @@ async def cmd_portfolio(message: types.Message):
             for pos in data["positions"]:
                 yield_pct = (pos["expected_yield"] / (pos["average_price"] * pos["quantity"]) * 100) if pos["average_price"] and pos["quantity"] else 0
                 text += f"• {pos['name']} ({pos['ticker']}) : {pos['quantity']} шт., {pos['current_price']:.2f} ₽, доходность {yield_pct:+.2f}%\n"
+
         await message.answer(text, parse_mode="Markdown")
         await loading_msg.delete()
+        logging.info("✅ Портфель успешно отправлен")
+
     except Exception as e:
-        await loading_msg.delete()
-        logging.error(f"Ошибка портфеля: {e}")
+        logging.error(f"❌ Ошибка в cmd_portfolio: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}")
 
 @dp.message(Command("buys"))
 @dp.message(lambda msg: msg.text == "📊 График покупок")
 async def cmd_buys(message: types.Message):
-    if message.from_user.id != MY_CHAT_ID:
-        await message.answer("⛔ Доступ запрещён.")
-        return
-    if not TINKOFF_TOKEN:
-        await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
-        return
-    loading_msg = await message.answer("⏳ Строю график покупок за месяц...")
+    logging.info(f"🔍 cmd_buys вызван для user_id={message.from_user.id}")
     try:
+        if message.from_user.id != MY_CHAT_ID:
+            await message.answer("⛔ Доступ запрещён.")
+            return
+        if not TINKOFF_TOKEN:
+            await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
+            return
+
+        loading_msg = await message.answer("⏳ Строю график покупок за месяц...")
+        logging.info("⏳ Строим график...")
         chart_buf = await build_purchases_chart()
         if chart_buf is None:
             await loading_msg.delete()
             await message.answer("❌ Не удалось построить график покупок. Возможно, за месяц не было покупок или ошибка API.")
             return
+
         await message.answer_photo(
             photo=BufferedInputFile(chart_buf.getvalue(), filename="purchases.png"),
             caption=f"📊 Покупки за {get_moscow_time().strftime('%B %Y')}"
         )
         await loading_msg.delete()
+        logging.info("✅ График отправлен")
     except Exception as e:
-        await loading_msg.delete()
-        logging.error(f"Ошибка графика покупок: {e}")
+        logging.error(f"❌ Ошибка в cmd_buys: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}")
 
 # ---------- ОБРАБОТЧИК ДЛЯ ВСЕХ ОСТАЛЬНЫХ СООБЩЕНИЙ (фолбэк) ----------
