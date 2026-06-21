@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 6.2 (исправлен SSL и URL API Т-Инвестиций)
+# Версия: 6.2.1 (исправлен SSL и URL API Т-Инвестиций)
 # ==============================================
 
 import os
@@ -202,42 +202,57 @@ async def tinkoff_api_request(method: str, endpoint: str, params: dict = None) -
         data = await resp.json()
         return data
 
-async def get_portfolio_data() -> dict:
-    # Для получения портфеля используем метод GetPortfolio (POST)
-    data = await tinkoff_api_request("POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetPortfolio")
-    return data
+async def get_accounts() -> list:
+    """Возвращает список счетов пользователя."""
+    data = await tinkoff_api_request("POST", "tinkoff.public.invest.api.contract.v1.UsersService/GetAccounts")
+    return data.get("accounts", [])
 
-async def get_operations(from_date: datetime.date, to_date: datetime.date) -> list:
-    # Для получения операций используем метод GetOperationsByPeriod (POST)
-    # Формируем запрос согласно документации
-    params = {
-        "from": from_date.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "to": to_date.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "state": "executed"
-    }
-    data = await tinkoff_api_request("POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetOperationsByPeriod", params=params)
-    return data.get("operations", [])
+async def get_portfolio_data(account_id: str) -> dict:
+    """Получает портфель для указанного счёта."""
+    params = {"accountId": account_id}
+    data = await tinkoff_api_request("POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetPortfolio", params=params)
+    return data
 
 async def get_portfolio_summary():
     try:
-        data = await get_portfolio_data()
-        # В новом API структура может отличаться. Ожидаем поле "positions"
+        # Получаем список счетов
+        accounts = await get_accounts()
+        if not accounts:
+            logging.error("Нет доступных счетов")
+            return None
+        
+        # Берём первый счёт (можно доработать для выбора конкретного)
+        account_id = accounts[0].get("id")
+        if not account_id:
+            logging.error("Не удалось получить account_id")
+            return None
+        
+        logging.info(f"📊 Используем счёт: {account_id}")
+        
+        # Получаем портфель
+        data = await get_portfolio_data(account_id)
+        
         positions = data.get("positions", [])
-        total = data.get("totalAmount", {}).get("value", 0)
-        total_currency = data.get("totalAmount", {}).get("currency", "RUB")
+        total_amount = data.get("totalAmountPortfolio", {})
+        total = total_amount.get("units", 0)
+        total_currency = total_amount.get("currency", "RUB")
+        
         result = {
             "total_amount": total,
             "currency": total_currency,
             "positions": []
         }
+        
         for pos in positions:
             figi = pos.get("figi")
             ticker = pos.get("ticker") or figi
             name = pos.get("name") or ticker
-            quantity = pos.get("quantity", {}).get("value", 0) if isinstance(pos.get("quantity"), dict) else pos.get("quantity", 0)
-            current_price = pos.get("currentPrice", {}).get("value", 0) if isinstance(pos.get("currentPrice"), dict) else pos.get("currentPrice", 0)
-            average_price = pos.get("averagePositionPrice", {}).get("value", 0) if isinstance(pos.get("averagePositionPrice"), dict) else pos.get("averagePositionPrice", 0)
-            expected_yield = pos.get("expectedYield", {}).get("value", 0) if isinstance(pos.get("expectedYield"), dict) else pos.get("expectedYield", 0)
+            
+            quantity = pos.get("quantity", {}).get("units", 0) if isinstance(pos.get("quantity"), dict) else pos.get("quantity", 0)
+            current_price = pos.get("currentPrice", {}).get("units", 0) if isinstance(pos.get("currentPrice"), dict) else pos.get("currentPrice", 0)
+            average_price = pos.get("averagePositionPrice", {}).get("units", 0) if isinstance(pos.get("averagePositionPrice"), dict) else pos.get("averagePositionPrice", 0)
+            expected_yield = pos.get("expectedYield", {}).get("units", 0) if isinstance(pos.get("expectedYield"), dict) else pos.get("expectedYield", 0)
+            
             result["positions"].append({
                 "figi": figi,
                 "ticker": ticker,
@@ -247,6 +262,7 @@ async def get_portfolio_summary():
                 "average_price": average_price,
                 "expected_yield": expected_yield
             })
+        
         return result
     except Exception as e:
         logging.error(f"Ошибка получения портфеля: {e}")
