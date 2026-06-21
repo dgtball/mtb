@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 4.6 (финальная, с F.text)
+# Версия: 4.7 (исправлен импорт Text)1
 # ==============================================
 
 import os
@@ -19,7 +19,7 @@ import matplotlib.dates as mdates
 from matplotlib.ticker import FuncFormatter
 
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command, F
+from aiogram.filters import Command, Text
 from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
     ReplyKeyboardMarkup, KeyboardButton, BufferedInputFile
@@ -50,11 +50,6 @@ DB_PATH = os.path.join(DATA_DIR, 'favorites.db')
 PORT = int(os.getenv('PORT', 3000))
 
 TINKOFF_API_URL = "https://api-invest.tinkoff.ru/openapi/"
-
-# ---------- ФИЛЬТР ПРИВАТНОСТИ ----------
-class PrivateFilter:
-    async def __call__(self, message: types.Message) -> bool:
-        return message.from_user.id == MY_CHAT_ID
 
 # ---------- ЛОГИРОВАНИЕ ----------
 logging.basicConfig(level=logging.INFO)
@@ -643,7 +638,7 @@ async def cmd_start(message: types.Message):
         logging.error(f"❌ Ошибка в /start: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка при запуске: {e}")
 
-@dp.message(F.text == "📌 Топ дня")
+@dp.message(Text("📌 Топ дня"))
 async def top_day_button(message: types.Message):
     if message.from_user.id != MY_CHAT_ID:
         await message.answer("⛔ Доступ запрещён.")
@@ -651,7 +646,7 @@ async def top_day_button(message: types.Message):
     await send_top(message, 'day')
     await safe_delete_message(message.chat.id, message.message_id)
 
-@dp.message(F.text == "📊 Топ недели")
+@dp.message(Text("📊 Топ недели"))
 async def top_week_button(message: types.Message):
     if message.from_user.id != MY_CHAT_ID:
         await message.answer("⛔ Доступ запрещён.")
@@ -659,7 +654,7 @@ async def top_week_button(message: types.Message):
     await send_top(message, 'week')
     await safe_delete_message(message.chat.id, message.message_id)
 
-@dp.message(F.text == "🗓️ Топ месяца")
+@dp.message(Text("🗓️ Топ месяца"))
 async def top_month_button(message: types.Message):
     if message.from_user.id != MY_CHAT_ID:
         await message.answer("⛔ Доступ запрещён.")
@@ -667,7 +662,7 @@ async def top_month_button(message: types.Message):
     await send_top(message, 'month')
     await safe_delete_message(message.chat.id, message.message_id)
 
-@dp.message(F.text == "⭐ Избранные")
+@dp.message(Text("⭐ Избранные"))
 async def favorites_button(message: types.Message):
     if message.from_user.id != MY_CHAT_ID:
         await message.answer("⛔ Доступ запрещён.")
@@ -697,7 +692,7 @@ async def favorites_button(message: types.Message):
         await message.answer(f"❌ Ошибка при загрузке избранного: {e}")
         await safe_delete_message(message.chat.id, message.message_id)
 
-@dp.message(F.text == "✅ Добавить тикер")
+@dp.message(Text("✅ Добавить тикер"))
 async def add_ticker_button(message: types.Message):
     if message.from_user.id != MY_CHAT_ID:
         await message.answer("⛔ Доступ запрещён.")
@@ -706,7 +701,7 @@ async def add_ticker_button(message: types.Message):
     await message.answer("Введите тикер для добавления (например, SBER или SBER, GAZP):")
     await safe_delete_message(message.chat.id, message.message_id)
 
-@dp.message(F.text == "❌ Удалить тикер")
+@dp.message(Text("❌ Удалить тикер"))
 async def remove_ticker_button(message: types.Message):
     if message.from_user.id != MY_CHAT_ID:
         await message.answer("⛔ Доступ запрещён.")
@@ -745,7 +740,7 @@ async def handle_state_input(message: types.Message):
 
 # ---------- КОМАНДЫ ПОРТФЕЛЯ (REST API) ----------
 @dp.message(Command("portfolio"))
-@dp.message(F.text == "📈 Портфель")
+@dp.message(Text("📈 Портфель"))
 async def cmd_portfolio(message: types.Message):
     if message.from_user.id != MY_CHAT_ID:
         await message.answer("⛔ Доступ запрещён.")
@@ -780,7 +775,7 @@ async def cmd_portfolio(message: types.Message):
         await message.answer(f"❌ Ошибка: {e}")
 
 @dp.message(Command("buys"))
-@dp.message(F.text == "📊 График покупок")
+@dp.message(Text("📊 График покупок"))
 async def cmd_buys(message: types.Message):
     if message.from_user.id != MY_CHAT_ID:
         await message.answer("⛔ Доступ запрещён.")
