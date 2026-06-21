@@ -1,6 +1,6 @@
 # ==============================================
-# БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 3.3.0 (Health‑сервер для Bothost)
+# БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ (без Т-Инвестиций)
+# Версия: 4.1.0 (условный импорт)
 # ==============================================
 
 import os
@@ -10,13 +10,10 @@ import asyncio
 import datetime
 import io
 import sqlite3
-from collections import defaultdict
 
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from matplotlib.ticker import FuncFormatter
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command, Filter
@@ -28,33 +25,36 @@ from aiohttp import web
 import aiohttp
 import pandas as pd
 from tabulate import tabulate
-from tinkoff.invest import Client
-from tinkoff.invest.services import InstrumentsService, OperationsService
-from tinkoff.invest.schemas import OperationType, InstrumentIdType, OperationState
+
+# ---------- ПРОВЕРКА НАЛИЧИЯ T-ИНВЕСТИЦИЙ ----------
+TINKOFF_AVAILABLE = False
+try:
+    from tinkoff.invest import Client
+    from tinkoff.invest.schemas import OperationType, InstrumentIdType, OperationState
+    TINKOFF_AVAILABLE = True
+    logging.info("✅ Модуль tinkoff-investments найден")
+except ImportError:
+    logging.warning("⚠️ Модуль tinkoff-investments НЕ установлен. Команды портфеля будут недоступны.")
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
 
-TINKOFF_TOKEN = os.getenv("TITN")
-if not TINKOFF_TOKEN:
-    logging.warning("TITN не задан – команды портфеля будут недоступны")
-
 MY_CHAT_ID = os.getenv("MY_CHAT_ID")
 if not MY_CHAT_ID:
-    raise ValueError("MY_CHAT_ID не задан. Добавьте его в переменные окружения.")
+    raise ValueError("MY_CHAT_ID не задан")
 try:
     MY_CHAT_ID = int(MY_CHAT_ID)
 except ValueError:
-    raise ValueError("MY_CHAT_ID должен быть числом (целым).")
+    raise ValueError("MY_CHAT_ID должен быть числом")
 
 TOP_N = 10
 DATA_DIR = os.getenv('DATA_DIR', '/app/data')
 DB_PATH = os.path.join(DATA_DIR, 'favorites.db')
-PORT = int(os.getenv('PORT', 3000))  # Bothost использует 3000
+PORT = int(os.getenv('PORT', 3000))
 
-# ---------- ФИЛЬТР ДЛЯ ПРИВАТНОСТИ ----------
+# ---------- ФИЛЬТР ПРИВАТНОСТИ ----------
 class PrivateFilter(Filter):
     async def __call__(self, message: types.Message) -> bool:
         return message.from_user.id == MY_CHAT_ID
@@ -79,9 +79,11 @@ def main_keyboard():
         [KeyboardButton(text="📌 Топ дня")],
         [KeyboardButton(text="📊 Топ недели"), KeyboardButton(text="🗓️ Топ месяца")],
         [KeyboardButton(text="⭐ Избранные")],
-        [KeyboardButton(text="📈 Портфель"), KeyboardButton(text="📊 График покупок")],
         [KeyboardButton(text="✅ Добавить тикер"), KeyboardButton(text="❌ Удалить тикер")],
     ]
+    # Если библиотека доступна, добавляем кнопки портфеля
+    if TINKOFF_AVAILABLE:
+        kb.insert(3, [KeyboardButton(text="📈 Портфель"), KeyboardButton(text="📊 График покупок")])
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=False)
 
 # ---------- УДАЛЕНИЕ СООБЩЕНИЙ ----------
@@ -188,160 +190,74 @@ def get_month_name_ru(month_num):
     }
     return months.get(month_num, str(month_num))
 
-# ---------- ФУНКЦИИ ДЛЯ РАБОТЫ С Т-ИНВЕСТИЦИЙ ----------
-def _to_float(units: int, nano: int) -> float:
-    return units + nano / 1e9
-
-def get_portfolio_data(account_id: str = None) -> dict:
-    if not TINKOFF_TOKEN:
-        return {"error": "Токен TITN не задан"}
-    with Client(TINKOFF_TOKEN) as client:
-        accounts = client.users.get_accounts().accounts
-        if not accounts:
-            return {"error": "Нет доступных счетов"}
-        if account_id is None:
-            account_id = accounts[0].id
-        portfolio = client.operations.get_portfolio(account_id=account_id)
-        result = {
-            "account_name": next((a.name for a in accounts if a.id == account_id), "Основной"),
-            "total_amount": _to_float(portfolio.total_amount_units, portfolio.total_amount_nano),
-            "positions": []
-        }
-        for pos in portfolio.positions:
-            try:
-                instrument = client.instruments.get_instrument_by_id(
-                    instrument_id=pos.instrument_uid,
-                    id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_UID
-                ).instrument
-                name = instrument.name if instrument else pos.figi
-            except:
-                name = pos.figi
-            result["positions"].append({
-                "figi": pos.figi,
-                "name": name,
-                "quantity": pos.quantity.units,
-                "current_price": _to_float(pos.current_price.units, pos.current_price.nano),
-                "average_price": _to_float(pos.average_position_price.units, pos.average_position_price.nano),
-                "expected_yield": _to_float(pos.expected_yield.units, pos.expected_yield.nano),
-            })
-        return result
-
-def get_operations(account_id: str = None, from_date: datetime.date = None, to_date: datetime.date = None) -> list:
-    if not TINKOFF_TOKEN:
-        return []
-    if from_date is None:
-        from_date = get_moscow_time().date().replace(day=1)
-    if to_date is None:
-        to_date = get_moscow_time().date()
-    with Client(TINKOFF_TOKEN) as client:
-        accounts = client.users.get_accounts().accounts
-        if not accounts:
-            return []
-        if account_id is None:
-            account_id = accounts[0].id
-        from_ts = int(datetime.datetime.combine(from_date, datetime.time.min).timestamp())
-        to_ts = int(datetime.datetime.combine(to_date, datetime.time.max).timestamp())
-        try:
-            ops = client.operations.get_operations(
-                account_id=account_id,
-                from_=from_ts,
-                to=to_ts,
-                state=OperationState.OPERATION_STATE_EXECUTED
-            )
-            return ops.operations
-        except Exception as e:
-            logging.error(f"Ошибка получения операций: {e}")
-            return []
-
-def build_purchases_chart(account_id: str = None) -> io.BytesIO:
-    now = get_moscow_time()
-    from_date = now.date().replace(day=1)
-    to_date = now.date()
-    ops = get_operations(account_id, from_date, to_date)
-    if not ops:
-        return None
-    buys = [op for op in ops if op.operation_type == OperationType.OPERATION_TYPE_BUY]
-    if not buys:
-        return None
-    day_amounts = defaultdict(float)
-    for op in buys:
-        dt = op.date.astimezone(datetime.timezone.utc).astimezone(datetime.timezone(datetime.timedelta(hours=3)))
-        day_key = dt.date()
-        amount = op.payment.units + op.payment.nano / 1e9
-        day_amounts[day_key] += abs(amount)
-    if not day_amounts:
-        return None
-    sorted_days = sorted(day_amounts.items())
-    dates = [d[0] for d in sorted_days]
-    amounts = [d[1] for d in sorted_days]
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.bar(dates, amounts, width=0.6, color='green', alpha=0.7)
-    ax.set_title(f"Покупки за {from_date.strftime('%B %Y')}", fontsize=14)
-    ax.set_xlabel("Дата")
-    ax.set_ylabel("Сумма покупок (₽)")
-    ax.grid(axis='y', linestyle='--', alpha=0.7)
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%d'))
-    ax.xaxis.set_major_locator(mdates.DayLocator(interval=2))
-    plt.xticks(rotation=45)
-    ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{int(x):,} ₽'))
-    fig.tight_layout()
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight')
-    buf.seek(0)
-    plt.close()
-    return buf
-
 # ---------- ЗАПРОСЫ К MOEX ----------
 async def get_all_shares():
     global http_session
     url = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=marketdata,securities"
-    try:
-        async with http_session.get(url) as resp:
-            json_data = await resp.json()
-            if 'marketdata' not in json_data or 'securities' not in json_data:
-                return pd.DataFrame()
-            md_columns = json_data['marketdata']['columns']
-            md_rows = json_data['marketdata']['data']
-            market_df = pd.DataFrame(md_rows, columns=md_columns)
-            sec_columns = json_data['securities']['columns']
-            sec_rows = json_data['securities']['data']
-            sec_df = pd.DataFrame(sec_rows, columns=sec_columns)
-            sec_df = sec_df[['SECID', 'SHORTNAME', 'LISTLEVEL']].copy()
-            merged = pd.merge(market_df, sec_df, on='SECID', how='left')
-            return merged
-    except Exception as e:
-        logging.error(f"Ошибка загрузки: {e}")
-        return pd.DataFrame()
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    for attempt in range(3):
+        try:
+            async with http_session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    await asyncio.sleep(2)
+                    continue
+                json_data = await resp.json()
+                if 'marketdata' not in json_data or 'securities' not in json_data:
+                    await asyncio.sleep(2)
+                    continue
+                md_columns = json_data['marketdata']['columns']
+                md_rows = json_data['marketdata']['data']
+                market_df = pd.DataFrame(md_rows, columns=md_columns)
+                sec_columns = json_data['securities']['columns']
+                sec_rows = json_data['securities']['data']
+                sec_df = pd.DataFrame(sec_rows, columns=sec_columns)
+                sec_df = sec_df[['SECID', 'SHORTNAME', 'LISTLEVEL']].copy()
+                merged = pd.merge(market_df, sec_df, on='SECID', how='left')
+                return merged
+        except Exception:
+            await asyncio.sleep(2)
+    return pd.DataFrame()
 
 async def get_moex_index():
     global http_session
     url = "https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX.json?iss.meta=off"
-    try:
-        async with http_session.get(url) as resp:
-            json_data = await resp.json()
-            columns = json_data['securities']['columns']
-            data_rows = json_data['securities']['data']
-            if data_rows:
-                last_idx = columns.index('LAST')
-                return float(data_rows[0][last_idx])
-    except Exception:
-        return None
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    for attempt in range(3):
+        try:
+            async with http_session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    await asyncio.sleep(2)
+                    continue
+                json_data = await resp.json()
+                columns = json_data['securities']['columns']
+                data_rows = json_data['securities']['data']
+                if data_rows:
+                    last_idx = columns.index('LAST')
+                    return float(data_rows[0][last_idx])
+        except Exception:
+            await asyncio.sleep(2)
     return None
 
 async def get_historical_shares(from_date: str, till_date: str):
     global http_session
     url = f"https://iss.moex.com/iss/history/engines/stock/markets/shares/boards/TQBR/securities.json?from={from_date}&till={till_date}&iss.meta=off&iss.only=history"
-    try:
-        async with http_session.get(url) as resp:
-            json_data = await resp.json()
-            if 'history' not in json_data:
-                return pd.DataFrame()
-            columns = json_data['history']['columns']
-            data_rows = json_data['history']['data']
-            df = pd.DataFrame(data_rows, columns=columns)
-            return df
-    except Exception:
-        return pd.DataFrame()
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    for attempt in range(3):
+        try:
+            async with http_session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    await asyncio.sleep(2)
+                    continue
+                json_data = await resp.json()
+                if 'history' not in json_data:
+                    return pd.DataFrame()
+                columns = json_data['history']['columns']
+                data_rows = json_data['history']['data']
+                df = pd.DataFrame(data_rows, columns=columns)
+                return df
+        except Exception:
+            await asyncio.sleep(2)
+    return pd.DataFrame()
 
 def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool = True):
     if data.empty:
@@ -443,8 +359,8 @@ async def get_favorites_data(chat_id: int):
 
     fav_df['change_week'] = week_changes
     fav_df['change_month'] = month_changes
-    fav_df['change_week'] = fav_df['change_week'].fillna(float('nan'))
-    fav_df['change_month'] = fav_df['change_month'].fillna(float('nan'))
+    fav_df['change_week'] = fav_df['change_week'].fillna(float('nan')).infer_objects(copy=False)
+    fav_df['change_month'] = fav_df['change_month'].fillna(float('nan')).infer_objects(copy=False)
     fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
     return fav_df, None
 
@@ -616,14 +532,14 @@ async def auto_update_task(chat_id: int, message_id: int):
             logging.error(f"Ошибка автообновления для чата {chat_id}: {e}")
             break
 
-# ---------- ОБРАБОТЧИКИ КОМАНД (ВСЕ С PrivateFilter) ----------
+# ---------- ОБРАБОТЧИКИ КОМАНД ----------
 @dp.message(Command("start"), PrivateFilter())
 async def cmd_start(message: types.Message):
     chat_id = message.chat.id
     auto_update_enabled[chat_id] = True
     try:
         await message.answer(
-            "👋 Привет! Я бот для отслеживания топ-акций Мосбиржи и вашего портфеля Т-Инвестиций.\n\n"
+            "👋 Привет! Я бот для отслеживания топ-акций Мосбиржи.\n\n"
             "Используйте кнопки ниже для навигации.",
             reply_markup=main_keyboard()
         )
@@ -673,64 +589,6 @@ async def favorites_button(message: types.Message):
         logging.error(f"❌ Ошибка в favorites: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка при загрузке избранного: {e}")
         await safe_delete_message(message.chat.id, message.message_id)
-
-@dp.message(lambda msg: msg.text == "📈 Портфель", PrivateFilter())
-async def portfolio_button(message: types.Message):
-    await cmd_portfolio(message)
-
-@dp.message(lambda msg: msg.text == "📊 График покупок", PrivateFilter())
-async def buys_chart_button(message: types.Message):
-    await cmd_buys(message)
-
-@dp.message(Command("portfolio"), PrivateFilter())
-async def cmd_portfolio(message: types.Message):
-    if not TINKOFF_TOKEN:
-        await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
-        return
-    loading_msg = await message.answer("⏳ Загружаю данные портфеля...")
-    try:
-        data = get_portfolio_data()
-        if "error" in data:
-            await loading_msg.delete()
-            await message.answer(f"❌ {data['error']}")
-            return
-        text = f"📊 *{data['account_name']}*\n"
-        text += f"💰 Сумма портфеля: {data['total_amount']:.2f} ₽\n\n"
-        if not data["positions"]:
-            text += "Позиций нет."
-        else:
-            text += "📈 *Позиции:*\n"
-            for pos in data["positions"]:
-                yield_pct = (pos["expected_yield"] / (pos["average_price"] * pos["quantity"]) * 100) if pos["average_price"] and pos["quantity"] else 0
-                text += f"• {pos['name']} ({pos['figi'][:6]}): {pos['quantity']} шт., {pos['current_price']:.2f} ₽, доходность {yield_pct:+.2f}%\n"
-        await message.answer(text, parse_mode="Markdown")
-        await loading_msg.delete()
-    except Exception as e:
-        await loading_msg.delete()
-        logging.error(f"Ошибка портфеля: {e}")
-        await message.answer(f"❌ Ошибка: {e}")
-
-@dp.message(Command("buys"), PrivateFilter())
-async def cmd_buys(message: types.Message):
-    if not TINKOFF_TOKEN:
-        await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
-        return
-    loading_msg = await message.answer("⏳ Строю график покупок за месяц...")
-    try:
-        chart_buf = build_purchases_chart()
-        if chart_buf is None:
-            await loading_msg.delete()
-            await message.answer("❌ Не удалось построить график покупок. Возможно, за месяц не было покупок или ошибка API.")
-            return
-        await message.answer_photo(
-            photo=BufferedInputFile(chart_buf.getvalue(), filename="purchases.png"),
-            caption=f"📊 Покупки за {get_moscow_time().strftime('%B %Y')}"
-        )
-        await loading_msg.delete()
-    except Exception as e:
-        await loading_msg.delete()
-        logging.error(f"Ошибка графика покупок: {e}")
-        await message.answer(f"❌ Ошибка: {e}")
 
 @dp.message(lambda msg: msg.text == "✅ Добавить тикер", PrivateFilter())
 async def add_ticker_button(message: types.Message):
@@ -800,6 +658,31 @@ async def process_refresh(callback: CallbackQuery):
         logging.error(f"❌ Ошибка обновления: {e}", exc_info=True)
         await callback.message.answer(f"❌ Ошибка обновления: {e}")
 
+# ---------- КОМАНДЫ ПОРТФЕЛЯ (ЕСЛИ БИБЛИОТЕКА ДОСТУПНА) ----------
+if TINKOFF_AVAILABLE:
+    # Здесь можно разместить функции для работы с портфелем через SDK
+    # Но пока мы их оставим заглушками, чтобы не было ошибок
+    @dp.message(lambda msg: msg.text == "📈 Портфель", PrivateFilter())
+    async def portfolio_button(message: types.Message):
+        await message.answer("📈 Функция портфеля временно недоступна. Ведутся работы по интеграции с API Т-Инвестиций без использования устаревшей библиотеки.")
+
+    @dp.message(lambda msg: msg.text == "📊 График покупок", PrivateFilter())
+    async def buys_chart_button(message: types.Message):
+        await message.answer("📊 Функция графика покупок временно недоступна. Ведутся работы по интеграции с API Т-Инвестиций без использования устаревшей библиотеки.")
+
+    @dp.message(Command("portfolio"), PrivateFilter())
+    async def cmd_portfolio(message: types.Message):
+        await portfolio_button(message)
+
+    @dp.message(Command("buys"), PrivateFilter())
+    async def cmd_buys(message: types.Message):
+        await buys_chart_button(message)
+else:
+    # Если библиотека не установлена, команды портфеля показывают ошибку
+    @dp.message(lambda msg: msg.text in ("📈 Портфель", "📊 График покупок"), PrivateFilter())
+    async def portfolio_not_available(message: types.Message):
+        await message.answer("❌ Функция портфеля недоступна, так как библиотека tinkoff-investments не установлена. Скоро будет реализована через REST API.")
+
 # ---------- ЗАПУСК (POLLING + HEALTH-SERVER) ----------
 async def health_handler(request):
     return web.Response(text="OK")
@@ -807,13 +690,12 @@ async def health_handler(request):
 async def run_health_server():
     app = web.Application()
     app.router.add_get('/health', health_handler)
-    app.router.add_get('/', health_handler)  # корень тоже отвечает
+    app.router.add_get('/', health_handler)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', PORT)
     await site.start()
     logging.info(f"✅ Health‑сервер запущен на порту {PORT}")
-    # Бесконечно ждём, пока сервер работает
     await asyncio.Event().wait()
 
 async def main():
@@ -828,7 +710,6 @@ async def main():
     polling_task = asyncio.create_task(dp.start_polling(bot))
     health_task = asyncio.create_task(run_health_server())
 
-    # Ждём завершения любой задачи (если одна упадёт, завершаем другую)
     done, pending = await asyncio.wait(
         [polling_task, health_task],
         return_when=asyncio.FIRST_COMPLETED
