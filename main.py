@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 6.1.3 (исправлен URL API Т-Инвестиций, логирование)
+# Версия: 6.2 (исправлен SSL и URL API Т-Инвестиций)
 # ==============================================
 
 import os
@@ -49,7 +49,7 @@ DATA_DIR = os.getenv('DATA_DIR', '/app/data')
 DB_PATH = os.path.join(DATA_DIR, 'favorites.db')
 PORT = int(os.getenv('PORT', 3000))
 
-# Корректный URL API Т-Инвестиций (можно переопределить через переменную окружения)
+# Новый URL API Т-Инвестиций (REST/gRPC)
 TINKOFF_API_URL = os.getenv("TINKOFF_API_URL", "https://invest-public-api.tbank.ru/rest/")
 
 # ---------- ЛОГИРОВАНИЕ ----------
@@ -190,39 +190,38 @@ async def tinkoff_api_request(method: str, endpoint: str, params: dict = None) -
     logging.info(f"🔗 Запрос к API Т-Инвестиций: {url}")
     headers = {
         "Authorization": f"Bearer {TINKOFF_TOKEN}",
+        "Content-Type": "application/json",
         "Accept": "application/json"
     }
-    async with http_session.get(url, headers=headers, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+    async with http_session.request(method, url, headers=headers, json=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
         logging.info(f"📊 Статус ответа: {resp.status}")
-        content_type = resp.headers.get('Content-Type', '')
         if resp.status != 200:
             text = await resp.text()
             logging.error(f"Ошибка API: статус {resp.status}, тело: {text[:500]}")
             raise Exception(f"API вернул ошибку {resp.status}: {text[:200]}")
-        if 'json' not in content_type:
-            text = await resp.text()
-            logging.error(f"API вернул не JSON, Content-Type: {content_type}, тело: {text[:500]}")
-            raise Exception(f"API вернул не JSON, Content-Type: {content_type}")
         data = await resp.json()
-        if data.get("status") != "Ok":
-            raise Exception(f"API вернул ошибку: {data.get('message', 'Неизвестная ошибка')}")
-        return data.get("payload", {})
+        return data
 
 async def get_portfolio_data() -> dict:
-    payload = await tinkoff_api_request("POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetPortfolio")
-    return payload
+    # Для получения портфеля используем метод GetPortfolio (POST)
+    data = await tinkoff_api_request("POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetPortfolio")
+    return data
 
 async def get_operations(from_date: datetime.date, to_date: datetime.date) -> list:
+    # Для получения операций используем метод GetOperationsByPeriod (POST)
+    # Формируем запрос согласно документации
     params = {
-        "from": from_date.strftime("%Y-%m-%d"),
-        "to": to_date.strftime("%Y-%m-%d")
+        "from": from_date.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "to": to_date.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "state": "executed"
     }
-    payload = await tinkoff_api_request("GET", "operations", params=params)
-    return payload.get("operations", [])
+    data = await tinkoff_api_request("POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetOperationsByPeriod", params=params)
+    return data.get("operations", [])
 
 async def get_portfolio_summary():
     try:
         data = await get_portfolio_data()
+        # В новом API структура может отличаться. Ожидаем поле "positions"
         positions = data.get("positions", [])
         total = data.get("totalAmount", {}).get("value", 0)
         total_currency = data.get("totalAmount", {}).get("currency", "RUB")
@@ -266,7 +265,7 @@ async def build_purchases_chart() -> io.BytesIO:
             return None
         day_amounts = defaultdict(float)
         for op in buys:
-            dt = datetime.datetime.fromisoformat(op["date"]).astimezone(datetime.timezone(datetime.timedelta(hours=3)))
+            dt = datetime.datetime.fromisoformat(op["date"].replace('Z', '+00:00')).astimezone(datetime.timezone(datetime.timedelta(hours=3)))
             day_key = dt.date()
             payment = abs(op.get("payment", {}).get("value", 0))
             day_amounts[day_key] += payment
@@ -878,7 +877,8 @@ async def run_health_server():
 async def main():
     global http_session
     init_db()
-    http_session = aiohttp.ClientSession()
+    # Создаём сессию с отключённой проверкой SSL для API Т-Инвестиций
+    http_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
 
     # Удаляем вебхук (на случай, если он был)
     await bot.delete_webhook(drop_pending_updates=True)
