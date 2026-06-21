@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 6.1 (исправлен URL API Т-Инвестиций, логирование)
+# Версия: 6.1.2 (исправлен URL API Т-Инвестиций, логирование)
 # ==============================================
 
 import os
@@ -193,10 +193,16 @@ async def tinkoff_api_request(method: str, endpoint: str, params: dict = None) -
         "Accept": "application/json"
     }
     async with http_session.get(url, headers=headers, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+        logging.info(f"📊 Статус ответа: {resp.status}")
+        content_type = resp.headers.get('Content-Type', '')
         if resp.status != 200:
             text = await resp.text()
-            logging.error(f"Ошибка API Т-Инвестиций: {resp.status} - {text}")
-            raise Exception(f"API вернул ошибку {resp.status}: {text}")
+            logging.error(f"Ошибка API: статус {resp.status}, тело: {text[:500]}")
+            raise Exception(f"API вернул ошибку {resp.status}: {text[:200]}")
+        if 'json' not in content_type:
+            text = await resp.text()
+            logging.error(f"API вернул не JSON, Content-Type: {content_type}, тело: {text[:500]}")
+            raise Exception(f"API вернул не JSON, Content-Type: {content_type}")
         data = await resp.json()
         if data.get("status") != "Ok":
             raise Exception(f"API вернул ошибку: {data.get('message', 'Неизвестная ошибка')}")
