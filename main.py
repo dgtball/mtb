@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 6.1.2 (исправлен URL API Т-Инвестиций, логирование)
+# Версия: 6.1.3 (исправлен URL API Т-Инвестиций, логирование)
 # ==============================================
 
 import os
@@ -50,7 +50,7 @@ DB_PATH = os.path.join(DATA_DIR, 'favorites.db')
 PORT = int(os.getenv('PORT', 3000))
 
 # Корректный URL API Т-Инвестиций (можно переопределить через переменную окружения)
-TINKOFF_API_URL = os.getenv("TINKOFF_API_URL", "https://api-invest.tinkoff.ru/openapi/")
+TINKOFF_API_URL = os.getenv("TINKOFF_API_URL", "https://invest-public-api.tbank.ru/rest/")
 
 # ---------- ЛОГИРОВАНИЕ ----------
 logging.basicConfig(level=logging.INFO)
@@ -209,7 +209,7 @@ async def tinkoff_api_request(method: str, endpoint: str, params: dict = None) -
         return data.get("payload", {})
 
 async def get_portfolio_data() -> dict:
-    payload = await tinkoff_api_request("GET", "portfolio")
+    payload = await tinkoff_api_request("POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetPortfolio")
     return payload
 
 async def get_operations(from_date: datetime.date, to_date: datetime.date) -> list:
