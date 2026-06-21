@@ -58,6 +58,13 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
+# ---------- ТЕСТОВЫЙ ОБРАБОТЧИК (самый первый) ----------
+@dp.message()
+async def catch_all(message: types.Message):
+    logging.info(f"🐞 catch_all: получено сообщение: '{message.text}'")
+    if message.text and "Портфель" in message.text:
+        await message.answer("✅ Поймал 'Портфель'!")
+
 # ---------- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ----------
 last_messages = {}
 update_tasks = {}
