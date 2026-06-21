@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 4.8.1 (без Text/F, только lambda и Command)
+# Версия: 4.8.2 (без Text/F, только lambda и Command)
 # ==============================================
 
 import os
@@ -740,72 +740,18 @@ async def handle_state_input(message: types.Message):
     await safe_delete_message(chat_id, message.message_id)
 
 # ---------- КОМАНДЫ ПОРТФЕЛЯ (REST API) ----------
+# ---------- ТЕСТОВЫЕ ОБРАБОТЧИКИ ПОРТФЕЛЯ ----------
 @dp.message(Command("portfolio"))
 @dp.message(lambda msg: msg.text == "📈 Портфель")
 async def cmd_portfolio(message: types.Message):
-    logging.info(f"🔍 cmd_portfolio вызван для user_id={message.from_user.id}")
-    # Принудительное тестовое сообщение
-    await message.answer("⏳ Обработчик портфеля сработал. Проверяем токен...")
-    try:
-        if message.from_user.id != MY_CHAT_ID:
-            await message.answer("⛔ Доступ запрещён.")
-            return
-        if not TINKOFF_TOKEN:
-            await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
-            return
-
-        loading_msg = await message.answer("⏳ Загружаю данные портфеля...")
-        data = await get_portfolio_summary()
-        if not data:
-            await loading_msg.delete()
-            await message.answer("❌ Не удалось получить данные портфеля.")
-            return
-
-        text = f"📊 *Портфель*\n"
-        text += f"💰 Сумма: {data['total_amount']:.2f} {data['currency']}\n\n"
-        if not data["positions"]:
-            text += "Позиций нет."
-        else:
-            text += "📈 *Позиции:*\n"
-            for pos in data["positions"]:
-                yield_pct = (pos["expected_yield"] / (pos["average_price"] * pos["quantity"]) * 100) if pos["average_price"] and pos["quantity"] else 0
-                text += f"• {pos['name']} ({pos['ticker']}) : {pos['quantity']} шт., {pos['current_price']:.2f} ₽, доходность {yield_pct:+.2f}%\n"
-
-        await message.answer(text, parse_mode="Markdown")
-        await loading_msg.delete()
-    except Exception as e:
-        logging.error(f"❌ Ошибка в cmd_portfolio: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка: {e}")
+    logging.info("🔍 cmd_portfolio СРАБОТАЛ")
+    await message.answer("✅ Портфель вызван (тест)")
 
 @dp.message(Command("buys"))
 @dp.message(lambda msg: msg.text == "📊 График покупок")
 async def cmd_buys(message: types.Message):
-    logging.info(f"🔍 cmd_buys вызван для user_id={message.from_user.id}")
-    # Принудительное тестовое сообщение
-    await message.answer("⏳ Обработчик графика покупок сработал. Проверяем токен...")
-    try:
-        if message.from_user.id != MY_CHAT_ID:
-            await message.answer("⛔ Доступ запрещён.")
-            return
-        if not TINKOFF_TOKEN:
-            await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
-            return
-
-        loading_msg = await message.answer("⏳ Строю график покупок за месяц...")
-        chart_buf = await build_purchases_chart()
-        if chart_buf is None:
-            await loading_msg.delete()
-            await message.answer("❌ Не удалось построить график покупок. Возможно, за месяц не было покупок или ошибка API.")
-            return
-
-        await message.answer_photo(
-            photo=BufferedInputFile(chart_buf.getvalue(), filename="purchases.png"),
-            caption=f"📊 Покупки за {get_moscow_time().strftime('%B %Y')}"
-        )
-        await loading_msg.delete()
-    except Exception as e:
-        logging.error(f"❌ Ошибка в cmd_buys: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка: {e}")
+    logging.info("🔍 cmd_buys СРАБОТАЛ")
+    await message.answer("✅ График покупок вызван (тест)")
 
 # ---------- ФОЛБЭК ----------
 @dp.message()
