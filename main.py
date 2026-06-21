@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 3.2.0 (Приватный режим, MY_CHAT_ID из окружения)
+# Версия: 3.3.0 (Health‑сервер для Bothost)
 # ==============================================
 
 import os
@@ -24,6 +24,7 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
     ReplyKeyboardMarkup, KeyboardButton, BufferedInputFile
 )
+from aiohttp import web
 import aiohttp
 import pandas as pd
 from tabulate import tabulate
@@ -51,6 +52,7 @@ except ValueError:
 TOP_N = 10
 DATA_DIR = os.getenv('DATA_DIR', '/app/data')
 DB_PATH = os.path.join(DATA_DIR, 'favorites.db')
+PORT = int(os.getenv('PORT', 3000))  # Bothost использует 3000
 
 # ---------- ФИЛЬТР ДЛЯ ПРИВАТНОСТИ ----------
 class PrivateFilter(Filter):
@@ -798,25 +800,43 @@ async def process_refresh(callback: CallbackQuery):
         logging.error(f"❌ Ошибка обновления: {e}", exc_info=True)
         await callback.message.answer(f"❌ Ошибка обновления: {e}")
 
-# ---------- ЗАПУСК (POLLING) ----------
+# ---------- ЗАПУСК (POLLING + HEALTH-SERVER) ----------
+async def health_handler(request):
+    return web.Response(text="OK")
+
+async def run_health_server():
+    app = web.Application()
+    app.router.add_get('/health', health_handler)
+    app.router.add_get('/', health_handler)  # корень тоже отвечает
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
+    logging.info(f"✅ Health‑сервер запущен на порту {PORT}")
+    # Бесконечно ждём, пока сервер работает
+    await asyncio.Event().wait()
+
 async def main():
     global http_session
     init_db()
     http_session = aiohttp.ClientSession()
 
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-        logging.info("✅ Вебхук удалён")
-    except Exception as e:
-        logging.warning(f"Не удалось удалить вебхук: {e}")
+    await bot.delete_webhook(drop_pending_updates=True)
+    logging.info("✅ Вебхук удалён")
 
     logging.info("✅ Запускаем polling...")
-    try:
-        await dp.start_polling(bot)
-    finally:
-        if http_session:
-            await http_session.close()
-            logging.info("✅ HTTP сессия закрыта")
+    polling_task = asyncio.create_task(dp.start_polling(bot))
+    health_task = asyncio.create_task(run_health_server())
+
+    # Ждём завершения любой задачи (если одна упадёт, завершаем другую)
+    done, pending = await asyncio.wait(
+        [polling_task, health_task],
+        return_when=asyncio.FIRST_COMPLETED
+    )
+    for task in pending:
+        task.cancel()
+    await http_session.close()
+    logging.info("✅ HTTP сессия закрыта")
 
 if __name__ == "__main__":
     asyncio.run(main())
