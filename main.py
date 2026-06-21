@@ -1,6 +1,6 @@
 # ==============================================
-# Версия: 1.1.1
-# Дата: 21.06.2026
+# БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ
+# Версия: 1.2.0 (Bothost)
 # ==============================================
 
 import os
@@ -9,7 +9,6 @@ import time
 import asyncio
 import datetime
 import io
-import calendar
 
 import matplotlib
 matplotlib.use('Agg')
@@ -33,8 +32,12 @@ API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
 
-# BASE_URL – если не задан, используем значение по умолчанию для вашего бота
-BASE_URL = os.getenv("BASE_URL") or os.getenv("BOTHOST_APP_URL") or "https://mtb.bothost.ru"
+# Автоматическое определение BASE_URL
+BASE_URL = (
+    os.getenv("BASE_URL") or
+    os.getenv("BOTHOST_APP_URL") or
+    "https://moexbot.bothost.ru"   # ← если ничего не задано, используем это
+)
 logging.info(f"BASE_URL = {BASE_URL}")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -44,7 +47,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 TOP_N = 10
 WEBHOOK_PATH = "/webhook"
-WEBHOOK_PORT = int(os.getenv("PORT", 8000))
+WEBHOOK_PORT = int(os.getenv("PORT", 3000))   # Bothost даёт 3000
 
 # ---------- ЛОГИРОВАНИЕ ----------
 logging.basicConfig(level=logging.INFO)
@@ -57,10 +60,10 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
 # ---------- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ----------
-last_messages = {}       # chat_id -> message_id
-update_tasks = {}        # chat_id -> asyncio.Task
-auto_update_enabled = {} # chat_id -> True/False
-user_state = {}          # chat_id -> 'add' / 'remove'
+last_messages = {}
+update_tasks = {}
+auto_update_enabled = {}
+user_state = {}
 http_session = None
 
 # ---------- КЛАВИАТУРА ----------
@@ -115,12 +118,11 @@ def get_favorites(chat_id: int) -> list:
         logging.error(f"Ошибка получения избранного из Supabase: {e}")
         return []
 
-# ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (ВРЕМЯ, СЕССИИ) ----------
+# ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
 def get_moscow_time():
     return datetime.datetime.now(datetime.timezone.utc).astimezone(datetime.timezone(datetime.timedelta(hours=3)))
 
 def get_local_time():
-    """Ваш часовой пояс UTC+4."""
     return datetime.datetime.now(datetime.timezone.utc).astimezone(datetime.timezone(datetime.timedelta(hours=4)))
 
 def is_weekend():
@@ -352,26 +354,20 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, upd
     return text
 
 def format_historical_table(gainers, losers, period, from_date_dt, till_date_dt):
-    """
-    Форматирует таблицу для недели или месяца.
-    period: 'week' или 'month'
-    from_date_dt, till_date_dt: объекты datetime (дата начала и конца периода)
-    """
     if period == 'week':
         week_num = get_week_number(from_date_dt)
         title = f"📊 Топ за неделю #{week_num}"
         period_str = f"📅 Период: {from_date_dt.strftime('%d/%m/%y')} – {till_date_dt.strftime('%d/%m/%y')}"
-    else:  # month
+    else:
         month_name = get_month_name_ru(from_date_dt.month)
         title = f"📅 Топ {month_name}"
         period_str = f"📅 Период: {from_date_dt.strftime('%d/%m/%y')} – {till_date_dt.strftime('%d/%m/%y')}"
-
     text = f"{title}\n{period_str}\n\n"
     text += build_table_universal(gainers, "📈 Рост", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
     text += build_table_universal(losers, "📉 Падение", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
     return text
 
-# ---------- ГЕНЕРАЦИЯ КАРТИНКИ ИЗБРАННОГО ----------
+# ---------- ГЕНЕРАЦИЯ КАРТИНКИ ----------
 def generate_favorites_image(fav_df) -> io.BytesIO:
     if fav_df.empty:
         return None
@@ -431,7 +427,7 @@ async def send_top(message: types.Message, period: str = 'day'):
                 from_date = start
                 from_date_str = start.strftime("%Y-%m-%d")
                 period_name_short = 'week'
-            else:  # month
+            else:
                 start = now.replace(day=1)
                 from_date = start
                 from_date_str = start.strftime("%Y-%m-%d")
@@ -494,7 +490,7 @@ async def auto_update_task(chat_id: int, message_id: int):
             logging.error(f"Ошибка автообновления для чата {chat_id}: {e}")
             break
 
-# ---------- ОБРАБОТЧИКИ КОМАНД ----------
+# ---------- ОБРАБОТЧИКИ ----------
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     chat_id = message.chat.id
@@ -620,7 +616,7 @@ async def process_refresh(callback: CallbackQuery):
         logging.error(f"❌ Ошибка обновления: {e}", exc_info=True)
         await callback.message.answer(f"❌ Ошибка обновления: {e}")
 
-# ---------- ЗАПУСК ВЕБХУКА ЧЕРЕЗ AIOHTTP ----------
+# ---------- ЗАПУСК ВЕБХУКА ----------
 async def on_startup(app: web.Application):
     global http_session
     http_session = aiohttp.ClientSession()
@@ -633,8 +629,15 @@ async def on_startup(app: web.Application):
         logging.error(f"❌ Ошибка подключения к Supabase: {e}")
 
     webhook_url = f"{BASE_URL}{WEBHOOK_PATH}"
-    await bot.set_webhook(webhook_url, drop_pending_updates=True)
-    logging.info(f"✅ Webhook установлен на {webhook_url}")
+    # Несколько попыток установки вебхука
+    for attempt in range(3):
+        try:
+            await bot.set_webhook(webhook_url, drop_pending_updates=True)
+            logging.info(f"✅ Webhook установлен на {webhook_url} (попытка {attempt+1})")
+            break
+        except Exception as e:
+            logging.error(f"❌ Ошибка установки вебхука (попытка {attempt+1}): {e}")
+            await asyncio.sleep(2)
 
 async def on_shutdown(app: web.Application):
     global http_session
@@ -643,7 +646,8 @@ async def on_shutdown(app: web.Application):
         if not task.done():
             task.cancel()
     await bot.delete_webhook()
-    await http_session.close()
+    if http_session:
+        await http_session.close()
     logging.info("✅ Сессии закрыты")
 
 def main():
