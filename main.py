@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 4.4 (исправлен порядок обработчиков)
+# Версия: 4.6 (финальная, с F.text)
 # ==============================================
 
 import os
@@ -19,7 +19,7 @@ import matplotlib.dates as mdates
 from matplotlib.ticker import FuncFormatter
 
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command, Filter
+from aiogram.filters import Command, F
 from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
     ReplyKeyboardMarkup, KeyboardButton, BufferedInputFile
@@ -52,7 +52,7 @@ PORT = int(os.getenv('PORT', 3000))
 TINKOFF_API_URL = "https://api-invest.tinkoff.ru/openapi/"
 
 # ---------- ФИЛЬТР ПРИВАТНОСТИ ----------
-class PrivateFilter(Filter):
+class PrivateFilter:
     async def __call__(self, message: types.Message) -> bool:
         return message.from_user.id == MY_CHAT_ID
 
@@ -625,8 +625,11 @@ async def auto_update_task(chat_id: int, message_id: int):
             break
 
 # ---------- ОБРАБОТЧИКИ КОМАНД ----------
-@dp.message(Command("start"), PrivateFilter())
+@dp.message(Command("start"))
 async def cmd_start(message: types.Message):
+    if message.from_user.id != MY_CHAT_ID:
+        await message.answer("⛔ Доступ запрещён.")
+        return
     chat_id = message.chat.id
     auto_update_enabled[chat_id] = True
     try:
@@ -640,23 +643,35 @@ async def cmd_start(message: types.Message):
         logging.error(f"❌ Ошибка в /start: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка при запуске: {e}")
 
-@dp.message(lambda msg: msg.text == "📌 Топ дня", PrivateFilter())
+@dp.message(F.text == "📌 Топ дня")
 async def top_day_button(message: types.Message):
+    if message.from_user.id != MY_CHAT_ID:
+        await message.answer("⛔ Доступ запрещён.")
+        return
     await send_top(message, 'day')
     await safe_delete_message(message.chat.id, message.message_id)
 
-@dp.message(lambda msg: msg.text == "📊 Топ недели", PrivateFilter())
+@dp.message(F.text == "📊 Топ недели")
 async def top_week_button(message: types.Message):
+    if message.from_user.id != MY_CHAT_ID:
+        await message.answer("⛔ Доступ запрещён.")
+        return
     await send_top(message, 'week')
     await safe_delete_message(message.chat.id, message.message_id)
 
-@dp.message(lambda msg: msg.text == "🗓️ Топ месяца", PrivateFilter())
+@dp.message(F.text == "🗓️ Топ месяца")
 async def top_month_button(message: types.Message):
+    if message.from_user.id != MY_CHAT_ID:
+        await message.answer("⛔ Доступ запрещён.")
+        return
     await send_top(message, 'month')
     await safe_delete_message(message.chat.id, message.message_id)
 
-@dp.message(lambda msg: msg.text == "⭐ Избранные", PrivateFilter())
+@dp.message(F.text == "⭐ Избранные")
 async def favorites_button(message: types.Message):
+    if message.from_user.id != MY_CHAT_ID:
+        await message.answer("⛔ Доступ запрещён.")
+        return
     try:
         loading_msg = await message.answer("⏳ Загружаю избранное...")
         fav_df, error = await get_favorites_data(message.chat.id)
@@ -682,25 +697,31 @@ async def favorites_button(message: types.Message):
         await message.answer(f"❌ Ошибка при загрузке избранного: {e}")
         await safe_delete_message(message.chat.id, message.message_id)
 
-# ---------- ОБРАБОТЧИКИ ДЛЯ ДОБАВЛЕНИЯ/УДАЛЕНИЯ ТИКЕРОВ (состояние) ----------
-@dp.message(lambda msg: msg.text == "✅ Добавить тикер", PrivateFilter())
+@dp.message(F.text == "✅ Добавить тикер")
 async def add_ticker_button(message: types.Message):
+    if message.from_user.id != MY_CHAT_ID:
+        await message.answer("⛔ Доступ запрещён.")
+        return
     user_state[message.chat.id] = 'add'
     await message.answer("Введите тикер для добавления (например, SBER или SBER, GAZP):")
     await safe_delete_message(message.chat.id, message.message_id)
 
-@dp.message(lambda msg: msg.text == "❌ Удалить тикер", PrivateFilter())
+@dp.message(F.text == "❌ Удалить тикер")
 async def remove_ticker_button(message: types.Message):
+    if message.from_user.id != MY_CHAT_ID:
+        await message.answer("⛔ Доступ запрещён.")
+        return
     user_state[message.chat.id] = 'remove'
     await message.answer("Введите тикер для удаления (например, SBER или SBER, GAZP):")
     await safe_delete_message(message.chat.id, message.message_id)
 
-# Обработчик текстового ввода для состояний
-@dp.message(PrivateFilter())
+# ---------- ОБРАБОТЧИК ТЕКСТОВОГО ВВОДА (состояние) ----------
+@dp.message()
 async def handle_state_input(message: types.Message):
+    if message.from_user.id != MY_CHAT_ID:
+        return
     chat_id = message.chat.id
     if chat_id not in user_state:
-        # Если нет состояния, передаём управление дальше (или игнорируем)
         return
     state = user_state[chat_id]
     raw = message.text.strip()
@@ -724,28 +745,22 @@ async def handle_state_input(message: types.Message):
 
 # ---------- КОМАНДЫ ПОРТФЕЛЯ (REST API) ----------
 @dp.message(Command("portfolio"))
-@dp.message(lambda msg: msg.text == "📈 Портфель")
+@dp.message(F.text == "📈 Портфель")
 async def cmd_portfolio(message: types.Message):
+    if message.from_user.id != MY_CHAT_ID:
+        await message.answer("⛔ Доступ запрещён.")
+        return
     logging.info(f"🔍 cmd_portfolio вызван для user_id={message.from_user.id}")
     try:
-        if message.from_user.id != MY_CHAT_ID:
-            await message.answer("⛔ Доступ запрещён.")
-            logging.info("⛔ Доступ запрещён для этого пользователя.")
-            return
         if not TINKOFF_TOKEN:
             await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
-            logging.info("❌ Токен TITN отсутствует.")
             return
 
         loading_msg = await message.answer("⏳ Загружаю данные портфеля...")
-        logging.info("⏳ Получаем данные портфеля...")
         data = await get_portfolio_summary()
-        logging.info(f"📊 Данные портфеля получены: {data is not None}")
-
         if not data:
             await loading_msg.delete()
             await message.answer("❌ Не удалось получить данные портфеля.")
-            logging.warning("❌ get_portfolio_summary вернула None")
             return
 
         text = f"📊 *Портфель*\n"
@@ -760,26 +775,23 @@ async def cmd_portfolio(message: types.Message):
 
         await message.answer(text, parse_mode="Markdown")
         await loading_msg.delete()
-        logging.info("✅ Портфель успешно отправлен")
-
     except Exception as e:
         logging.error(f"❌ Ошибка в cmd_portfolio: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}")
 
 @dp.message(Command("buys"))
-@dp.message(lambda msg: msg.text == "📊 График покупок")
+@dp.message(F.text == "📊 График покупок")
 async def cmd_buys(message: types.Message):
+    if message.from_user.id != MY_CHAT_ID:
+        await message.answer("⛔ Доступ запрещён.")
+        return
     logging.info(f"🔍 cmd_buys вызван для user_id={message.from_user.id}")
     try:
-        if message.from_user.id != MY_CHAT_ID:
-            await message.answer("⛔ Доступ запрещён.")
-            return
         if not TINKOFF_TOKEN:
             await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
             return
 
         loading_msg = await message.answer("⏳ Строю график покупок за месяц...")
-        logging.info("⏳ Строим график...")
         chart_buf = await build_purchases_chart()
         if chart_buf is None:
             await loading_msg.delete()
@@ -791,16 +803,16 @@ async def cmd_buys(message: types.Message):
             caption=f"📊 Покупки за {get_moscow_time().strftime('%B %Y')}"
         )
         await loading_msg.delete()
-        logging.info("✅ График отправлен")
     except Exception as e:
         logging.error(f"❌ Ошибка в cmd_buys: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}")
 
-# ---------- ОБРАБОТЧИК ДЛЯ ВСЕХ ОСТАЛЬНЫХ СООБЩЕНИЙ (фолбэк) ----------
-@dp.message(PrivateFilter())
+# ---------- ФОЛБЭК ----------
+@dp.message()
 async def fallback_handler(message: types.Message):
-    # Если сообщение не обработано ни одним из вышестоящих обработчиков,
-    # отправляем подсказку.
+    if message.from_user.id != MY_CHAT_ID:
+        return
+    logging.info(f"FALLBACK: получено сообщение: '{message.text}'")
     await message.answer("Используйте кнопки меню.", reply_markup=main_keyboard())
     await safe_delete_message(message.chat.id, message.message_id)
 
