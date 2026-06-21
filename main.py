@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 6.4 (чистый чат, сессии выходного дня, портфель)
+# Версия: 6.5 (таблица портфеля, дивиденды, чистый чат)
 # ==============================================
 
 import os
@@ -167,20 +167,17 @@ def get_session_status():
     today_str = now.strftime("%Y-%m-%d")
     is_weekend = now.weekday() in (5, 6)
 
-    # Проверяем неторговые выходные
     if is_weekend:
         for start, end in NO_TRADING_WEEKENDS_2026:
             if start <= today_str <= end:
                 return "Биржа закрыта (выходной)"
 
-    # Если это выходной и время с 09:50 до 19:00 – сессия выходного дня
     if is_weekend:
         if (now.hour > 9 or (now.hour == 9 and now.minute >= 50)) and (now.hour < 19 or (now.hour == 19 and now.minute == 0)):
             return "Сессия выходного дня"
         else:
             return "Биржа закрыта"
 
-    # Будни
     if now.hour < 6 or (now.hour == 6 and now.minute < 50):
         return "Биржа закрыта"
     elif now.hour == 6 and now.minute >= 50:
@@ -674,30 +671,38 @@ async def handle_buttons_and_commands(message: types.Message):
                 await message.answer("❌ Не удалось получить данные портфеля.")
                 await safe_delete_message(message.chat.id, message.message_id)
                 return
-            response_text = f"📊 *Портфель*\n"
-            response_text += f"💰 Сумма: {data['total_amount']:.2f} {data['currency']}\n"
+            # Формируем таблицу
+            headers = ["Название", "ШТ", "Цена", "Стоимость", "Доходность", "Доля", "Дивиденды"]
+            table_data = []
+            for pos in data["positions"]:
+                # Название: если есть real name, используем его, иначе тикер
+                if pos["name"] and pos["name"] != pos["ticker"]:
+                    name = pos["name"]
+                else:
+                    name = pos["ticker"]
+                # Доходность в процентах
+                if pos["avg_price"] and pos["quantity"]:
+                    yield_pct = (pos["expected_yield"] / (pos["avg_price"] * pos["quantity"]) * 100)
+                else:
+                    yield_pct = 0.0
+                table_data.append([
+                    name,
+                    f"{pos['quantity']:.0f}",
+                    f"{pos['price']:.2f}",
+                    f"{pos['current_value']:.2f}",
+                    f"{yield_pct:+.2f}%",
+                    f"{pos['share']:.1f}%",
+                    f"{pos['dividends']:.2f}" if pos['dividends'] else "—"
+                ])
+            table = tabulate(table_data, headers=headers, tablefmt="simple", numalign="right", stralign="left")
+            # Заголовок
+            header_text = f"📊 *Портфель*\n"
+            header_text += f"💰 Сумма: {data['total_amount']:.2f} ₽\n"
             if data.get("expected_dividends"):
-                response_text += f"💵 Ожидаемые дивиденды: {data['expected_dividends']:.2f} {data['currency']}\n"
-            response_text += "\n"
-            if not data["positions"]:
-                response_text += "Позиций нет."
-            else:
-                response_text += "📈 *Позиции:*\n"
-                for pos in data["positions"]:
-                    if pos["avg_price"] and pos["quantity"]:
-                        yield_pct = (pos["expected_yield"] / (pos["avg_price"] * pos["quantity"]) * 100)
-                    else:
-                        yield_pct = 0
-                    line = (
-                        f"• {pos['name']} ({pos['ticker']}) : "
-                        f"{pos['quantity']:.0f} шт., {pos['price']:.2f} {pos['currency']}, "
-                        f"ст-ть {pos['current_value']:.2f} ({pos['share']:.1f}%), "
-                        f"дох-ть {yield_pct:+.2f}%"
-                    )
-                    if pos["dividends"]:
-                        line += f", див. {pos['dividends']:.2f}"
-                    response_text += line + "\n"
-            await message.answer(response_text, parse_mode="Markdown")
+                header_text += f"💵 Ожидаемые дивиденды всего: {data['expected_dividends']:.2f} ₽\n"
+            header_text += "\n"
+            response_text = header_text + f"<pre>{table}</pre>"
+            await message.answer(response_text, parse_mode="HTML")
             await loading_msg.delete()
             await safe_delete_message(message.chat.id, message.message_id)
         except Exception as e:
@@ -764,30 +769,35 @@ async def handle_buttons_and_commands(message: types.Message):
                 await message.answer("❌ Не удалось получить данные портфеля.")
                 await safe_delete_message(message.chat.id, message.message_id)
                 return
-            response_text = f"📊 *Портфель*\n"
-            response_text += f"💰 Сумма: {data['total_amount']:.2f} {data['currency']}\n"
+            # Формируем таблицу
+            headers = ["Название", "ШТ", "Цена", "Стоимость", "Доходность", "Доля", "Дивиденды"]
+            table_data = []
+            for pos in data["positions"]:
+                if pos["name"] and pos["name"] != pos["ticker"]:
+                    name = pos["name"]
+                else:
+                    name = pos["ticker"]
+                if pos["avg_price"] and pos["quantity"]:
+                    yield_pct = (pos["expected_yield"] / (pos["avg_price"] * pos["quantity"]) * 100)
+                else:
+                    yield_pct = 0.0
+                table_data.append([
+                    name,
+                    f"{pos['quantity']:.0f}",
+                    f"{pos['price']:.2f}",
+                    f"{pos['current_value']:.2f}",
+                    f"{yield_pct:+.2f}%",
+                    f"{pos['share']:.1f}%",
+                    f"{pos['dividends']:.2f}" if pos['dividends'] else "—"
+                ])
+            table = tabulate(table_data, headers=headers, tablefmt="simple", numalign="right", stralign="left")
+            header_text = f"📊 *Портфель*\n"
+            header_text += f"💰 Сумма: {data['total_amount']:.2f} ₽\n"
             if data.get("expected_dividends"):
-                response_text += f"💵 Ожидаемые дивиденды: {data['expected_dividends']:.2f} {data['currency']}\n"
-            response_text += "\n"
-            if not data["positions"]:
-                response_text += "Позиций нет."
-            else:
-                response_text += "📈 *Позиции:*\n"
-                for pos in data["positions"]:
-                    if pos["avg_price"] and pos["quantity"]:
-                        yield_pct = (pos["expected_yield"] / (pos["avg_price"] * pos["quantity"]) * 100)
-                    else:
-                        yield_pct = 0
-                    line = (
-                        f"• {pos['name']} ({pos['ticker']}) : "
-                        f"{pos['quantity']:.0f} шт., {pos['price']:.2f} {pos['currency']}, "
-                        f"ст-ть {pos['current_value']:.2f} ({pos['share']:.1f}%), "
-                        f"дох-ть {yield_pct:+.2f}%"
-                    )
-                    if pos["dividends"]:
-                        line += f", див. {pos['dividends']:.2f}"
-                    response_text += line + "\n"
-            await message.answer(response_text, parse_mode="Markdown")
+                header_text += f"💵 Ожидаемые дивиденды всего: {data['expected_dividends']:.2f} ₽\n"
+            header_text += "\n"
+            response_text = header_text + f"<pre>{table}</pre>"
+            await message.answer(response_text, parse_mode="HTML")
             await loading_msg.delete()
             await safe_delete_message(message.chat.id, message.message_id)
         except Exception as e:
@@ -798,7 +808,6 @@ async def handle_buttons_and_commands(message: types.Message):
         return
 
     if text == "✅ Добавить тикер":
-        # Отправляем запрос и сохраняем ID сообщения
         prompt_msg = await message.answer("Введите тикер для добавления (например, SBER или SBER, GAZP):")
         user_state[message.chat.id] = {'state': 'add', 'prompt_msg_id': prompt_msg.message_id}
         await safe_delete_message(message.chat.id, message.message_id)
@@ -817,7 +826,6 @@ async def handle_buttons_and_commands(message: types.Message):
         state = state_data['state']
         prompt_msg_id = state_data['prompt_msg_id']
 
-        # Удаляем сообщение с запросом и сообщение пользователя с тикером
         await safe_delete_message(chat_id, prompt_msg_id)
         await safe_delete_message(chat_id, message.message_id)
 
@@ -862,14 +870,11 @@ async def run_health_server():
 async def main():
     global http_session
     init_db()
-    # Создаём сессию с отключённой проверкой SSL для API Т-Инвестиций
     http_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
 
-    # Удаляем вебхук (на случай, если он был)
     await bot.delete_webhook(drop_pending_updates=True)
     logging.info("✅ Вебхук удалён")
 
-    # Отправляем уведомление владельцу о запуске
     try:
         await bot.send_message(MY_CHAT_ID, "🚀 Бот перезапущен и готов к работе!")
         logging.info("✅ Уведомление о запуске отправлено")
