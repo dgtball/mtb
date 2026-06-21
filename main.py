@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 6.2.3 (исправлен SSL и URL API Т-Инвестиций)
+# Версия: 6.3 (портфель с долями и дивидендами, без графика покупок)
 # ==============================================
 
 import os
@@ -66,7 +66,7 @@ auto_update_enabled = {}
 user_state = {}
 http_session = None
 
-# ---------- КЛАВИАТУРА ----------
+# ---------- КЛАВИАТУРА (без графика покупок) ----------
 def main_keyboard():
     kb = [
         [KeyboardButton(text="📌 Топ дня")],
@@ -75,7 +75,7 @@ def main_keyboard():
         [KeyboardButton(text="✅ Добавить тикер"), KeyboardButton(text="❌ Удалить тикер")],
     ]
     if TINKOFF_TOKEN:
-        kb.insert(3, [KeyboardButton(text="📈 Портфель"), KeyboardButton(text="📊 График покупок")])
+        kb.insert(3, [KeyboardButton(text="📈 Портфель")])
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=False)
 
 # ---------- УДАЛЕНИЕ СООБЩЕНИЙ ----------
@@ -203,13 +203,11 @@ async def tinkoff_api_request(method: str, endpoint: str, params: dict = None) -
         return data
 
 async def get_accounts() -> list:
-    """Возвращает список активных счетов пользователя."""
-    params = {"status": "ACCOUNT_STATUS_OPEN"}  # обязательный параметр
+    params = {"status": "ACCOUNT_STATUS_OPEN"}
     data = await tinkoff_api_request("POST", "tinkoff.public.invest.api.contract.v1.UsersService/GetAccounts", params=params)
     return data.get("accounts", [])
 
 async def get_portfolio_data(account_id: str) -> dict:
-    """Получает портфель для указанного счёта."""
     params = {"accountId": account_id}
     data = await tinkoff_api_request("POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetPortfolio", params=params)
     return data
@@ -218,85 +216,60 @@ async def get_portfolio_summary():
     try:
         accounts = await get_accounts()
         if not accounts:
-            logging.error("Нет доступных счетов")
             return None
         account_id = accounts[0].get("id")
         if not account_id:
-            logging.error("Не удалось получить account_id")
             return None
-        logging.info(f"📊 Используем счёт: {account_id}")
+        
         data = await get_portfolio_data(account_id)
         positions = data.get("positions", [])
         total_amount = data.get("totalAmountPortfolio", {})
-        total = float(total_amount.get("units", 0))  # преобразуем в float
+        total = total_amount.get("units", 0)
         total_currency = total_amount.get("currency", "RUB")
+        
         result = {
             "total_amount": total,
             "currency": total_currency,
-            "positions": []
+            "positions": [],
+            "expected_dividends": data.get("expectedDividends", 0)
         }
+        
+        total_value = 0
+        for pos in positions:
+            quantity = pos.get("quantity", {}).get("units", 0)
+            price = pos.get("currentPrice", {}).get("units", 0)
+            total_value += quantity * price
+        
         for pos in positions:
             figi = pos.get("figi")
             ticker = pos.get("ticker") or figi
             name = pos.get("name") or ticker
-            quantity = float(pos.get("quantity", {}).get("units", 0))
-            current_price = float(pos.get("currentPrice", {}).get("units", 0))
-            average_price = float(pos.get("averagePositionPrice", {}).get("units", 0))
-            expected_yield = float(pos.get("expectedYield", {}).get("units", 0))
+            quantity = pos.get("quantity", {}).get("units", 0)
+            price = pos.get("currentPrice", {}).get("units", 0)
+            avg_price = pos.get("averagePositionPrice", {}).get("units", 0)
+            expected_yield = pos.get("expectedYield", {}).get("units", 0)
+            currency = pos.get("currentPrice", {}).get("currency", "RUB")
+            current_value = quantity * price
+            share = (current_value / total_value * 100) if total_value > 0 else 0
+            dividends = pos.get("expectedDividend", 0)
+            
             result["positions"].append({
                 "figi": figi,
                 "ticker": ticker,
                 "name": name,
                 "quantity": quantity,
-                "current_price": current_price,
-                "average_price": average_price,
-                "expected_yield": expected_yield
+                "price": price,
+                "avg_price": avg_price,
+                "expected_yield": expected_yield,
+                "currency": currency,
+                "current_value": current_value,
+                "share": share,
+                "dividends": dividends
             })
+        
         return result
     except Exception as e:
         logging.error(f"Ошибка получения портфеля: {e}")
-        return None
-
-async def build_purchases_chart() -> io.BytesIO:
-    now = get_moscow_time()
-    from_date = now.date().replace(day=1)
-    to_date = now.date()
-    try:
-        operations = await get_operations(from_date, to_date)
-        if not operations:
-            return None
-        buys = [op for op in operations if op.get("operationType") == "BUY"]
-        if not buys:
-            return None
-        day_amounts = defaultdict(float)
-        for op in buys:
-            dt = datetime.datetime.fromisoformat(op["date"].replace('Z', '+00:00')).astimezone(datetime.timezone(datetime.timedelta(hours=3)))
-            day_key = dt.date()
-            payment = abs(op.get("payment", {}).get("value", 0))
-            day_amounts[day_key] += payment
-        if not day_amounts:
-            return None
-        sorted_days = sorted(day_amounts.items())
-        dates = [d[0] for d in sorted_days]
-        amounts = [d[1] for d in sorted_days]
-        fig, ax = plt.subplots(figsize=(10, 6))
-        ax.bar(dates, amounts, width=0.6, color='green', alpha=0.7)
-        ax.set_title(f"Покупки за {from_date.strftime('%B %Y')}", fontsize=14)
-        ax.set_xlabel("Дата")
-        ax.set_ylabel("Сумма покупок (₽)")
-        ax.grid(axis='y', linestyle='--', alpha=0.7)
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%d'))
-        ax.xaxis.set_major_locator(mdates.DayLocator(interval=2))
-        plt.xticks(rotation=45)
-        ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{int(x):,} ₽'))
-        fig.tight_layout()
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight')
-        buf.seek(0)
-        plt.close()
-        return buf
-    except Exception as e:
-        logging.error(f"Ошибка построения графика покупок: {e}")
         return None
 
 # ---------- ЗАПРОСЫ К MOEX ----------
@@ -675,47 +648,34 @@ async def handle_buttons_and_commands(message: types.Message):
                 await safe_delete_message(message.chat.id, message.message_id)
                 return
             response_text = f"📊 *Портфель*\n"
-            response_text += f"💰 Сумма: {data['total_amount']:.2f} {data['currency']}\n\n"
+            response_text += f"💰 Сумма: {data['total_amount']:.2f} {data['currency']}\n"
+            if data.get("expected_dividends"):
+                response_text += f"💵 Ожидаемые дивиденды: {data['expected_dividends']:.2f} {data['currency']}\n"
+            response_text += "\n"
             if not data["positions"]:
                 response_text += "Позиций нет."
             else:
                 response_text += "📈 *Позиции:*\n"
                 for pos in data["positions"]:
-                    yield_pct = (pos["expected_yield"] / (pos["average_price"] * pos["quantity"]) * 100) if pos["average_price"] and pos["quantity"] else 0
-                    response_text += f"• {pos['name']} ({pos['ticker']}) : {pos['quantity']} шт., {pos['current_price']:.2f} ₽, доходность {yield_pct:+.2f}%\n"
+                    if pos["avg_price"] and pos["quantity"]:
+                        yield_pct = (pos["expected_yield"] / (pos["avg_price"] * pos["quantity"]) * 100)
+                    else:
+                        yield_pct = 0
+                    line = (
+                        f"• {pos['name']} ({pos['ticker']}) : "
+                        f"{pos['quantity']} шт., {pos['price']:.2f} {pos['currency']}, "
+                        f"ст-ть {pos['current_value']:.2f} ({pos['share']:.1f}%), "
+                        f"дох-ть {yield_pct:+.2f}%"
+                    )
+                    if pos["dividends"]:
+                        line += f", див. {pos['dividends']:.2f}"
+                    response_text += line + "\n"
             await message.answer(response_text, parse_mode="Markdown")
             await loading_msg.delete()
             await safe_delete_message(message.chat.id, message.message_id)
         except Exception as e:
             await loading_msg.delete()
             logging.error(f"❌ Ошибка портфеля: {e}", exc_info=True)
-            await message.answer(f"❌ Ошибка: {e}")
-            await safe_delete_message(message.chat.id, message.message_id)
-        return
-
-    if text == "/buys":
-        logging.info("🔍 Обработка команды /buys")
-        if not TINKOFF_TOKEN:
-            await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
-            await safe_delete_message(message.chat.id, message.message_id)
-            return
-        loading_msg = await message.answer("⏳ Строю график покупок за месяц...")
-        try:
-            chart_buf = await build_purchases_chart()
-            if chart_buf is None:
-                await loading_msg.delete()
-                await message.answer("❌ Не удалось построить график покупок. Возможно, за месяц не было покупок или ошибка API.")
-                await safe_delete_message(message.chat.id, message.message_id)
-                return
-            await message.answer_photo(
-                photo=BufferedInputFile(chart_buf.getvalue(), filename="purchases.png"),
-                caption=f"📊 Покупки за {get_moscow_time().strftime('%B %Y')}"
-            )
-            await loading_msg.delete()
-            await safe_delete_message(message.chat.id, message.message_id)
-        except Exception as e:
-            await loading_msg.delete()
-            logging.error(f"❌ Ошибка графика покупок: {e}", exc_info=True)
             await message.answer(f"❌ Ошибка: {e}")
             await safe_delete_message(message.chat.id, message.message_id)
         return
@@ -778,47 +738,34 @@ async def handle_buttons_and_commands(message: types.Message):
                 await safe_delete_message(message.chat.id, message.message_id)
                 return
             response_text = f"📊 *Портфель*\n"
-            response_text += f"💰 Сумма: {data['total_amount']:.2f} {data['currency']}\n\n"
+            response_text += f"💰 Сумма: {data['total_amount']:.2f} {data['currency']}\n"
+            if data.get("expected_dividends"):
+                response_text += f"💵 Ожидаемые дивиденды: {data['expected_dividends']:.2f} {data['currency']}\n"
+            response_text += "\n"
             if not data["positions"]:
                 response_text += "Позиций нет."
             else:
                 response_text += "📈 *Позиции:*\n"
                 for pos in data["positions"]:
-                    yield_pct = (pos["expected_yield"] / (pos["average_price"] * pos["quantity"]) * 100) if pos["average_price"] and pos["quantity"] else 0
-                    response_text += f"• {pos['name']} ({pos['ticker']}) : {pos['quantity']} шт., {pos['current_price']:.2f} ₽, доходность {yield_pct:+.2f}%\n"
+                    if pos["avg_price"] and pos["quantity"]:
+                        yield_pct = (pos["expected_yield"] / (pos["avg_price"] * pos["quantity"]) * 100)
+                    else:
+                        yield_pct = 0
+                    line = (
+                        f"• {pos['name']} ({pos['ticker']}) : "
+                        f"{pos['quantity']} шт., {pos['price']:.2f} {pos['currency']}, "
+                        f"ст-ть {pos['current_value']:.2f} ({pos['share']:.1f}%), "
+                        f"дох-ть {yield_pct:+.2f}%"
+                    )
+                    if pos["dividends"]:
+                        line += f", див. {pos['dividends']:.2f}"
+                    response_text += line + "\n"
             await message.answer(response_text, parse_mode="Markdown")
             await loading_msg.delete()
             await safe_delete_message(message.chat.id, message.message_id)
         except Exception as e:
             await loading_msg.delete()
             logging.error(f"❌ Ошибка портфеля: {e}", exc_info=True)
-            await message.answer(f"❌ Ошибка: {e}")
-            await safe_delete_message(message.chat.id, message.message_id)
-        return
-
-    if text == "📊 График покупок":
-        logging.info("🔍 Обработка кнопки графика покупок")
-        if not TINKOFF_TOKEN:
-            await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
-            await safe_delete_message(message.chat.id, message.message_id)
-            return
-        loading_msg = await message.answer("⏳ Строю график покупок за месяц...")
-        try:
-            chart_buf = await build_purchases_chart()
-            if chart_buf is None:
-                await loading_msg.delete()
-                await message.answer("❌ Не удалось построить график покупок. Возможно, за месяц не было покупок или ошибка API.")
-                await safe_delete_message(message.chat.id, message.message_id)
-                return
-            await message.answer_photo(
-                photo=BufferedInputFile(chart_buf.getvalue(), filename="purchases.png"),
-                caption=f"📊 Покупки за {get_moscow_time().strftime('%B %Y')}"
-            )
-            await loading_msg.delete()
-            await safe_delete_message(message.chat.id, message.message_id)
-        except Exception as e:
-            await loading_msg.delete()
-            logging.error(f"❌ Ошибка графика покупок: {e}", exc_info=True)
             await message.answer(f"❌ Ошибка: {e}")
             await safe_delete_message(message.chat.id, message.message_id)
         return
