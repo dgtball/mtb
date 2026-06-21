@@ -1,6 +1,6 @@
 # ==============================================
-# БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ
-# Версия: 2.0.0 (Bothost Basic + SQLite + Polling)
+# БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
+# Версия: 3.1.0 (Приватный режим)
 # ==============================================
 
 import os
@@ -10,13 +10,16 @@ import asyncio
 import datetime
 import io
 import sqlite3
+from collections import defaultdict
 
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib.ticker import FuncFormatter
 
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
+from aiogram.filters import Command, Filter
 from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
     ReplyKeyboardMarkup, KeyboardButton, BufferedInputFile
@@ -24,15 +27,29 @@ from aiogram.types import (
 import aiohttp
 import pandas as pd
 from tabulate import tabulate
+from tinkoff.invest import Client
+from tinkoff.invest.services import InstrumentsService, OperationsService
+from tinkoff.invest.schemas import OperationType, InstrumentIdType, OperationState
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
 
+TINKOFF_TOKEN = os.getenv("TITN")
+if not TINKOFF_TOKEN:
+    logging.warning("TITN не задан – команды портфеля будут недоступны")
+
 TOP_N = 10
 DATA_DIR = os.getenv('DATA_DIR', '/app/data')
 DB_PATH = os.path.join(DATA_DIR, 'favorites.db')
+
+# ---------- ПРИВАТНОСТЬ ----------
+MY_CHAT_ID = 123456789   # ← ЗАМЕНИ НА СВОЙ ID
+
+class PrivateFilter(Filter):
+    async def __call__(self, message: types.Message) -> bool:
+        return message.from_user.id == MY_CHAT_ID
 
 # ---------- ЛОГИРОВАНИЕ ----------
 logging.basicConfig(level=logging.INFO)
@@ -54,6 +71,7 @@ def main_keyboard():
         [KeyboardButton(text="📌 Топ дня")],
         [KeyboardButton(text="📊 Топ недели"), KeyboardButton(text="🗓️ Топ месяца")],
         [KeyboardButton(text="⭐ Избранные")],
+        [KeyboardButton(text="📈 Портфель"), KeyboardButton(text="📊 График покупок")],
         [KeyboardButton(text="✅ Добавить тикер"), KeyboardButton(text="❌ Удалить тикер")],
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=False)
@@ -67,7 +85,6 @@ async def safe_delete_message(chat_id: int, message_id: int):
 
 # ---------- РАБОТА С БАЗОЙ ДАННЫХ (SQLite) ----------
 def init_db():
-    """Создаёт таблицу favorites, если её нет."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS favorites
@@ -162,6 +179,109 @@ def get_month_name_ru(month_num):
         9: "Сентября", 10: "Октября", 11: "Ноября", 12: "Декабря"
     }
     return months.get(month_num, str(month_num))
+
+# ---------- ФУНКЦИИ ДЛЯ РАБОТЫ С Т-ИНВЕСТИЦИЙ ----------
+def _to_float(units: int, nano: int) -> float:
+    return units + nano / 1e9
+
+def get_portfolio_data(account_id: str = None) -> dict:
+    if not TINKOFF_TOKEN:
+        return {"error": "Токен TITN не задан"}
+    with Client(TINKOFF_TOKEN) as client:
+        accounts = client.users.get_accounts().accounts
+        if not accounts:
+            return {"error": "Нет доступных счетов"}
+        if account_id is None:
+            account_id = accounts[0].id
+        portfolio = client.operations.get_portfolio(account_id=account_id)
+        result = {
+            "account_name": next((a.name for a in accounts if a.id == account_id), "Основной"),
+            "total_amount": _to_float(portfolio.total_amount_units, portfolio.total_amount_nano),
+            "positions": []
+        }
+        for pos in portfolio.positions:
+            try:
+                instrument = client.instruments.get_instrument_by_id(
+                    instrument_id=pos.instrument_uid,
+                    id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_UID
+                ).instrument
+                name = instrument.name if instrument else pos.figi
+            except:
+                name = pos.figi
+            result["positions"].append({
+                "figi": pos.figi,
+                "name": name,
+                "quantity": pos.quantity.units,
+                "current_price": _to_float(pos.current_price.units, pos.current_price.nano),
+                "average_price": _to_float(pos.average_position_price.units, pos.average_position_price.nano),
+                "expected_yield": _to_float(pos.expected_yield.units, pos.expected_yield.nano),
+            })
+        return result
+
+def get_operations(account_id: str = None, from_date: datetime.date = None, to_date: datetime.date = None) -> list:
+    if not TINKOFF_TOKEN:
+        return []
+    if from_date is None:
+        from_date = get_moscow_time().date().replace(day=1)
+    if to_date is None:
+        to_date = get_moscow_time().date()
+    with Client(TINKOFF_TOKEN) as client:
+        accounts = client.users.get_accounts().accounts
+        if not accounts:
+            return []
+        if account_id is None:
+            account_id = accounts[0].id
+        from_ts = int(datetime.datetime.combine(from_date, datetime.time.min).timestamp())
+        to_ts = int(datetime.datetime.combine(to_date, datetime.time.max).timestamp())
+        try:
+            ops = client.operations.get_operations(
+                account_id=account_id,
+                from_=from_ts,
+                to=to_ts,
+                state=OperationState.OPERATION_STATE_EXECUTED
+            )
+            return ops.operations
+        except Exception as e:
+            logging.error(f"Ошибка получения операций: {e}")
+            return []
+
+def build_purchases_chart(account_id: str = None) -> io.BytesIO:
+    now = get_moscow_time()
+    from_date = now.date().replace(day=1)
+    to_date = now.date()
+    ops = get_operations(account_id, from_date, to_date)
+    if not ops:
+        return None
+    buys = [op for op in ops if op.operation_type == OperationType.OPERATION_TYPE_BUY]
+    if not buys:
+        return None
+    day_amounts = defaultdict(float)
+    for op in buys:
+        dt = op.date.astimezone(datetime.timezone.utc).astimezone(datetime.timezone(datetime.timedelta(hours=3)))
+        day_key = dt.date()
+        amount = op.payment.units + op.payment.nano / 1e9
+        day_amounts[day_key] += abs(amount)
+    if not day_amounts:
+        return None
+    sorted_days = sorted(day_amounts.items())
+    dates = [d[0] for d in sorted_days]
+    amounts = [d[1] for d in sorted_days]
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.bar(dates, amounts, width=0.6, color='green', alpha=0.7)
+    ax.set_title(f"Покупки за {from_date.strftime('%B %Y')}", fontsize=14)
+    ax.set_xlabel("Дата")
+    ax.set_ylabel("Сумма покупок (₽)")
+    ax.grid(axis='y', linestyle='--', alpha=0.7)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%d'))
+    ax.xaxis.set_major_locator(mdates.DayLocator(interval=2))
+    plt.xticks(rotation=45)
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{int(x):,} ₽'))
+    fig.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight')
+    buf.seek(0)
+    plt.close()
+    return buf
 
 # ---------- ЗАПРОСЫ К MOEX ----------
 async def get_all_shares():
@@ -271,7 +391,7 @@ async def get_historical_close(ticker: str, target_date: datetime.date) -> float
 async def get_favorites_data(chat_id: int):
     favs = get_favorites(chat_id)
     if not favs:
-        return None, "У вас пока нет избранных акций. Добавьте через /add TICKER"
+        return None, "⭐ У вас пока нет избранных акций.\n\nДобавьте их через кнопку ✅ Добавить тикер."
     shares_df = await get_all_shares()
     if shares_df.empty:
         if is_weekend():
@@ -488,14 +608,14 @@ async def auto_update_task(chat_id: int, message_id: int):
             logging.error(f"Ошибка автообновления для чата {chat_id}: {e}")
             break
 
-# ---------- ОБРАБОТЧИКИ ----------
-@dp.message(Command("start"))
+# ---------- ОБРАБОТЧИКИ КОМАНД (с фильтром PrivateFilter) ----------
+@dp.message(Command("start"), PrivateFilter())
 async def cmd_start(message: types.Message):
     chat_id = message.chat.id
     auto_update_enabled[chat_id] = True
     try:
         await message.answer(
-            "👋 Привет! Я бот для отслеживания топ-акций Мосбиржи.\n\n"
+            "👋 Привет! Я бот для отслеживания топ-акций Мосбиржи и вашего портфеля Т-Инвестиций.\n\n"
             "Используйте кнопки ниже для навигации.",
             reply_markup=main_keyboard()
         )
@@ -504,22 +624,40 @@ async def cmd_start(message: types.Message):
         logging.error(f"❌ Ошибка в /start: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка при запуске: {e}")
 
-@dp.message(lambda msg: msg.text == "📌 Топ дня")
+@dp.message(PrivateFilter())
+async def handle_all_messages(message: types.Message):
+    # Если пользователь не прошел фильтр, он не получит ни одной команды.
+    # Для чужих пользователей можно ответить один раз, чтобы они знали.
+    if message.from_user.id != MY_CHAT_ID:
+        await message.answer("⛔ Доступ запрещён. Этот бот предназначен только для владельца.")
+        return
+    # Далее идут обработчики для своих сообщений
+    # (они будут вызваны только если фильтр PrivateFilter пропустил)
+
+# Остальные обработчики кнопок и команд мы привяжем через PrivateFilter выше,
+# но для удобства можно сделать все через один фильтр, если использовать декораторы.
+# Однако проще всего применить фильтр ко всем обработчикам, кроме тех,
+# которые уже используют PrivateFilter.
+
+# Для этого мы можем использовать middleware, но проще явно указать фильтр в каждом обработчике.
+# Ниже я переопределю все обработчики с PrivateFilter.
+
+@dp.message(lambda msg: msg.text == "📌 Топ дня", PrivateFilter())
 async def top_day_button(message: types.Message):
     await send_top(message, 'day')
     await safe_delete_message(message.chat.id, message.message_id)
 
-@dp.message(lambda msg: msg.text == "📊 Топ недели")
+@dp.message(lambda msg: msg.text == "📊 Топ недели", PrivateFilter())
 async def top_week_button(message: types.Message):
     await send_top(message, 'week')
     await safe_delete_message(message.chat.id, message.message_id)
 
-@dp.message(lambda msg: msg.text == "🗓️ Топ месяца")
+@dp.message(lambda msg: msg.text == "🗓️ Топ месяца", PrivateFilter())
 async def top_month_button(message: types.Message):
     await send_top(message, 'month')
     await safe_delete_message(message.chat.id, message.message_id)
 
-@dp.message(lambda msg: msg.text == "⭐ Избранные")
+@dp.message(lambda msg: msg.text == "⭐ Избранные", PrivateFilter())
 async def favorites_button(message: types.Message):
     try:
         loading_msg = await message.answer("⏳ Загружаю избранное...")
@@ -546,19 +684,77 @@ async def favorites_button(message: types.Message):
         await message.answer(f"❌ Ошибка при загрузке избранного: {e}")
         await safe_delete_message(message.chat.id, message.message_id)
 
-@dp.message(lambda msg: msg.text == "✅ Добавить тикер")
+@dp.message(lambda msg: msg.text == "📈 Портфель", PrivateFilter())
+async def portfolio_button(message: types.Message):
+    await cmd_portfolio(message)
+
+@dp.message(lambda msg: msg.text == "📊 График покупок", PrivateFilter())
+async def buys_chart_button(message: types.Message):
+    await cmd_buys(message)
+
+@dp.message(Command("portfolio"), PrivateFilter())
+async def cmd_portfolio(message: types.Message):
+    if not TINKOFF_TOKEN:
+        await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
+        return
+    loading_msg = await message.answer("⏳ Загружаю данные портфеля...")
+    try:
+        data = get_portfolio_data()
+        if "error" in data:
+            await loading_msg.delete()
+            await message.answer(f"❌ {data['error']}")
+            return
+        text = f"📊 *{data['account_name']}*\n"
+        text += f"💰 Сумма портфеля: {data['total_amount']:.2f} ₽\n\n"
+        if not data["positions"]:
+            text += "Позиций нет."
+        else:
+            text += "📈 *Позиции:*\n"
+            for pos in data["positions"]:
+                yield_pct = (pos["expected_yield"] / (pos["average_price"] * pos["quantity"]) * 100) if pos["average_price"] and pos["quantity"] else 0
+                text += f"• {pos['name']} ({pos['figi'][:6]}): {pos['quantity']} шт., {pos['current_price']:.2f} ₽, доходность {yield_pct:+.2f}%\n"
+        await message.answer(text, parse_mode="Markdown")
+        await loading_msg.delete()
+    except Exception as e:
+        await loading_msg.delete()
+        logging.error(f"Ошибка портфеля: {e}")
+        await message.answer(f"❌ Ошибка: {e}")
+
+@dp.message(Command("buys"), PrivateFilter())
+async def cmd_buys(message: types.Message):
+    if not TINKOFF_TOKEN:
+        await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
+        return
+    loading_msg = await message.answer("⏳ Строю график покупок за месяц...")
+    try:
+        chart_buf = build_purchases_chart()
+        if chart_buf is None:
+            await loading_msg.delete()
+            await message.answer("❌ Не удалось построить график покупок. Возможно, за месяц не было покупок или ошибка API.")
+            return
+        await message.answer_photo(
+            photo=BufferedInputFile(chart_buf.getvalue(), filename="purchases.png"),
+            caption=f"📊 Покупки за {get_moscow_time().strftime('%B %Y')}"
+        )
+        await loading_msg.delete()
+    except Exception as e:
+        await loading_msg.delete()
+        logging.error(f"Ошибка графика покупок: {e}")
+        await message.answer(f"❌ Ошибка: {e}")
+
+@dp.message(lambda msg: msg.text == "✅ Добавить тикер", PrivateFilter())
 async def add_ticker_button(message: types.Message):
     user_state[message.chat.id] = 'add'
     await message.answer("Введите тикер для добавления (например, SBER или SBER, GAZP):")
     await safe_delete_message(message.chat.id, message.message_id)
 
-@dp.message(lambda msg: msg.text == "❌ Удалить тикер")
+@dp.message(lambda msg: msg.text == "❌ Удалить тикер", PrivateFilter())
 async def remove_ticker_button(message: types.Message):
     user_state[message.chat.id] = 'remove'
     await message.answer("Введите тикер для удаления (например, SBER или SBER, GAZP):")
     await safe_delete_message(message.chat.id, message.message_id)
 
-@dp.message()
+@dp.message(PrivateFilter())
 async def handle_text(message: types.Message):
     chat_id = message.chat.id
     if chat_id in user_state:
@@ -585,7 +781,7 @@ async def handle_text(message: types.Message):
         await message.answer("Используйте кнопки меню.", reply_markup=main_keyboard())
         await safe_delete_message(chat_id, message.message_id)
 
-@dp.callback_query(lambda c: c.data == "refresh")
+@dp.callback_query(lambda c: c.data == "refresh", PrivateFilter())
 async def process_refresh(callback: CallbackQuery):
     try:
         await callback.answer("Обновляю...", cache_time=0)
@@ -617,11 +813,10 @@ async def process_refresh(callback: CallbackQuery):
 # ---------- ЗАПУСК (POLLING) ----------
 async def main():
     global http_session
-    init_db()  # создаём таблицу, если её нет
+    init_db()
     http_session = aiohttp.ClientSession()
 
     try:
-        # Удаляем вебхук (на случай, если он был установлен ранее)
         await bot.delete_webhook(drop_pending_updates=True)
         logging.info("✅ Вебхук удалён")
     except Exception as e:
