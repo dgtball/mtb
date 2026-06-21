@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 5.0 (универсальный обработчик кнопок)
+# Версия: 6.1 (исправлен URL API Т-Инвестиций, логирование)
 # ==============================================
 
 import os
@@ -49,7 +49,8 @@ DATA_DIR = os.getenv('DATA_DIR', '/app/data')
 DB_PATH = os.path.join(DATA_DIR, 'favorites.db')
 PORT = int(os.getenv('PORT', 3000))
 
-TINKOFF_API_URL = "https://api-invest.tinkoff.ru/openapi/"
+# Корректный URL API Т-Инвестиций (можно переопределить через переменную окружения)
+TINKOFF_API_URL = os.getenv("TINKOFF_API_URL", "https://api-invest.tinkoff.ru/openapi/")
 
 # ---------- ЛОГИРОВАНИЕ ----------
 logging.basicConfig(level=logging.INFO)
@@ -186,6 +187,7 @@ async def tinkoff_api_request(method: str, endpoint: str, params: dict = None) -
     if not TINKOFF_TOKEN:
         raise ValueError("Токен TITN не задан")
     url = f"{TINKOFF_API_URL}{endpoint}"
+    logging.info(f"🔗 Запрос к API Т-Инвестиций: {url}")
     headers = {
         "Authorization": f"Bearer {TINKOFF_TOKEN}",
         "Accept": "application/json"
@@ -638,77 +640,18 @@ async def cmd_start(message: types.Message):
         logging.error(f"❌ Ошибка в /start: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка при запуске: {e}")
 
-# ---------- УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК КНОПОК ----------
+# ---------- УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК ДЛЯ КНОПОК И КОМАНД ПОРТФЕЛЯ ----------
 @dp.message()
-async def handle_buttons(message: types.Message):
+async def handle_buttons_and_commands(message: types.Message):
     if message.from_user.id != MY_CHAT_ID:
         await message.answer("⛔ Доступ запрещён.")
         return
     text = message.text
-    logging.info(f"🔄 Обработка кнопки: '{text}'")
-    
-    # Топ дня
-    if text == "📌 Топ дня":
-        await send_top(message, 'day')
-        await safe_delete_message(message.chat.id, message.message_id)
-        return
-    
-    # Топ недели
-    if text == "📊 Топ недели":
-        await send_top(message, 'week')
-        await safe_delete_message(message.chat.id, message.message_id)
-        return
-    
-    # Топ месяца
-    if text == "🗓️ Топ месяца":
-        await send_top(message, 'month')
-        await safe_delete_message(message.chat.id, message.message_id)
-        return
-    
-    # Избранные
-    if text == "⭐ Избранные":
-        try:
-            loading_msg = await message.answer("⏳ Загружаю избранное...")
-            fav_df, error = await get_favorites_data(message.chat.id)
-            if error:
-                await loading_msg.delete()
-                await message.answer(error)
-                await safe_delete_message(message.chat.id, message.message_id)
-                return
-            img_buf = generate_favorites_image(fav_df)
-            if img_buf is None:
-                await loading_msg.delete()
-                await message.answer("Нет данных для отображения.")
-                await safe_delete_message(message.chat.id, message.message_id)
-                return
-            await message.answer_photo(
-                photo=BufferedInputFile(img_buf.getvalue(), filename="favorites.png")
-            )
-            await loading_msg.delete()
-            await safe_delete_message(message.chat.id, message.message_id)
-        except Exception as e:
-            logging.error(f"❌ Ошибка в favorites: {e}", exc_info=True)
-            await message.answer(f"❌ Ошибка при загрузке избранного: {e}")
-            await safe_delete_message(message.chat.id, message.message_id)
-        return
-    
-    # Добавить тикер
-    if text == "✅ Добавить тикер":
-        user_state[message.chat.id] = 'add'
-        await message.answer("Введите тикер для добавления (например, SBER или SBER, GAZP):")
-        await safe_delete_message(message.chat.id, message.message_id)
-        return
-    
-    # Удалить тикер
-    if text == "❌ Удалить тикер":
-        user_state[message.chat.id] = 'remove'
-        await message.answer("Введите тикер для удаления (например, SBER или SBER, GAZP):")
-        await safe_delete_message(message.chat.id, message.message_id)
-        return
-    
-    # Портфель
-    if text == "📈 Портфель" or text == "/portfolio":
-        logging.info("🔍 Обработка портфеля через универсальный обработчик")
+    logging.info(f"🔄 Обработка сообщения: '{text}'")
+
+    # ---- КОМАНДЫ (перехватываем вручную) ----
+    if text == "/portfolio":
+        logging.info("🔍 Обработка команды /portfolio")
         if not TINKOFF_TOKEN:
             await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
             await safe_delete_message(message.chat.id, message.message_id)
@@ -721,16 +664,16 @@ async def handle_buttons(message: types.Message):
                 await message.answer("❌ Не удалось получить данные портфеля.")
                 await safe_delete_message(message.chat.id, message.message_id)
                 return
-            text_response = f"📊 *Портфель*\n"
-            text_response += f"💰 Сумма: {data['total_amount']:.2f} {data['currency']}\n\n"
+            response_text = f"📊 *Портфель*\n"
+            response_text += f"💰 Сумма: {data['total_amount']:.2f} {data['currency']}\n\n"
             if not data["positions"]:
-                text_response += "Позиций нет."
+                response_text += "Позиций нет."
             else:
-                text_response += "📈 *Позиции:*\n"
+                response_text += "📈 *Позиции:*\n"
                 for pos in data["positions"]:
                     yield_pct = (pos["expected_yield"] / (pos["average_price"] * pos["quantity"]) * 100) if pos["average_price"] and pos["quantity"] else 0
-                    text_response += f"• {pos['name']} ({pos['ticker']}) : {pos['quantity']} шт., {pos['current_price']:.2f} ₽, доходность {yield_pct:+.2f}%\n"
-            await message.answer(text_response, parse_mode="Markdown")
+                    response_text += f"• {pos['name']} ({pos['ticker']}) : {pos['quantity']} шт., {pos['current_price']:.2f} ₽, доходность {yield_pct:+.2f}%\n"
+            await message.answer(response_text, parse_mode="Markdown")
             await loading_msg.delete()
             await safe_delete_message(message.chat.id, message.message_id)
         except Exception as e:
@@ -739,10 +682,9 @@ async def handle_buttons(message: types.Message):
             await message.answer(f"❌ Ошибка: {e}")
             await safe_delete_message(message.chat.id, message.message_id)
         return
-    
-    # График покупок
-    if text == "📊 График покупок" or text == "/buys":
-        logging.info("🔍 Обработка графика покупок через универсальный обработчик")
+
+    if text == "/buys":
+        logging.info("🔍 Обработка команды /buys")
         if not TINKOFF_TOKEN:
             await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
             await safe_delete_message(message.chat.id, message.message_id)
@@ -768,7 +710,122 @@ async def handle_buttons(message: types.Message):
             await safe_delete_message(message.chat.id, message.message_id)
         return
 
-    # Если это ввод тикера (состояние)
+    # ---- КНОПКИ ----
+    if text == "📌 Топ дня":
+        await send_top(message, 'day')
+        await safe_delete_message(message.chat.id, message.message_id)
+        return
+
+    if text == "📊 Топ недели":
+        await send_top(message, 'week')
+        await safe_delete_message(message.chat.id, message.message_id)
+        return
+
+    if text == "🗓️ Топ месяца":
+        await send_top(message, 'month')
+        await safe_delete_message(message.chat.id, message.message_id)
+        return
+
+    if text == "⭐ Избранные":
+        try:
+            loading_msg = await message.answer("⏳ Загружаю избранное...")
+            fav_df, error = await get_favorites_data(message.chat.id)
+            if error:
+                await loading_msg.delete()
+                await message.answer(error)
+                await safe_delete_message(message.chat.id, message.message_id)
+                return
+            img_buf = generate_favorites_image(fav_df)
+            if img_buf is None:
+                await loading_msg.delete()
+                await message.answer("Нет данных для отображения.")
+                await safe_delete_message(message.chat.id, message.message_id)
+                return
+            await message.answer_photo(
+                photo=BufferedInputFile(img_buf.getvalue(), filename="favorites.png")
+            )
+            await loading_msg.delete()
+            await safe_delete_message(message.chat.id, message.message_id)
+        except Exception as e:
+            await loading_msg.delete()
+            logging.error(f"❌ Ошибка в favorites: {e}", exc_info=True)
+            await message.answer(f"❌ Ошибка при загрузке избранного: {e}")
+            await safe_delete_message(message.chat.id, message.message_id)
+        return
+
+    if text == "📈 Портфель":
+        logging.info("🔍 Обработка кнопки портфеля")
+        if not TINKOFF_TOKEN:
+            await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
+            await safe_delete_message(message.chat.id, message.message_id)
+            return
+        loading_msg = await message.answer("⏳ Загружаю данные портфеля...")
+        try:
+            data = await get_portfolio_summary()
+            if not data:
+                await loading_msg.delete()
+                await message.answer("❌ Не удалось получить данные портфеля.")
+                await safe_delete_message(message.chat.id, message.message_id)
+                return
+            response_text = f"📊 *Портфель*\n"
+            response_text += f"💰 Сумма: {data['total_amount']:.2f} {data['currency']}\n\n"
+            if not data["positions"]:
+                response_text += "Позиций нет."
+            else:
+                response_text += "📈 *Позиции:*\n"
+                for pos in data["positions"]:
+                    yield_pct = (pos["expected_yield"] / (pos["average_price"] * pos["quantity"]) * 100) if pos["average_price"] and pos["quantity"] else 0
+                    response_text += f"• {pos['name']} ({pos['ticker']}) : {pos['quantity']} шт., {pos['current_price']:.2f} ₽, доходность {yield_pct:+.2f}%\n"
+            await message.answer(response_text, parse_mode="Markdown")
+            await loading_msg.delete()
+            await safe_delete_message(message.chat.id, message.message_id)
+        except Exception as e:
+            await loading_msg.delete()
+            logging.error(f"❌ Ошибка портфеля: {e}", exc_info=True)
+            await message.answer(f"❌ Ошибка: {e}")
+            await safe_delete_message(message.chat.id, message.message_id)
+        return
+
+    if text == "📊 График покупок":
+        logging.info("🔍 Обработка кнопки графика покупок")
+        if not TINKOFF_TOKEN:
+            await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
+            await safe_delete_message(message.chat.id, message.message_id)
+            return
+        loading_msg = await message.answer("⏳ Строю график покупок за месяц...")
+        try:
+            chart_buf = await build_purchases_chart()
+            if chart_buf is None:
+                await loading_msg.delete()
+                await message.answer("❌ Не удалось построить график покупок. Возможно, за месяц не было покупок или ошибка API.")
+                await safe_delete_message(message.chat.id, message.message_id)
+                return
+            await message.answer_photo(
+                photo=BufferedInputFile(chart_buf.getvalue(), filename="purchases.png"),
+                caption=f"📊 Покупки за {get_moscow_time().strftime('%B %Y')}"
+            )
+            await loading_msg.delete()
+            await safe_delete_message(message.chat.id, message.message_id)
+        except Exception as e:
+            await loading_msg.delete()
+            logging.error(f"❌ Ошибка графика покупок: {e}", exc_info=True)
+            await message.answer(f"❌ Ошибка: {e}")
+            await safe_delete_message(message.chat.id, message.message_id)
+        return
+
+    if text == "✅ Добавить тикер":
+        user_state[message.chat.id] = 'add'
+        await message.answer("Введите тикер для добавления (например, SBER или SBER, GAZP):")
+        await safe_delete_message(message.chat.id, message.message_id)
+        return
+
+    if text == "❌ Удалить тикер":
+        user_state[message.chat.id] = 'remove'
+        await message.answer("Введите тикер для удаления (например, SBER или SBER, GAZP):")
+        await safe_delete_message(message.chat.id, message.message_id)
+        return
+
+    # ---- ВВОД ТИКЕРА (состояние) ----
     chat_id = message.chat.id
     if chat_id in user_state:
         state = user_state[chat_id]
@@ -792,7 +849,7 @@ async def handle_buttons(message: types.Message):
         await safe_delete_message(chat_id, message.message_id)
         return
 
-    # Если ничего не подошло
+    # ---- ФОЛБЭК ----
     logging.info(f"FALLBACK: получено сообщение: '{text}'")
     await message.answer("Используйте кнопки меню.", reply_markup=main_keyboard())
     await safe_delete_message(message.chat.id, message.message_id)
@@ -817,8 +874,16 @@ async def main():
     init_db()
     http_session = aiohttp.ClientSession()
 
+    # Удаляем вебхук (на случай, если он был)
     await bot.delete_webhook(drop_pending_updates=True)
     logging.info("✅ Вебхук удалён")
+
+    # Отправляем уведомление владельцу о запуске
+    try:
+        await bot.send_message(MY_CHAT_ID, "🚀 Бот перезапущен и готов к работе!")
+        logging.info("✅ Уведомление о запуске отправлено")
+    except Exception as e:
+        logging.error(f"❌ Не удалось отправить уведомление о запуске: {e}")
 
     logging.info("✅ Запускаем polling...")
     polling_task = asyncio.create_task(dp.start_polling(bot))
