@@ -743,11 +743,13 @@ async def handle_state_input(message: types.Message):
 @dp.message(Command("portfolio"))
 @dp.message(lambda msg: msg.text == "📈 Портфель")
 async def cmd_portfolio(message: types.Message):
-    if message.from_user.id != MY_CHAT_ID:
-        await message.answer("⛔ Доступ запрещён.")
-        return
     logging.info(f"🔍 cmd_portfolio вызван для user_id={message.from_user.id}")
+    # Принудительное тестовое сообщение
+    await message.answer("⏳ Обработчик портфеля сработал. Проверяем токен...")
     try:
+        if message.from_user.id != MY_CHAT_ID:
+            await message.answer("⛔ Доступ запрещён.")
+            return
         if not TINKOFF_TOKEN:
             await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
             return
@@ -778,11 +780,13 @@ async def cmd_portfolio(message: types.Message):
 @dp.message(Command("buys"))
 @dp.message(lambda msg: msg.text == "📊 График покупок")
 async def cmd_buys(message: types.Message):
-    if message.from_user.id != MY_CHAT_ID:
-        await message.answer("⛔ Доступ запрещён.")
-        return
     logging.info(f"🔍 cmd_buys вызван для user_id={message.from_user.id}")
+    # Принудительное тестовое сообщение
+    await message.answer("⏳ Обработчик графика покупок сработал. Проверяем токен...")
     try:
+        if message.from_user.id != MY_CHAT_ID:
+            await message.answer("⛔ Доступ запрещён.")
+            return
         if not TINKOFF_TOKEN:
             await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
             return
