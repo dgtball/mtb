@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 6.3 (портфель с долями и дивидендами, без графика покупок)
+# Версия: 6.4 (чистый чат, сессии выходного дня, портфель)
 # ==============================================
 
 import os
@@ -52,6 +52,22 @@ PORT = int(os.getenv('PORT', 3000))
 # Новый URL API Т-Инвестиций (REST/gRPC)
 TINKOFF_API_URL = os.getenv("TINKOFF_API_URL", "https://invest-public-api.tbank.ru/rest/")
 
+# ---------- СПИСОК НЕТОРГОВЫХ ВЫХОДНЫХ 2026 ----------
+NO_TRADING_WEEKENDS_2026 = [
+    ("2026-01-03", "2026-01-04"),
+    ("2026-01-10", "2026-01-11"),
+    ("2026-02-14", "2026-02-15"),
+    ("2026-03-07", "2026-03-08"),
+    ("2026-03-21", "2026-03-22"),
+    ("2026-05-09", "2026-05-10"),
+    ("2026-06-20", "2026-06-21"),
+    ("2026-08-01", "2026-08-02"),
+    ("2026-08-15", "2026-08-16"),
+    ("2026-09-12", "2026-09-13"),
+    ("2026-10-24", "2026-10-25"),
+    ("2026-12-05", "2026-12-06"),
+]
+
 # ---------- ЛОГИРОВАНИЕ ----------
 logging.basicConfig(level=logging.INFO)
 
@@ -63,10 +79,10 @@ dp = Dispatcher()
 last_messages = {}
 update_tasks = {}
 auto_update_enabled = {}
-user_state = {}
+user_state = {}  # chat_id -> {'state': 'add'/'remove', 'prompt_msg_id': int}
 http_session = None
 
-# ---------- КЛАВИАТУРА (без графика покупок) ----------
+# ---------- КЛАВИАТУРА ----------
 def main_keyboard():
     kb = [
         [KeyboardButton(text="📌 Топ дня")],
@@ -148,28 +164,39 @@ def is_weekend():
 
 def get_session_status():
     now = get_moscow_time()
-    if is_weekend():
-        if (now.hour > 9 or (now.hour == 9 and now.minute >= 50)) and (now.hour < 18 or (now.hour == 18 and now.minute <= 59)):
+    today_str = now.strftime("%Y-%m-%d")
+    is_weekend = now.weekday() in (5, 6)
+
+    # Проверяем неторговые выходные
+    if is_weekend:
+        for start, end in NO_TRADING_WEEKENDS_2026:
+            if start <= today_str <= end:
+                return "Биржа закрыта (выходной)"
+
+    # Если это выходной и время с 09:50 до 19:00 – сессия выходного дня
+    if is_weekend:
+        if (now.hour > 9 or (now.hour == 9 and now.minute >= 50)) and (now.hour < 19 or (now.hour == 19 and now.minute == 0)):
             return "Сессия выходного дня"
         else:
-            return "Биржа закрыта (выходной)"
+            return "Биржа закрыта"
+
+    # Будни
+    if now.hour < 6 or (now.hour == 6 and now.minute < 50):
+        return "Биржа закрыта"
+    elif now.hour == 6 and now.minute >= 50:
+        return "Утренняя сессия (06:50–09:50)"
+    elif now.hour < 9 or (now.hour == 9 and now.minute < 50):
+        return "Утренняя сессия (06:50–09:50)"
+    elif now.hour == 9 and now.minute >= 50:
+        return "Основная сессия (09:50–19:00)"
+    elif now.hour < 19:
+        return "Основная сессия (09:50–19:00)"
+    elif now.hour == 19 and now.minute == 0:
+        return "Вечерняя сессия (19:00–23:50)"
+    elif now.hour < 23 or (now.hour == 23 and now.minute <= 50):
+        return "Вечерняя сессия (19:00–23:50)"
     else:
-        if now.hour < 6 or (now.hour == 6 and now.minute < 50):
-            return "Биржа закрыта"
-        elif now.hour == 6 and now.minute >= 50:
-            return "Утренняя сессия (06:50–09:50)"
-        elif now.hour < 9 or (now.hour == 9 and now.minute < 50):
-            return "Утренняя сессия (06:50–09:50)"
-        elif now.hour == 9 and now.minute >= 50:
-            return "Основная сессия (09:50–19:00)"
-        elif now.hour < 19:
-            return "Основная сессия (09:50–19:00)"
-        elif now.hour == 19 and now.minute == 0:
-            return "Вечерняя сессия (19:00–23:50)"
-        elif now.hour < 23 or (now.hour == 23 and now.minute <= 50):
-            return "Вечерняя сессия (19:00–23:50)"
-        else:
-            return "Биржа закрыта"
+        return "Биржа закрыта"
 
 def get_week_number(date):
     return date.isocalendar()[1]
@@ -224,34 +251,34 @@ async def get_portfolio_summary():
         data = await get_portfolio_data(account_id)
         positions = data.get("positions", [])
         total_amount = data.get("totalAmountPortfolio", {})
-        total = total_amount.get("units", 0)
+        total = float(total_amount.get("units", 0))
         total_currency = total_amount.get("currency", "RUB")
         
         result = {
             "total_amount": total,
             "currency": total_currency,
             "positions": [],
-            "expected_dividends": data.get("expectedDividends", 0)
+            "expected_dividends": float(data.get("expectedDividends", 0))
         }
         
-        total_value = 0
+        total_value = 0.0
         for pos in positions:
-            quantity = pos.get("quantity", {}).get("units", 0)
-            price = pos.get("currentPrice", {}).get("units", 0)
+            quantity = float(pos.get("quantity", {}).get("units", 0))
+            price = float(pos.get("currentPrice", {}).get("units", 0))
             total_value += quantity * price
         
         for pos in positions:
             figi = pos.get("figi")
             ticker = pos.get("ticker") or figi
             name = pos.get("name") or ticker
-            quantity = pos.get("quantity", {}).get("units", 0)
-            price = pos.get("currentPrice", {}).get("units", 0)
-            avg_price = pos.get("averagePositionPrice", {}).get("units", 0)
-            expected_yield = pos.get("expectedYield", {}).get("units", 0)
+            quantity = float(pos.get("quantity", {}).get("units", 0))
+            price = float(pos.get("currentPrice", {}).get("units", 0))
+            avg_price = float(pos.get("averagePositionPrice", {}).get("units", 0))
+            expected_yield = float(pos.get("expectedYield", {}).get("units", 0))
             currency = pos.get("currentPrice", {}).get("currency", "RUB")
             current_value = quantity * price
             share = (current_value / total_value * 100) if total_value > 0 else 0
-            dividends = pos.get("expectedDividend", 0)
+            dividends = float(pos.get("expectedDividend", 0))
             
             result["positions"].append({
                 "figi": figi,
@@ -663,7 +690,7 @@ async def handle_buttons_and_commands(message: types.Message):
                         yield_pct = 0
                     line = (
                         f"• {pos['name']} ({pos['ticker']}) : "
-                        f"{pos['quantity']} шт., {pos['price']:.2f} {pos['currency']}, "
+                        f"{pos['quantity']:.0f} шт., {pos['price']:.2f} {pos['currency']}, "
                         f"ст-ть {pos['current_value']:.2f} ({pos['share']:.1f}%), "
                         f"дох-ть {yield_pct:+.2f}%"
                     )
@@ -753,7 +780,7 @@ async def handle_buttons_and_commands(message: types.Message):
                         yield_pct = 0
                     line = (
                         f"• {pos['name']} ({pos['ticker']}) : "
-                        f"{pos['quantity']} шт., {pos['price']:.2f} {pos['currency']}, "
+                        f"{pos['quantity']:.0f} шт., {pos['price']:.2f} {pos['currency']}, "
                         f"ст-ть {pos['current_value']:.2f} ({pos['share']:.1f}%), "
                         f"дох-ть {yield_pct:+.2f}%"
                     )
@@ -771,21 +798,29 @@ async def handle_buttons_and_commands(message: types.Message):
         return
 
     if text == "✅ Добавить тикер":
-        user_state[message.chat.id] = 'add'
-        await message.answer("Введите тикер для добавления (например, SBER или SBER, GAZP):")
+        # Отправляем запрос и сохраняем ID сообщения
+        prompt_msg = await message.answer("Введите тикер для добавления (например, SBER или SBER, GAZP):")
+        user_state[message.chat.id] = {'state': 'add', 'prompt_msg_id': prompt_msg.message_id}
         await safe_delete_message(message.chat.id, message.message_id)
         return
 
     if text == "❌ Удалить тикер":
-        user_state[message.chat.id] = 'remove'
-        await message.answer("Введите тикер для удаления (например, SBER или SBER, GAZP):")
+        prompt_msg = await message.answer("Введите тикер для удаления (например, SBER или SBER, GAZP):")
+        user_state[message.chat.id] = {'state': 'remove', 'prompt_msg_id': prompt_msg.message_id}
         await safe_delete_message(message.chat.id, message.message_id)
         return
 
     # ---- ВВОД ТИКЕРА (состояние) ----
     chat_id = message.chat.id
     if chat_id in user_state:
-        state = user_state[chat_id]
+        state_data = user_state[chat_id]
+        state = state_data['state']
+        prompt_msg_id = state_data['prompt_msg_id']
+
+        # Удаляем сообщение с запросом и сообщение пользователя с тикером
+        await safe_delete_message(chat_id, prompt_msg_id)
+        await safe_delete_message(chat_id, message.message_id)
+
         raw = message.text.strip()
         tickers = [t.strip().upper() for t in raw.split(',') if t.strip()]
         results = []
@@ -802,8 +837,6 @@ async def handle_buttons_and_commands(message: types.Message):
                     results.append(f"ℹ️ {ticker} не найден")
         await message.answer("\n".join(results) if results else "Ничего не сделано.")
         del user_state[chat_id]
-        await message.answer("✅ Готово. Выберите действие из меню.", reply_markup=main_keyboard())
-        await safe_delete_message(chat_id, message.message_id)
         return
 
     # ---- ФОЛБЭК ----
