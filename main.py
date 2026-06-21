@@ -57,13 +57,13 @@ auto_update_enabled = {} # chat_id -> True/False
 user_state = {}          # chat_id -> 'add' / 'remove'
 http_session = None      # единая aiohttp сессия
 
-# ---------- КЛАВИАТУРА ----------
+# ---------- КЛАВИАТУРА (ОБНОВЛЁННАЯ) ----------
 def main_keyboard():
     kb = [
-        [KeyboardButton(text="📈 Топ дня")],
-        [KeyboardButton(text="📊 Топ недели"), KeyboardButton(text="📉 Топ месяца")],
+        [KeyboardButton(text="📌 Топ дня")],
+        [KeyboardButton(text="📊 Топ недели"), KeyboardButton(text="🗓️ Топ месяца")],
         [KeyboardButton(text="⭐ Избранные")],
-        [KeyboardButton(text="➕ Добавить тикер"), KeyboardButton(text="➖ Удалить тикер")],
+        [KeyboardButton(text="✅ Добавить тикер"), KeyboardButton(text="❌ Удалить тикер")],
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=False)
 
@@ -109,13 +109,46 @@ def get_favorites(chat_id: int) -> list:
         logging.error(f"Ошибка получения избранного из Supabase: {e}")
         return []
 
-# ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
+# ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (ВРЕМЯ, СЕССИИ) ----------
 def get_moscow_time():
     return datetime.datetime.now(datetime.timezone.utc).astimezone(datetime.timezone(datetime.timedelta(hours=3)))
+
+def get_local_time():
+    """Возвращает текущее время в часовом поясе UTC+4 (ваш локальный)."""
+    return datetime.datetime.now(datetime.timezone.utc).astimezone(datetime.timezone(datetime.timedelta(hours=4)))
 
 def is_weekend():
     now = get_moscow_time()
     return now.weekday() in (5, 6)
+
+def get_session_status():
+    """
+    Определяет текущую торговую сессию по московскому времени.
+    Возвращает строку для заголовка.
+    """
+    now = get_moscow_time()
+    if is_weekend():
+        if (now.hour > 9 or (now.hour == 9 and now.minute >= 50)) and (now.hour < 18 or (now.hour == 18 and now.minute <= 59)):
+            return "Сессия выходного дня"
+        else:
+            return "Биржа закрыта (выходной)"
+    else:
+        if now.hour < 6 or (now.hour == 6 and now.minute < 50):
+            return "Биржа закрыта"
+        elif now.hour == 6 and now.minute >= 50:
+            return "Утренняя сессия (06:50–09:50)"
+        elif now.hour < 9 or (now.hour == 9 and now.minute < 50):
+            return "Утренняя сессия (06:50–09:50)"
+        elif now.hour == 9 and now.minute >= 50:
+            return "Основная сессия (09:50–19:00)"
+        elif now.hour < 19:
+            return "Основная сессия (09:50–19:00)"
+        elif now.hour == 19 and now.minute == 0:
+            return "Вечерняя сессия (19:00–23:50)"
+        elif now.hour < 23 or (now.hour == 23 and now.minute <= 50):
+            return "Вечерняя сессия (19:00–23:50)"
+        else:
+            return "Биржа закрыта"
 
 # ---------- ЗАПРОСЫ К MOEX ----------
 async def get_all_shares():
@@ -294,14 +327,11 @@ def build_table_universal(df, title, headers, data_columns):
     table = tabulate(table_data, headers=headers, tablefmt="simple", numalign="right", stralign="left")
     return f"<b>{title}</b>\n<pre>{table}</pre>\n"
 
-def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, update_time: str, is_weekend: bool = False) -> str:
+def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, update_time: str, session_status: str) -> str:
     if index_value is not None:
         header = f"📊 Индекс МосБиржи: {index_value:.2f}\n"
     else:
-        if is_weekend:
-            header = "📊 Сессия выходного дня\n"
-        else:
-            header = "📊 Биржа закрыта\n"
+        header = f"📊 {session_status}\n"
     header += f"🕒 Обновлено: {update_time}\n\n"
     text = header
     text += build_table_universal(gainers, "📈 Лидеры роста", ["Тикер", "Название", "Цена", "Изменение"], ['SECID', 'SHORTNAME', 'LAST', 'CHANGEPERCENT'])
@@ -360,14 +390,13 @@ async def send_top(message: types.Message, period: str = 'day'):
             gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
             if gainers.empty and losers.empty:
                 await loading_msg.delete()
-                if is_weekend():
-                    await message.answer("📊 Сессия выходного дня. Данные обновятся в рабочие дни.")
-                else:
-                    await message.answer("📊 Биржа закрыта. Попробуйте позже.")
+                session_status = get_session_status()
+                await message.answer(f"📊 {session_status}\nДанные обновятся в рабочее время.")
                 return
             index_val = await get_moex_index()
-            update_time = time.strftime("%Y-%m-%d %H:%M:%S")
-            text = format_message(gainers, losers, index_val, update_time, is_weekend=is_weekend())
+            session_status = get_session_status()
+            update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
+            text = format_message(gainers, losers, index_val, update_time, session_status)
         else:
             now = get_moscow_time()
             if period == 'week':
@@ -392,7 +421,11 @@ async def send_top(message: types.Message, period: str = 'day'):
                 changes = changes.merge(names, on='SECID', how='left')
             gainers = changes.nlargest(TOP_N, 'CHANGE_PCT')
             losers = changes.nsmallest(TOP_N, 'CHANGE_PCT')
+            session_status = get_session_status()
+            update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
             text = format_historical_table(gainers, losers, period_name, from_date, till_date)
+            # Для исторических таблиц добавляем сверху информацию о сессии (необязательно)
+            text = f"📊 {session_status}\n🕒 {update_time}\n\n" + text
 
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -421,8 +454,9 @@ async def auto_update_task(chat_id: int, message_id: int):
             if gainers.empty and losers.empty:
                 continue
             index_val = await get_moex_index()
-            update_time = time.strftime("%Y-%m-%d %H:%M:%S")
-            text = format_message(gainers, losers, index_val, update_time, is_weekend=is_weekend())
+            session_status = get_session_status()
+            update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
+            text = format_message(gainers, losers, index_val, update_time, session_status)
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
@@ -449,7 +483,7 @@ async def cmd_start(message: types.Message):
         logging.error(f"❌ Ошибка в /start: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка при запуске: {e}")
 
-@dp.message(lambda msg: msg.text == "📈 Топ дня")
+@dp.message(lambda msg: msg.text == "📌 Топ дня")
 async def top_day_button(message: types.Message):
     await send_top(message, 'day')
     await safe_delete_message(message.chat.id, message.message_id)
@@ -459,7 +493,7 @@ async def top_week_button(message: types.Message):
     await send_top(message, 'week')
     await safe_delete_message(message.chat.id, message.message_id)
 
-@dp.message(lambda msg: msg.text == "📉 Топ месяца")
+@dp.message(lambda msg: msg.text == "🗓️ Топ месяца")
 async def top_month_button(message: types.Message):
     await send_top(message, 'month')
     await safe_delete_message(message.chat.id, message.message_id)
@@ -491,13 +525,13 @@ async def favorites_button(message: types.Message):
         await message.answer(f"❌ Ошибка при загрузке избранного: {e}")
         await safe_delete_message(message.chat.id, message.message_id)
 
-@dp.message(lambda msg: msg.text == "➕ Добавить тикер")
+@dp.message(lambda msg: msg.text == "✅ Добавить тикер")
 async def add_ticker_button(message: types.Message):
     user_state[message.chat.id] = 'add'
     await message.answer("Введите тикер для добавления (например, SBER или SBER, GAZP):")
     await safe_delete_message(message.chat.id, message.message_id)
 
-@dp.message(lambda msg: msg.text == "➖ Удалить тикер")
+@dp.message(lambda msg: msg.text == "❌ Удалить тикер")
 async def remove_ticker_button(message: types.Message):
     user_state[message.chat.id] = 'remove'
     await message.answer("Введите тикер для удаления (например, SBER или SBER, GAZP):")
@@ -540,14 +574,13 @@ async def process_refresh(callback: CallbackQuery):
         shares_df = await get_all_shares()
         gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
         if gainers.empty and losers.empty:
-            if is_weekend():
-                await callback.message.answer("📊 Сессия выходного дня. Данные обновятся в рабочие дни.")
-            else:
-                await callback.message.answer("📊 Биржа закрыта. Попробуйте позже.")
+            session_status = get_session_status()
+            await callback.message.answer(f"📊 {session_status}\nДанные обновятся в рабочее время.")
             return
         index_val = await get_moex_index()
-        update_time = time.strftime("%Y-%m-%d %H:%M:%S")
-        text = format_message(gainers, losers, index_val, update_time, is_weekend=is_weekend())
+        session_status = get_session_status()
+        update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
+        text = format_message(gainers, losers, index_val, update_time, session_status)
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
@@ -560,7 +593,7 @@ async def process_refresh(callback: CallbackQuery):
         logging.error(f"❌ Ошибка обновления: {e}", exc_info=True)
         await callback.message.answer(f"❌ Ошибка обновления: {e}")
 
-# ---------- ЗАПУСК ВЕБХУКА ЧЕРЕЗ AIOHTTP (aiogram 3) ----------
+# ---------- ЗАПУСК ВЕБХУКА ЧЕРЕЗ AIOHTTP ----------
 async def on_startup(app: web.Application):
     global http_session
     http_session = aiohttp.ClientSession()
@@ -595,7 +628,7 @@ def main():
 
     app.router.add_get(WEBHOOK_PATH, webhook_get)
 
-    # ---- ОСНОВНОЙ ОБРАБОТЧИК (POST) ----
+    # ---- ОСНОВНЫЙ ОБРАБОТЧИК (POST) ----
     handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
     handler.register(app, path=WEBHOOK_PATH)
 
