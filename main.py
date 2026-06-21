@@ -54,7 +54,9 @@ TINKOFF_API_URL = "https://api-invest.tinkoff.ru/openapi/"
 # ---------- ФИЛЬТР ПРИВАТНОСТИ ----------
 class PrivateFilter(Filter):
     async def __call__(self, message: types.Message) -> bool:
-        return message.from_user.id == MY_CHAT_ID
+        user_id = message.from_user.id
+        logging.info(f"🔍 PrivateFilter: user_id={user_id}, MY_CHAT_ID={MY_CHAT_ID}")
+        return user_id == MY_CHAT_ID
 
 # ---------- ЛОГИРОВАНИЕ ----------
 logging.basicConfig(level=logging.INFO)
