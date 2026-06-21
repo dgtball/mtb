@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 6.2.1 (исправлен SSL и URL API Т-Инвестиций)
+# Версия: 6.2.2 (исправлен SSL и URL API Т-Инвестиций)
 # ==============================================
 
 import os
@@ -203,8 +203,9 @@ async def tinkoff_api_request(method: str, endpoint: str, params: dict = None) -
         return data
 
 async def get_accounts() -> list:
-    """Возвращает список счетов пользователя."""
-    data = await tinkoff_api_request("POST", "tinkoff.public.invest.api.contract.v1.UsersService/GetAccounts")
+    """Возвращает список активных счетов пользователя."""
+    params = {"status": "ACCOUNT_STATUS_OPEN"}  # обязательный параметр
+    data = await tinkoff_api_request("POST", "tinkoff.public.invest.api.contract.v1.UsersService/GetAccounts", params=params)
     return data.get("accounts", [])
 
 async def get_portfolio_data(account_id: str) -> dict:
@@ -221,7 +222,7 @@ async def get_portfolio_summary():
             logging.error("Нет доступных счетов")
             return None
         
-        # Берём первый счёт (можно доработать для выбора конкретного)
+        # Берём первый счёт
         account_id = accounts[0].get("id")
         if not account_id:
             logging.error("Не удалось получить account_id")
