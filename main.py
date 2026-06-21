@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 3.1.0 (Приватный режим)
+# Версия: 3.2.0 (Приватный режим, MY_CHAT_ID из окружения)
 # ==============================================
 
 import os
@@ -40,13 +40,19 @@ TINKOFF_TOKEN = os.getenv("TITN")
 if not TINKOFF_TOKEN:
     logging.warning("TITN не задан – команды портфеля будут недоступны")
 
+MY_CHAT_ID = os.getenv("MY_CHAT_ID")
+if not MY_CHAT_ID:
+    raise ValueError("MY_CHAT_ID не задан. Добавьте его в переменные окружения.")
+try:
+    MY_CHAT_ID = int(MY_CHAT_ID)
+except ValueError:
+    raise ValueError("MY_CHAT_ID должен быть числом (целым).")
+
 TOP_N = 10
 DATA_DIR = os.getenv('DATA_DIR', '/app/data')
 DB_PATH = os.path.join(DATA_DIR, 'favorites.db')
 
-# ---------- ПРИВАТНОСТЬ ----------
-MY_CHAT_ID = 123456789   # ← ЗАМЕНИ НА СВОЙ ID
-
+# ---------- ФИЛЬТР ДЛЯ ПРИВАТНОСТИ ----------
 class PrivateFilter(Filter):
     async def __call__(self, message: types.Message) -> bool:
         return message.from_user.id == MY_CHAT_ID
@@ -608,7 +614,7 @@ async def auto_update_task(chat_id: int, message_id: int):
             logging.error(f"Ошибка автообновления для чата {chat_id}: {e}")
             break
 
-# ---------- ОБРАБОТЧИКИ КОМАНД (с фильтром PrivateFilter) ----------
+# ---------- ОБРАБОТЧИКИ КОМАНД (ВСЕ С PrivateFilter) ----------
 @dp.message(Command("start"), PrivateFilter())
 async def cmd_start(message: types.Message):
     chat_id = message.chat.id
@@ -623,24 +629,6 @@ async def cmd_start(message: types.Message):
     except Exception as e:
         logging.error(f"❌ Ошибка в /start: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка при запуске: {e}")
-
-@dp.message(PrivateFilter())
-async def handle_all_messages(message: types.Message):
-    # Если пользователь не прошел фильтр, он не получит ни одной команды.
-    # Для чужих пользователей можно ответить один раз, чтобы они знали.
-    if message.from_user.id != MY_CHAT_ID:
-        await message.answer("⛔ Доступ запрещён. Этот бот предназначен только для владельца.")
-        return
-    # Далее идут обработчики для своих сообщений
-    # (они будут вызваны только если фильтр PrivateFilter пропустил)
-
-# Остальные обработчики кнопок и команд мы привяжем через PrivateFilter выше,
-# но для удобства можно сделать все через один фильтр, если использовать декораторы.
-# Однако проще всего применить фильтр ко всем обработчикам, кроме тех,
-# которые уже используют PrivateFilter.
-
-# Для этого мы можем использовать middleware, но проще явно указать фильтр в каждом обработчике.
-# Ниже я переопределю все обработчики с PrivateFilter.
 
 @dp.message(lambda msg: msg.text == "📌 Топ дня", PrivateFilter())
 async def top_day_button(message: types.Message):
