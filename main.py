@@ -1,6 +1,6 @@
 # ==============================================
-# БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ (без Т-Инвестиций)
-# Версия: 4.1.0 (условный импорт)
+# БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
+# Версия: 4.2 (REST API, без внешней библиотеки)
 # ==============================================
 
 import os
@@ -10,10 +10,13 @@ import asyncio
 import datetime
 import io
 import sqlite3
+from collections import defaultdict
 
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib.ticker import FuncFormatter
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command, Filter
@@ -26,24 +29,16 @@ import aiohttp
 import pandas as pd
 from tabulate import tabulate
 
-# ---------- ПРОВЕРКА НАЛИЧИЯ T-ИНВЕСТИЦИЙ ----------
-TINKOFF_AVAILABLE = False
-try:
-    from tinkoff.invest import Client
-    from tinkoff.invest.schemas import OperationType, InstrumentIdType, OperationState
-    TINKOFF_AVAILABLE = True
-    logging.info("✅ Модуль tinkoff-investments найден")
-except ImportError:
-    logging.warning("⚠️ Модуль tinkoff-investments НЕ установлен. Команды портфеля будут недоступны.")
-
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
 
+TINKOFF_TOKEN = os.getenv("TITN")   # Токен Т-Инвестиций (read-only)
+
 MY_CHAT_ID = os.getenv("MY_CHAT_ID")
 if not MY_CHAT_ID:
-    raise ValueError("MY_CHAT_ID не задан")
+    raise ValueError("MY_CHAT_ID не задан. Добавьте его в переменные окружения.")
 try:
     MY_CHAT_ID = int(MY_CHAT_ID)
 except ValueError:
@@ -53,6 +48,8 @@ TOP_N = 10
 DATA_DIR = os.getenv('DATA_DIR', '/app/data')
 DB_PATH = os.path.join(DATA_DIR, 'favorites.db')
 PORT = int(os.getenv('PORT', 3000))
+
+TINKOFF_API_URL = "https://api-invest.tinkoff.ru/openapi/"
 
 # ---------- ФИЛЬТР ПРИВАТНОСТИ ----------
 class PrivateFilter(Filter):
@@ -81,8 +78,8 @@ def main_keyboard():
         [KeyboardButton(text="⭐ Избранные")],
         [KeyboardButton(text="✅ Добавить тикер"), KeyboardButton(text="❌ Удалить тикер")],
     ]
-    # Если библиотека доступна, добавляем кнопки портфеля
-    if TINKOFF_AVAILABLE:
+    # Если токен задан, добавляем кнопки портфеля
+    if TINKOFF_TOKEN:
         kb.insert(3, [KeyboardButton(text="📈 Портфель"), KeyboardButton(text="📊 График покупок")])
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=False)
 
@@ -189,6 +186,126 @@ def get_month_name_ru(month_num):
         9: "Сентября", 10: "Октября", 11: "Ноября", 12: "Декабря"
     }
     return months.get(month_num, str(month_num))
+
+# ---------- ФУНКЦИИ ДЛЯ РАБОТЫ С API Т-ИНВЕСТИЦИЙ (REST) ----------
+async def tinkoff_api_request(method: str, endpoint: str, params: dict = None) -> dict:
+    """
+    Выполняет запрос к API Т-Инвестиций.
+    Возвращает словарь с данными ответа или выбрасывает исключение.
+    """
+    if not TINKOFF_TOKEN:
+        raise ValueError("Токен TITN не задан")
+    url = f"{TINKOFF_API_URL}{endpoint}"
+    headers = {
+        "Authorization": f"Bearer {TINKOFF_TOKEN}",
+        "Accept": "application/json"
+    }
+    async with http_session.get(url, headers=headers, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+        if resp.status != 200:
+            text = await resp.text()
+            logging.error(f"Ошибка API Т-Инвестиций: {resp.status} - {text}")
+            raise Exception(f"API вернул ошибку {resp.status}: {text}")
+        data = await resp.json()
+        if data.get("status") != "Ok":
+            raise Exception(f"API вернул ошибку: {data.get('message', 'Неизвестная ошибка')}")
+        return data.get("payload", {})
+
+async def get_portfolio_data() -> dict:
+    """Возвращает данные портфеля."""
+    payload = await tinkoff_api_request("GET", "portfolio")
+    return payload
+
+async def get_operations(from_date: datetime.date, to_date: datetime.date) -> list:
+    """Возвращает список операций за период."""
+    params = {
+        "from": from_date.strftime("%Y-%m-%d"),
+        "to": to_date.strftime("%Y-%m-%d")
+    }
+    payload = await tinkoff_api_request("GET", "operations", params=params)
+    return payload.get("operations", [])
+
+async def get_portfolio_summary():
+    """Возвращает структурированные данные портфеля для вывода."""
+    try:
+        data = await get_portfolio_data()
+        positions = data.get("positions", [])
+        total = data.get("totalAmount", {}).get("value", 0)
+        total_currency = data.get("totalAmount", {}).get("currency", "RUB")
+        result = {
+            "total_amount": total,
+            "currency": total_currency,
+            "positions": []
+        }
+        for pos in positions:
+            # Извлекаем нужные поля
+            figi = pos.get("figi")
+            ticker = pos.get("ticker") or figi
+            name = pos.get("name") or ticker
+            quantity = pos.get("quantity", {}).get("value", 0) if isinstance(pos.get("quantity"), dict) else pos.get("quantity", 0)
+            current_price = pos.get("currentPrice", {}).get("value", 0) if isinstance(pos.get("currentPrice"), dict) else pos.get("currentPrice", 0)
+            average_price = pos.get("averagePositionPrice", {}).get("value", 0) if isinstance(pos.get("averagePositionPrice"), dict) else pos.get("averagePositionPrice", 0)
+            expected_yield = pos.get("expectedYield", {}).get("value", 0) if isinstance(pos.get("expectedYield"), dict) else pos.get("expectedYield", 0)
+            result["positions"].append({
+                "figi": figi,
+                "ticker": ticker,
+                "name": name,
+                "quantity": quantity,
+                "current_price": current_price,
+                "average_price": average_price,
+                "expected_yield": expected_yield
+            })
+        return result
+    except Exception as e:
+        logging.error(f"Ошибка получения портфеля: {e}")
+        return None
+
+async def build_purchases_chart() -> io.BytesIO:
+    """Строит график покупок за текущий месяц."""
+    now = get_moscow_time()
+    from_date = now.date().replace(day=1)
+    to_date = now.date()
+    try:
+        operations = await get_operations(from_date, to_date)
+        if not operations:
+            return None
+        # Фильтруем покупки (BUY)
+        buys = [op for op in operations if op.get("operationType") == "BUY"]
+        if not buys:
+            return None
+        # Группируем по дням
+        day_amounts = defaultdict(float)
+        for op in buys:
+            # Дата операции (время московское)
+            dt = datetime.datetime.fromisoformat(op["date"]).astimezone(datetime.timezone(datetime.timedelta(hours=3)))
+            day_key = dt.date()
+            # Сумма платежа (payment) – отрицательная для покупок, берём модуль
+            payment = abs(op.get("payment", {}).get("value", 0))
+            day_amounts[day_key] += payment
+        if not day_amounts:
+            return None
+        sorted_days = sorted(day_amounts.items())
+        dates = [d[0] for d in sorted_days]
+        amounts = [d[1] for d in sorted_days]
+        # Строим график
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.bar(dates, amounts, width=0.6, color='green', alpha=0.7)
+        ax.set_title(f"Покупки за {from_date.strftime('%B %Y')}", fontsize=14)
+        ax.set_xlabel("Дата")
+        ax.set_ylabel("Сумма покупок (₽)")
+        ax.grid(axis='y', linestyle='--', alpha=0.7)
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%d'))
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=2))
+        plt.xticks(rotation=45)
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{int(x):,} ₽'))
+        fig.tight_layout()
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight')
+        buf.seek(0)
+        plt.close()
+        return buf
+    except Exception as e:
+        logging.error(f"Ошибка построения графика покупок: {e}")
+        return None
 
 # ---------- ЗАПРОСЫ К MOEX ----------
 async def get_all_shares():
@@ -539,7 +656,7 @@ async def cmd_start(message: types.Message):
     auto_update_enabled[chat_id] = True
     try:
         await message.answer(
-            "👋 Привет! Я бот для отслеживания топ-акций Мосбиржи.\n\n"
+            "👋 Привет! Я бот для отслеживания топ-акций Мосбиржи и вашего портфеля Т-Инвестиций.\n\n"
             "Используйте кнопки ниже для навигации.",
             reply_markup=main_keyboard()
         )
@@ -658,30 +775,58 @@ async def process_refresh(callback: CallbackQuery):
         logging.error(f"❌ Ошибка обновления: {e}", exc_info=True)
         await callback.message.answer(f"❌ Ошибка обновления: {e}")
 
-# ---------- КОМАНДЫ ПОРТФЕЛЯ (ЕСЛИ БИБЛИОТЕКА ДОСТУПНА) ----------
-if TINKOFF_AVAILABLE:
-    # Здесь можно разместить функции для работы с портфелем через SDK
-    # Но пока мы их оставим заглушками, чтобы не было ошибок
-    @dp.message(lambda msg: msg.text == "📈 Портфель", PrivateFilter())
-    async def portfolio_button(message: types.Message):
-        await message.answer("📈 Функция портфеля временно недоступна. Ведутся работы по интеграции с API Т-Инвестиций без использования устаревшей библиотеки.")
+# ---------- КОМАНДЫ ПОРТФЕЛЯ (REST API) ----------
+@dp.message(lambda msg: msg.text == "📈 Портфель", PrivateFilter())
+@dp.message(Command("portfolio"), PrivateFilter())
+async def cmd_portfolio(message: types.Message):
+    if not TINKOFF_TOKEN:
+        await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
+        return
+    loading_msg = await message.answer("⏳ Загружаю данные портфеля...")
+    try:
+        data = await get_portfolio_summary()
+        if not data:
+            await loading_msg.delete()
+            await message.answer("❌ Не удалось получить данные портфеля.")
+            return
+        text = f"📊 *Портфель*\n"
+        text += f"💰 Сумма: {data['total_amount']:.2f} {data['currency']}\n\n"
+        if not data["positions"]:
+            text += "Позиций нет."
+        else:
+            text += "📈 *Позиции:*\n"
+            for pos in data["positions"]:
+                yield_pct = (pos["expected_yield"] / (pos["average_price"] * pos["quantity"]) * 100) if pos["average_price"] and pos["quantity"] else 0
+                text += f"• {pos['name']} ({pos['ticker']}) : {pos['quantity']} шт., {pos['current_price']:.2f} ₽, доходность {yield_pct:+.2f}%\n"
+        await message.answer(text, parse_mode="Markdown")
+        await loading_msg.delete()
+    except Exception as e:
+        await loading_msg.delete()
+        logging.error(f"Ошибка портфеля: {e}")
+        await message.answer(f"❌ Ошибка: {e}")
 
-    @dp.message(lambda msg: msg.text == "📊 График покупок", PrivateFilter())
-    async def buys_chart_button(message: types.Message):
-        await message.answer("📊 Функция графика покупок временно недоступна. Ведутся работы по интеграции с API Т-Инвестиций без использования устаревшей библиотеки.")
-
-    @dp.message(Command("portfolio"), PrivateFilter())
-    async def cmd_portfolio(message: types.Message):
-        await portfolio_button(message)
-
-    @dp.message(Command("buys"), PrivateFilter())
-    async def cmd_buys(message: types.Message):
-        await buys_chart_button(message)
-else:
-    # Если библиотека не установлена, команды портфеля показывают ошибку
-    @dp.message(lambda msg: msg.text in ("📈 Портфель", "📊 График покупок"), PrivateFilter())
-    async def portfolio_not_available(message: types.Message):
-        await message.answer("❌ Функция портфеля недоступна, так как библиотека tinkoff-investments не установлена. Скоро будет реализована через REST API.")
+@dp.message(lambda msg: msg.text == "📊 График покупок", PrivateFilter())
+@dp.message(Command("buys"), PrivateFilter())
+async def cmd_buys(message: types.Message):
+    if not TINKOFF_TOKEN:
+        await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
+        return
+    loading_msg = await message.answer("⏳ Строю график покупок за месяц...")
+    try:
+        chart_buf = await build_purchases_chart()
+        if chart_buf is None:
+            await loading_msg.delete()
+            await message.answer("❌ Не удалось построить график покупок. Возможно, за месяц не было покупок или ошибка API.")
+            return
+        await message.answer_photo(
+            photo=BufferedInputFile(chart_buf.getvalue(), filename="purchases.png"),
+            caption=f"📊 Покупки за {get_moscow_time().strftime('%B %Y')}"
+        )
+        await loading_msg.delete()
+    except Exception as e:
+        await loading_msg.delete()
+        logging.error(f"Ошибка графика покупок: {e}")
+        await message.answer(f"❌ Ошибка: {e}")
 
 # ---------- ЗАПУСК (POLLING + HEALTH-SERVER) ----------
 async def health_handler(request):
