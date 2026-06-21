@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 6.5 (таблица портфеля, дивиденды, чистый чат)
+# Версия: 6.6 (портфель → картинка, группировка по типам)
 # ==============================================
 
 import os
@@ -17,6 +17,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.ticker import FuncFormatter
+from matplotlib.patches import Patch
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -105,6 +106,7 @@ async def safe_delete_message(chat_id: int, message_id: int):
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    # Таблица избранного
     c.execute('''CREATE TABLE IF NOT EXISTS favorites
                  (chat_id INTEGER, ticker TEXT, 
                   PRIMARY KEY (chat_id, ticker))''')
@@ -244,57 +246,160 @@ async def get_portfolio_summary():
         account_id = accounts[0].get("id")
         if not account_id:
             return None
-        
+
         data = await get_portfolio_data(account_id)
         positions = data.get("positions", [])
         total_amount = data.get("totalAmountPortfolio", {})
         total = float(total_amount.get("units", 0))
         total_currency = total_amount.get("currency", "RUB")
-        
+
+        # Расчёт затраченной суммы (средняя цена * количество)
+        total_cost = 0.0
+        for pos in positions:
+            quantity = float(pos.get("quantity", {}).get("units", 0))
+            avg_price = float(pos.get("averagePositionPrice", {}).get("units", 0))
+            total_cost += quantity * avg_price
+
+        # Доходность портфеля
+        if total_cost > 0:
+            total_yield_pct = (total - total_cost) / total_cost * 100
+        else:
+            total_yield_pct = 0.0
+
         result = {
             "total_amount": total,
             "currency": total_currency,
+            "total_cost": total_cost,
+            "total_yield_pct": total_yield_pct,
             "positions": [],
             "expected_dividends": float(data.get("expectedDividends", 0))
         }
-        
-        total_value = 0.0
-        for pos in positions:
-            quantity = float(pos.get("quantity", {}).get("units", 0))
-            price = float(pos.get("currentPrice", {}).get("units", 0))
-            total_value += quantity * price
-        
+
+        # Собираем позиции с типами
         for pos in positions:
             figi = pos.get("figi")
             ticker = pos.get("ticker") or figi
             name = pos.get("name") or ticker
+            instrument_type = pos.get("instrumentType", "unknown")
             quantity = float(pos.get("quantity", {}).get("units", 0))
             price = float(pos.get("currentPrice", {}).get("units", 0))
             avg_price = float(pos.get("averagePositionPrice", {}).get("units", 0))
             expected_yield = float(pos.get("expectedYield", {}).get("units", 0))
             currency = pos.get("currentPrice", {}).get("currency", "RUB")
             current_value = quantity * price
-            share = (current_value / total_value * 100) if total_value > 0 else 0
             dividends = float(pos.get("expectedDividend", 0))
-            
+
             result["positions"].append({
                 "figi": figi,
                 "ticker": ticker,
                 "name": name,
+                "instrument_type": instrument_type,
                 "quantity": quantity,
                 "price": price,
                 "avg_price": avg_price,
                 "expected_yield": expected_yield,
                 "currency": currency,
                 "current_value": current_value,
-                "share": share,
                 "dividends": dividends
             })
-        
+
         return result
     except Exception as e:
         logging.error(f"Ошибка получения портфеля: {e}")
         return None
+
+# ---------- ГЕНЕРАЦИЯ КАРТИНКИ ПОРТФЕЛЯ ----------
+def generate_portfolio_image(portfolio_data) -> io.BytesIO:
+    if not portfolio_data or not portfolio_data["positions"]:
+        return None
+
+    # Группировка по типу инструмента
+    groups = defaultdict(list)
+    for pos in portfolio_data["positions"]:
+        # Приводим тип к человеческому виду
+        type_map = {
+            "INSTRUMENT_TYPE_SHARE": "Акции",
+            "INSTRUMENT_TYPE_BOND": "Облигации",
+            "INSTRUMENT_TYPE_ETF": "Фонды",
+            "INSTRUMENT_TYPE_CURRENCY": "Валюта",
+        }
+        raw_type = pos["instrument_type"]
+        group_name = type_map.get(raw_type, raw_type)
+        groups[group_name].append(pos)
+
+    # Определяем порядок: Акции, Облигации, Фонды, остальное
+    order = ["Акции", "Облигации", "Фонды"]
+    ordered_groups = []
+    for key in order:
+        if key in groups:
+            ordered_groups.append((key, groups.pop(key)))
+    # Добавляем оставшиеся группы
+    for key, vals in groups.items():
+        ordered_groups.append((key, vals))
+
+    # Создаём фигуру с динамической высотой
+    rows = sum(len(v) for _, v in ordered_groups) + len(ordered_groups) * 2  # + заголовки групп
+    height = max(4, rows * 0.35 + 2)
+    fig, ax = plt.subplots(figsize=(8, height))
+    ax.axis('off')
+
+    # Заголовок
+    total_amount = portfolio_data["total_amount"]
+    total_yield = portfolio_data["total_yield_pct"]
+    title = f"Портфель\nСумма: {total_amount:.2f} ₽   Доходность: {total_yield:+.2f}%"
+    ax.text(0.5, 0.98, title, fontsize=14, fontweight='bold', ha='center', va='top', transform=ax.transAxes)
+
+    # Таблица
+    table_data = []
+    col_labels = ["Название", "Кол-во", "Цена", "Доходность"]
+    for group_name, positions in ordered_groups:
+        # Заголовок группы
+        table_data.append([f"__{group_name}__", "", "", ""])  # маркер для жирного шрифта
+        for pos in positions:
+            # Название: если есть реальное имя, используем его, иначе тикер
+            if pos["name"] and pos["name"] != pos["ticker"]:
+                name = pos["name"]
+            else:
+                name = pos["ticker"]
+            # Доходность позиции
+            if pos["avg_price"] and pos["quantity"]:
+                yield_pct = (pos["expected_yield"] / (pos["avg_price"] * pos["quantity"]) * 100)
+            else:
+                yield_pct = 0.0
+            table_data.append([
+                name,
+                f"{pos['quantity']:.0f}",
+                f"{pos['price']:.2f}",
+                f"{yield_pct:+.2f}%"
+            ])
+
+    # Создаём таблицу с ячейками
+    table = ax.table(cellText=table_data, colLabels=col_labels, loc='center', cellLoc='center', colColours=['#f0f0f0']*4)
+    table.auto_set_font_size(False)
+    table.set_fontsize(9)
+    table.scale(1, 1.5)
+
+    # Выделяем заголовки групп жирным шрифтом
+    for i, row in enumerate(table_data):
+        if row[0].startswith("__") and row[0].endswith("__"):
+            # Это заголовок группы
+            for j in range(4):
+                cell = table[(i+1, j)]
+                cell.set_text_props(fontweight='bold', fontsize=10)
+                cell.set_facecolor('#e0e0e0')
+            # Очищаем текст от маркеров
+            cell = table[(i+1, 0)]
+            cell.get_text().set_text(row[0][2:-2])
+
+    # Настройка внешнего вида
+    ax.set_title("", fontsize=12)
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=120)
+    buf.seek(0)
+    plt.close()
+    return buf
 
 # ---------- ЗАПРОСЫ К MOEX ----------
 async def get_all_shares():
@@ -515,7 +620,7 @@ def format_historical_table(gainers, losers, period, from_date_dt, till_date_dt)
     text += build_table_universal(losers, "📉 Падение", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
     return text
 
-# ---------- ГЕНЕРАЦИЯ КАРТИНКИ ----------
+# ---------- ГЕНЕРАЦИЯ КАРТИНКИ ИЗБРАННОГО ----------
 def generate_favorites_image(fav_df) -> io.BytesIO:
     if fav_df.empty:
         return None
@@ -671,38 +776,15 @@ async def handle_buttons_and_commands(message: types.Message):
                 await message.answer("❌ Не удалось получить данные портфеля.")
                 await safe_delete_message(message.chat.id, message.message_id)
                 return
-            # Формируем таблицу
-            headers = ["Название", "ШТ", "Цена", "Стоимость", "Доходность", "Доля", "Дивиденды"]
-            table_data = []
-            for pos in data["positions"]:
-                # Название: если есть real name, используем его, иначе тикер
-                if pos["name"] and pos["name"] != pos["ticker"]:
-                    name = pos["name"]
-                else:
-                    name = pos["ticker"]
-                # Доходность в процентах
-                if pos["avg_price"] and pos["quantity"]:
-                    yield_pct = (pos["expected_yield"] / (pos["avg_price"] * pos["quantity"]) * 100)
-                else:
-                    yield_pct = 0.0
-                table_data.append([
-                    name,
-                    f"{pos['quantity']:.0f}",
-                    f"{pos['price']:.2f}",
-                    f"{pos['current_value']:.2f}",
-                    f"{yield_pct:+.2f}%",
-                    f"{pos['share']:.1f}%",
-                    f"{pos['dividends']:.2f}" if pos['dividends'] else "—"
-                ])
-            table = tabulate(table_data, headers=headers, tablefmt="simple", numalign="right", stralign="left")
-            # Заголовок
-            header_text = f"📊 *Портфель*\n"
-            header_text += f"💰 Сумма: {data['total_amount']:.2f} ₽\n"
-            if data.get("expected_dividends"):
-                header_text += f"💵 Ожидаемые дивиденды всего: {data['expected_dividends']:.2f} ₽\n"
-            header_text += "\n"
-            response_text = header_text + f"<pre>{table}</pre>"
-            await message.answer(response_text, parse_mode="HTML")
+            img_buf = generate_portfolio_image(data)
+            if img_buf is None:
+                await loading_msg.delete()
+                await message.answer("Нет данных для отображения.")
+                await safe_delete_message(message.chat.id, message.message_id)
+                return
+            await message.answer_photo(
+                photo=BufferedInputFile(img_buf.getvalue(), filename="portfolio.png")
+            )
             await loading_msg.delete()
             await safe_delete_message(message.chat.id, message.message_id)
         except Exception as e:
@@ -769,35 +851,15 @@ async def handle_buttons_and_commands(message: types.Message):
                 await message.answer("❌ Не удалось получить данные портфеля.")
                 await safe_delete_message(message.chat.id, message.message_id)
                 return
-            # Формируем таблицу
-            headers = ["Название", "ШТ", "Цена", "Стоимость", "Доходность", "Доля", "Дивиденды"]
-            table_data = []
-            for pos in data["positions"]:
-                if pos["name"] and pos["name"] != pos["ticker"]:
-                    name = pos["name"]
-                else:
-                    name = pos["ticker"]
-                if pos["avg_price"] and pos["quantity"]:
-                    yield_pct = (pos["expected_yield"] / (pos["avg_price"] * pos["quantity"]) * 100)
-                else:
-                    yield_pct = 0.0
-                table_data.append([
-                    name,
-                    f"{pos['quantity']:.0f}",
-                    f"{pos['price']:.2f}",
-                    f"{pos['current_value']:.2f}",
-                    f"{yield_pct:+.2f}%",
-                    f"{pos['share']:.1f}%",
-                    f"{pos['dividends']:.2f}" if pos['dividends'] else "—"
-                ])
-            table = tabulate(table_data, headers=headers, tablefmt="simple", numalign="right", stralign="left")
-            header_text = f"📊 *Портфель*\n"
-            header_text += f"💰 Сумма: {data['total_amount']:.2f} ₽\n"
-            if data.get("expected_dividends"):
-                header_text += f"💵 Ожидаемые дивиденды всего: {data['expected_dividends']:.2f} ₽\n"
-            header_text += "\n"
-            response_text = header_text + f"<pre>{table}</pre>"
-            await message.answer(response_text, parse_mode="HTML")
+            img_buf = generate_portfolio_image(data)
+            if img_buf is None:
+                await loading_msg.delete()
+                await message.answer("Нет данных для отображения.")
+                await safe_delete_message(message.chat.id, message.message_id)
+                return
+            await message.answer_photo(
+                photo=BufferedInputFile(img_buf.getvalue(), filename="portfolio.png")
+            )
             await loading_msg.delete()
             await safe_delete_message(message.chat.id, message.message_id)
         except Exception as e:
