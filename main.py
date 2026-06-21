@@ -27,9 +27,13 @@ API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
 
-BASE_URL = os.getenv("RENDER_EXTERNAL_URL")
+# На Bothost URL бота выдаётся автоматически, но можно задать вручную
+BASE_URL = os.getenv("BASE_URL")  # например, https://ваш-бот.bothost.ru
 if not BASE_URL:
-    raise ValueError("RENDER_EXTERNAL_URL не задан")
+    # Если не задан, попробуем определить из переменной окружения Bothost
+    BASE_URL = os.getenv("BOTHOST_APP_URL")
+    if not BASE_URL:
+        raise ValueError("BASE_URL не задан. Укажите его в переменных окружения.")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -38,7 +42,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 TOP_N = 10
 WEBHOOK_PATH = "/webhook"
-WEBHOOK_PORT = int(os.getenv("PORT", 10000))
+WEBHOOK_PORT = int(os.getenv("PORT", 8000))  # Bothost обычно даёт 8000
 
 # ---------- ЛОГИРОВАНИЕ ----------
 logging.basicConfig(level=logging.INFO)
@@ -55,9 +59,9 @@ last_messages = {}       # chat_id -> message_id
 update_tasks = {}        # chat_id -> asyncio.Task
 auto_update_enabled = {} # chat_id -> True/False
 user_state = {}          # chat_id -> 'add' / 'remove'
-http_session = None      # единая aiohttp сессия
+http_session = None
 
-# ---------- КЛАВИАТУРА (ОБНОВЛЁННАЯ) ----------
+# ---------- КЛАВИАТУРА ----------
 def main_keyboard():
     kb = [
         [KeyboardButton(text="📌 Топ дня")],
@@ -114,7 +118,7 @@ def get_moscow_time():
     return datetime.datetime.now(datetime.timezone.utc).astimezone(datetime.timezone(datetime.timedelta(hours=3)))
 
 def get_local_time():
-    """Возвращает текущее время в часовом поясе UTC+4 (ваш локальный)."""
+    """Ваш часовой пояс UTC+4."""
     return datetime.datetime.now(datetime.timezone.utc).astimezone(datetime.timezone(datetime.timedelta(hours=4)))
 
 def is_weekend():
@@ -122,10 +126,6 @@ def is_weekend():
     return now.weekday() in (5, 6)
 
 def get_session_status():
-    """
-    Определяет текущую торговую сессию по московскому времени.
-    Возвращает строку для заголовка.
-    """
     now = get_moscow_time()
     if is_weekend():
         if (now.hour > 9 or (now.hour == 9 and now.minute >= 50)) and (now.hour < 18 or (now.hour == 18 and now.minute <= 59)):
@@ -424,7 +424,6 @@ async def send_top(message: types.Message, period: str = 'day'):
             session_status = get_session_status()
             update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
             text = format_historical_table(gainers, losers, period_name, from_date, till_date)
-            # Для исторических таблиц добавляем сверху информацию о сессии (необязательно)
             text = f"📊 {session_status}\n🕒 {update_time}\n\n" + text
 
         keyboard = InlineKeyboardMarkup(
@@ -593,7 +592,7 @@ async def process_refresh(callback: CallbackQuery):
         logging.error(f"❌ Ошибка обновления: {e}", exc_info=True)
         await callback.message.answer(f"❌ Ошибка обновления: {e}")
 
-# ---------- ЗАПУСК ВЕБХУКА ЧЕРЕЗ AIOHTTP ----------
+# ---------- ЗАПУСК ВЕБХУКА ЧЕРЕЗ AIOHTTP (для Bothost) ----------
 async def on_startup(app: web.Application):
     global http_session
     http_session = aiohttp.ClientSession()
@@ -622,13 +621,13 @@ async def on_shutdown(app: web.Application):
 def main():
     app = web.Application()
 
-    # ---- ОБРАБОТЧИК GET (чтобы не было 405) ----
+    # Обработчик GET для проверки доступности
     async def webhook_get(request):
         return web.Response(text="Webhook is ready", status=200)
 
     app.router.add_get(WEBHOOK_PATH, webhook_get)
 
-    # ---- ОСНОВНЫЙ ОБРАБОТЧИК (POST) ----
+    # Основной обработчик POST
     handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
     handler.register(app, path=WEBHOOK_PATH)
 
