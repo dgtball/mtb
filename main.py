@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ
-# Версия: 1.2.0 (Bothost)
+# Версия: 2.0.0 (Bothost Basic + SQLite + Polling)
 # ==============================================
 
 import os
@@ -9,6 +9,7 @@ import time
 import asyncio
 import datetime
 import io
+import sqlite3
 
 import matplotlib
 matplotlib.use('Agg')
@@ -20,40 +21,21 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
     ReplyKeyboardMarkup, KeyboardButton, BufferedInputFile
 )
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler
-from aiohttp import web
 import aiohttp
 import pandas as pd
 from tabulate import tabulate
-from supabase import create_client, Client
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
 
-# Автоматическое определение BASE_URL
-BASE_URL = (
-    os.getenv("BASE_URL") or
-    os.getenv("BOTHOST_APP_URL") or
-    "https://moexbot.bothost.ru"   # ← если ничего не задано, используем это
-)
-logging.info(f"BASE_URL = {BASE_URL}")
-
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("SUPABASE_URL и SUPABASE_KEY должны быть заданы")
-
 TOP_N = 10
-WEBHOOK_PATH = "/webhook"
-WEBHOOK_PORT = int(os.getenv("PORT", 3000))   # Bothost даёт 3000
+DATA_DIR = os.getenv('DATA_DIR', '/app/data')
+DB_PATH = os.path.join(DATA_DIR, 'favorites.db')
 
 # ---------- ЛОГИРОВАНИЕ ----------
 logging.basicConfig(level=logging.INFO)
-
-# ---------- ИНИЦИАЛИЗАЦИЯ SUPABASE ----------
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ---------- ИНИЦИАЛИЗАЦИЯ БОТА ----------
 bot = Bot(token=API_TOKEN)
@@ -83,39 +65,55 @@ async def safe_delete_message(chat_id: int, message_id: int):
     except Exception as e:
         logging.warning(f"Не удалось удалить сообщение {message_id}: {e}")
 
-# ---------- РАБОТА С БАЗОЙ ДАННЫХ (SUPABASE) ----------
+# ---------- РАБОТА С БАЗОЙ ДАННЫХ (SQLite) ----------
+def init_db():
+    """Создаёт таблицу favorites, если её нет."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS favorites
+                 (chat_id INTEGER, ticker TEXT, 
+                  PRIMARY KEY (chat_id, ticker))''')
+    conn.commit()
+    conn.close()
+    logging.info(f"✅ База данных инициализирована: {DB_PATH}")
+
 def add_favorite(chat_id: int, ticker: str) -> bool:
     try:
-        supabase.table("favorites").insert({
-            "chat_id": chat_id,
-            "ticker": ticker.upper()
-        }).execute()
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("INSERT INTO favorites (chat_id, ticker) VALUES (?, ?)", (chat_id, ticker.upper()))
+        conn.commit()
+        conn.close()
         return True
+    except sqlite3.IntegrityError:
+        return False
     except Exception as e:
-        logging.error(f"Ошибка добавления в Supabase: {e}")
+        logging.error(f"Ошибка добавления в SQLite: {e}")
         return False
 
 def remove_favorite(chat_id: int, ticker: str) -> bool:
     try:
-        result = supabase.table("favorites")\
-            .delete()\
-            .eq("chat_id", chat_id)\
-            .eq("ticker", ticker.upper())\
-            .execute()
-        return len(result.data) > 0
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("DELETE FROM favorites WHERE chat_id = ? AND ticker = ?", (chat_id, ticker.upper()))
+        conn.commit()
+        deleted = c.rowcount > 0
+        conn.close()
+        return deleted
     except Exception as e:
-        logging.error(f"Ошибка удаления из Supabase: {e}")
+        logging.error(f"Ошибка удаления из SQLite: {e}")
         return False
 
 def get_favorites(chat_id: int) -> list:
     try:
-        result = supabase.table("favorites")\
-            .select("ticker")\
-            .eq("chat_id", chat_id)\
-            .execute()
-        return [row["ticker"] for row in result.data]
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT ticker FROM favorites WHERE chat_id = ?", (chat_id,))
+        rows = c.fetchall()
+        conn.close()
+        return [row[0] for row in rows]
     except Exception as e:
-        logging.error(f"Ошибка получения избранного из Supabase: {e}")
+        logging.error(f"Ошибка получения избранного из SQLite: {e}")
         return []
 
 # ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
@@ -616,55 +614,26 @@ async def process_refresh(callback: CallbackQuery):
         logging.error(f"❌ Ошибка обновления: {e}", exc_info=True)
         await callback.message.answer(f"❌ Ошибка обновления: {e}")
 
-# ---------- ЗАПУСК ВЕБХУКА ----------
-async def on_startup(app: web.Application):
+# ---------- ЗАПУСК (POLLING) ----------
+async def main():
     global http_session
+    init_db()  # создаём таблицу, если её нет
     http_session = aiohttp.ClientSession()
-    logging.info("✅ HTTP сессия создана")
 
     try:
-        supabase.table("favorites").select("ticker").limit(1).execute()
-        logging.info("✅ Подключение к Supabase установлено")
+        # Удаляем вебхук (на случай, если он был установлен ранее)
+        await bot.delete_webhook(drop_pending_updates=True)
+        logging.info("✅ Вебхук удалён")
     except Exception as e:
-        logging.error(f"❌ Ошибка подключения к Supabase: {e}")
+        logging.warning(f"Не удалось удалить вебхук: {e}")
 
-    webhook_url = f"{BASE_URL}{WEBHOOK_PATH}"
-    # Несколько попыток установки вебхука
-    for attempt in range(3):
-        try:
-            await bot.set_webhook(webhook_url, drop_pending_updates=True)
-            logging.info(f"✅ Webhook установлен на {webhook_url} (попытка {attempt+1})")
-            break
-        except Exception as e:
-            logging.error(f"❌ Ошибка установки вебхука (попытка {attempt+1}): {e}")
-            await asyncio.sleep(2)
-
-async def on_shutdown(app: web.Application):
-    global http_session
-    logging.info("Завершение работы...")
-    for task in update_tasks.values():
-        if not task.done():
-            task.cancel()
-    await bot.delete_webhook()
-    if http_session:
-        await http_session.close()
-    logging.info("✅ Сессии закрыты")
-
-def main():
-    app = web.Application()
-
-    async def webhook_get(request):
-        return web.Response(text="Webhook is ready", status=200)
-
-    app.router.add_get(WEBHOOK_PATH, webhook_get)
-
-    handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
-    handler.register(app, path=WEBHOOK_PATH)
-
-    app.on_startup.append(on_startup)
-    app.on_shutdown.append(on_shutdown)
-
-    web.run_app(app, host="0.0.0.0", port=WEBHOOK_PORT)
+    logging.info("✅ Запускаем polling...")
+    try:
+        await dp.start_polling(bot)
+    finally:
+        if http_session:
+            await http_session.close()
+            logging.info("✅ HTTP сессия закрыта")
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
