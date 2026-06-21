@@ -1,3 +1,8 @@
+# ==============================================
+# Версия: 1.1.1
+# Дата: 21.06.2026
+# ==============================================
+
 import os
 import logging
 import time
@@ -28,11 +33,9 @@ API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
 
-# Для Bothost URL можно получить из переменной окружения BOTHOST_APP_URL или задать вручную
-BASE_URL = os.getenv("BASE_URL") or os.getenv("BOTHOST_APP_URL")
-if not BASE_URL:
-    # Если не задан, можно попробовать сгенерировать из имени бота, но лучше задать явно
-    raise ValueError("BASE_URL не задан. Укажите его в переменных окружения.")
+# BASE_URL – если не задан, используем значение по умолчанию для вашего бота
+BASE_URL = os.getenv("BASE_URL") or os.getenv("BOTHOST_APP_URL") or "https://mtb.bothost.ru"
+logging.info(f"BASE_URL = {BASE_URL}")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -150,11 +153,9 @@ def get_session_status():
             return "Биржа закрыта"
 
 def get_week_number(date):
-    """Возвращает номер недели в году (ISO) для заданной даты."""
     return date.isocalendar()[1]
 
 def get_month_name_ru(month_num):
-    """Возвращает название месяца на русском в родительном падеже (для "Топ Июня")."""
     months = {
         1: "Января", 2: "Февраля", 3: "Марта", 4: "Апреля",
         5: "Мая", 6: "Июня", 7: "Июля", 8: "Августа",
