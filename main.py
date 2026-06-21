@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 4.2 (REST API, без внешней библиотеки)
+# Версия: 4.3 (убраны inline-кнопки, новые заголовки)
 # ==============================================
 
 import os
@@ -54,9 +54,7 @@ TINKOFF_API_URL = "https://api-invest.tinkoff.ru/openapi/"
 # ---------- ФИЛЬТР ПРИВАТНОСТИ ----------
 class PrivateFilter(Filter):
     async def __call__(self, message: types.Message) -> bool:
-        user_id = message.from_user.id
-        logging.info(f"🔍 PrivateFilter: user_id={user_id}, MY_CHAT_ID={MY_CHAT_ID}")
-        return user_id == MY_CHAT_ID
+        return message.from_user.id == MY_CHAT_ID
 
 # ---------- ЛОГИРОВАНИЕ ----------
 logging.basicConfig(level=logging.INFO)
@@ -191,10 +189,6 @@ def get_month_name_ru(month_num):
 
 # ---------- ФУНКЦИИ ДЛЯ РАБОТЫ С API Т-ИНВЕСТИЦИЙ (REST) ----------
 async def tinkoff_api_request(method: str, endpoint: str, params: dict = None) -> dict:
-    """
-    Выполняет запрос к API Т-Инвестиций.
-    Возвращает словарь с данными ответа или выбрасывает исключение.
-    """
     if not TINKOFF_TOKEN:
         raise ValueError("Токен TITN не задан")
     url = f"{TINKOFF_API_URL}{endpoint}"
@@ -213,12 +207,10 @@ async def tinkoff_api_request(method: str, endpoint: str, params: dict = None) -
         return data.get("payload", {})
 
 async def get_portfolio_data() -> dict:
-    """Возвращает данные портфеля."""
     payload = await tinkoff_api_request("GET", "portfolio")
     return payload
 
 async def get_operations(from_date: datetime.date, to_date: datetime.date) -> list:
-    """Возвращает список операций за период."""
     params = {
         "from": from_date.strftime("%Y-%m-%d"),
         "to": to_date.strftime("%Y-%m-%d")
@@ -227,7 +219,6 @@ async def get_operations(from_date: datetime.date, to_date: datetime.date) -> li
     return payload.get("operations", [])
 
 async def get_portfolio_summary():
-    """Возвращает структурированные данные портфеля для вывода."""
     try:
         data = await get_portfolio_data()
         positions = data.get("positions", [])
@@ -239,7 +230,6 @@ async def get_portfolio_summary():
             "positions": []
         }
         for pos in positions:
-            # Извлекаем нужные поля
             figi = pos.get("figi")
             ticker = pos.get("ticker") or figi
             name = pos.get("name") or ticker
@@ -262,7 +252,6 @@ async def get_portfolio_summary():
         return None
 
 async def build_purchases_chart() -> io.BytesIO:
-    """Строит график покупок за текущий месяц."""
     now = get_moscow_time()
     from_date = now.date().replace(day=1)
     to_date = now.date()
@@ -270,17 +259,13 @@ async def build_purchases_chart() -> io.BytesIO:
         operations = await get_operations(from_date, to_date)
         if not operations:
             return None
-        # Фильтруем покупки (BUY)
         buys = [op for op in operations if op.get("operationType") == "BUY"]
         if not buys:
             return None
-        # Группируем по дням
         day_amounts = defaultdict(float)
         for op in buys:
-            # Дата операции (время московское)
             dt = datetime.datetime.fromisoformat(op["date"]).astimezone(datetime.timezone(datetime.timedelta(hours=3)))
             day_key = dt.date()
-            # Сумма платежа (payment) – отрицательная для покупок, берём модуль
             payment = abs(op.get("payment", {}).get("value", 0))
             day_amounts[day_key] += payment
         if not day_amounts:
@@ -288,7 +273,6 @@ async def build_purchases_chart() -> io.BytesIO:
         sorted_days = sorted(day_amounts.items())
         dates = [d[0] for d in sorted_days]
         amounts = [d[1] for d in sorted_days]
-        # Строим график
         fig, ax = plt.subplots(figsize=(10, 6))
         ax.bar(dates, amounts, width=0.6, color='green', alpha=0.7)
         ax.set_title(f"Покупки за {from_date.strftime('%B %Y')}", fontsize=14)
@@ -521,7 +505,7 @@ def format_historical_table(gainers, losers, period, from_date_dt, till_date_dt)
         period_str = f"📅 Период: {from_date_dt.strftime('%d/%m/%y')} – {till_date_dt.strftime('%d/%m/%y')}"
     else:
         month_name = get_month_name_ru(from_date_dt.month)
-        title = f"📅 Топ {month_name}"
+        title = f"🗓️ Топ {month_name}"
         period_str = f"📅 Период: {from_date_dt.strftime('%d/%m/%y')} – {till_date_dt.strftime('%d/%m/%y')}"
     text = f"{title}\n{period_str}\n\n"
     text += build_table_universal(gainers, "📈 Рост", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
@@ -611,12 +595,8 @@ async def send_top(message: types.Message, period: str = 'day'):
             losers = changes.nsmallest(TOP_N, 'CHANGE_PCT')
             text = format_historical_table(gainers, losers, period_name_short, from_date, till_date)
 
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
-            ]
-        )
-        sent_msg = await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+        # Убраны inline-кнопки
+        sent_msg = await message.answer(text, parse_mode="HTML")
         chat_id = message.chat.id
         last_messages[chat_id] = sent_msg.message_id
         if period == 'day' and auto_update_enabled.get(chat_id, False):
@@ -641,12 +621,7 @@ async def auto_update_task(chat_id: int, message_id: int):
             session_status = get_session_status()
             update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
             text = format_message(gainers, losers, index_val, update_time, session_status)
-            keyboard = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
-                ]
-            )
-            await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, parse_mode="HTML", reply_markup=keyboard)
+            await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, parse_mode="HTML")
         except Exception as e:
             logging.error(f"Ошибка автообновления для чата {chat_id}: {e}")
             break
@@ -723,6 +698,9 @@ async def remove_ticker_button(message: types.Message):
 
 @dp.message(PrivateFilter())
 async def handle_text(message: types.Message):
+    # Пропускаем команды (начинаются с "/")
+    if message.text and message.text.startswith('/'):
+        return
     chat_id = message.chat.id
     if chat_id in user_state:
         state = user_state[chat_id]
@@ -748,39 +726,13 @@ async def handle_text(message: types.Message):
         await message.answer("Используйте кнопки меню.", reply_markup=main_keyboard())
         await safe_delete_message(chat_id, message.message_id)
 
-@dp.callback_query(lambda c: c.data == "refresh", PrivateFilter())
-async def process_refresh(callback: CallbackQuery):
-    try:
-        await callback.answer("Обновляю...", cache_time=0)
-    except Exception:
-        pass
-    try:
-        shares_df = await get_all_shares()
-        gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
-        if gainers.empty and losers.empty:
-            session_status = get_session_status()
-            await callback.message.answer(f"📊 {session_status}\nДанные обновятся в рабочее время.")
-            return
-        index_val = await get_moex_index()
-        session_status = get_session_status()
-        update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
-        text = format_message(gainers, losers, index_val, update_time, session_status)
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
-            ]
-        )
-        chat_id = callback.message.chat.id
-        last_messages[chat_id] = callback.message.message_id
-        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
-    except Exception as e:
-        logging.error(f"❌ Ошибка обновления: {e}", exc_info=True)
-        await callback.message.answer(f"❌ Ошибка обновления: {e}")
-
 # ---------- КОМАНДЫ ПОРТФЕЛЯ (REST API) ----------
-@dp.message(lambda msg: msg.text == "📈 Портфель", PrivateFilter())
-@dp.message(Command("portfolio"), PrivateFilter())
+@dp.message(Command("portfolio"))
+@dp.message(lambda msg: msg.text == "📈 Портфель")
 async def cmd_portfolio(message: types.Message):
+    if message.from_user.id != MY_CHAT_ID:
+        await message.answer("⛔ Доступ запрещён.")
+        return
     if not TINKOFF_TOKEN:
         await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
         return
@@ -807,9 +759,12 @@ async def cmd_portfolio(message: types.Message):
         logging.error(f"Ошибка портфеля: {e}")
         await message.answer(f"❌ Ошибка: {e}")
 
-@dp.message(lambda msg: msg.text == "📊 График покупок", PrivateFilter())
-@dp.message(Command("buys"), PrivateFilter())
+@dp.message(Command("buys"))
+@dp.message(lambda msg: msg.text == "📊 График покупок")
 async def cmd_buys(message: types.Message):
+    if message.from_user.id != MY_CHAT_ID:
+        await message.answer("⛔ Доступ запрещён.")
+        return
     if not TINKOFF_TOKEN:
         await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
         return
