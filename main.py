@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 8.6 (индекс из CURRENTVALUE)
+# Версия: 8.7 (исправлена фильтрация акций)
 # ==============================================
 
 import os
@@ -34,7 +34,7 @@ import plotly.io as pio
 pio.kaleido.scope.default_format = "png"
 
 # ---------- ВЕРСИЯ ----------
-VERSION = "8.6"
+VERSION = "8.7"
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -309,9 +309,10 @@ async def get_market_data():
                 sec_columns = json_data['securities']['columns']
                 sec_rows = json_data['securities']['data']
                 sec_df = pd.DataFrame(sec_rows, columns=sec_columns)
-                available_cols = ['SECID', 'SHORTNAME', 'LISTLEVEL', 'SECTYPE']
+                available_cols = ['SECID', 'SHORTNAME', 'LISTLEVEL']
                 if 'BOARDID' in sec_df.columns:
                     available_cols.append('BOARDID')
+                # Не используем SECTYPE
                 sec_df = sec_df[available_cols].copy()
                 merged = pd.merge(market_df, sec_df, on='SECID', how='left')
                 return merged
@@ -338,11 +339,9 @@ async def get_moex_index_info():
                 md_rows = json_data['marketdata']['data']
                 if md_rows:
                     row = md_rows[0]
-                    # Текущее значение — CURRENTVALUE
                     current_idx = md_columns.index('CURRENTVALUE') if 'CURRENTVALUE' in md_columns else None
                     if current_idx is None:
                         current_idx = md_columns.index('LASTVALUE') if 'LASTVALUE' in md_columns else None
-                    # Изменение в процентах — LASTCHANGEPRC
                     change_idx = md_columns.index('LASTCHANGEPRC') if 'LASTCHANGEPRC' in md_columns else None
                     if change_idx is None:
                         change_idx = md_columns.index('LASTCHANGETOOPENPRC') if 'LASTCHANGETOOPENPRC' in md_columns else None
@@ -403,11 +402,10 @@ async def get_historical_shares(from_date: str, till_date: str):
 def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool = True):
     if data.empty:
         return pd.DataFrame(), pd.DataFrame()
-    # Фильтрация только акций (SECTYPE == 1)
-    if 'SECTYPE' in data.columns:
-        data = data[data['SECTYPE'] == 1].copy()
+    # Фильтрация по BOARDID (акции)
     if 'BOARDID' in data.columns:
         data = data[data['BOARDID'] == 'TQBR'].copy()
+    # Исключаем 3-й эшелон
     if exclude_level3 and 'LISTLEVEL' in data.columns:
         data = data[data['LISTLEVEL'] < 3].copy()
     data = data.copy()
