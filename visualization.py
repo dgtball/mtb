@@ -25,6 +25,11 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     for key, vals in groups.items():
         ordered_groups.append((key, vals))
 
+    # Логируем группы и примеры тикеров
+    for group_name, positions in ordered_groups:
+        sample_tickers = [p['ticker'] for p in positions[:3]]
+        logging.info(f"Группа {group_name}: {len(positions)} позиций. Примеры тикеров: {sample_tickers}")
+
     if not ordered_groups:
         return None
 
@@ -39,7 +44,9 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
                         vertical_spacing=0.05, subplot_titles=[g[0] for g in ordered_groups],
                         specs=specs)
 
-    height = 200 + sum(len(v) * 25 for _, v in ordered_groups) + rows * 60
+    # Увеличим запас высоты на 20% для надёжности
+    height = int((200 + sum(len(v) * 25 for _, v in ordered_groups) + rows * 60) * 1.2)
+
     col_labels = ["Название", "Кол-во", "Цена", "Средняя", "Доходность"]
 
     for idx, (group_name, positions) in enumerate(ordered_groups, start=1):
