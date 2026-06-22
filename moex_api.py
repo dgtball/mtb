@@ -3,8 +3,7 @@ import asyncio
 import datetime
 import pandas as pd
 import aiohttp
-from config import ticker_to_name, NO_TRADING_WEEKENDS_2026  # ticker_to_name – глобальный словарь
-_logged_market_structure = False
+from config import ticker_to_name
 
 async def load_instrument_names(http_session):
     global ticker_to_name
@@ -80,16 +79,15 @@ async def get_market_data(http_session):
                 sec_columns = json_data['securities']['columns']
                 sec_rows = json_data['securities']['data']
                 sec_df = pd.DataFrame(sec_rows, columns=sec_columns)
-                
-                # Отладочная информация (можно убрать)
-                global _logged_market_structure
-                    if not _logged_market_structure:
-                        logging.info(f"Структура marketdata (однократно): колонки securities: {sec_columns}")
-                        if 'SECTYPE' in sec_columns:
-                            sample = sec_df['SECTYPE'].head(10).tolist()
-                            logging.info(f"Примеры SECTYPE: {sample}")
-                        _logged_market_structure = True
-                
+
+                # Однократный вывод структуры marketdata
+                if not hasattr(get_market_data, '_logged'):
+                    logging.info(f"Структура marketdata (однократно): колонки securities: {sec_columns}")
+                    if 'SECTYPE' in sec_columns:
+                        sample = sec_df['SECTYPE'].head(10).tolist()
+                        logging.info(f"Примеры SECTYPE: {sample}")
+                    get_market_data._logged = True
+
                 available_cols = ['SECID', 'SHORTNAME', 'LISTLEVEL']
                 if 'SECTYPE' in sec_columns:
                     available_cols.append('SECTYPE')
@@ -162,7 +160,6 @@ async def get_moex_index_info(http_session):
                     if change_idx is not None:
                         result['change_percent'] = float(row[change_idx])
                     if result:
-                        logging.info(f"Индекс IMOEX из marketdata: {result}")
                         return result
             if 'securities' in json_data:
                 columns = json_data['securities']['columns']
@@ -177,7 +174,6 @@ async def get_moex_index_info(http_session):
                     if change_percent_idx is not None:
                         result['change_percent'] = float(row[change_percent_idx])
                     if result:
-                        logging.info(f"Индекс IMOEX из securities: {result}")
                         return result
             logging.warning("Не найдены данные индекса")
             return None
@@ -217,6 +213,7 @@ def get_top_movers(data: pd.DataFrame, top_n: int = 10, exclude_level3: bool = T
     data = data.dropna(subset=['CHANGEPERCENT', 'LAST'])
     if data.empty:
         return pd.DataFrame(), pd.DataFrame()
+
     # Разделяем на положительные и отрицательные
     positive = data[data['CHANGEPERCENT'] > 0].copy()
     negative = data[data['CHANGEPERCENT'] < 0].copy()
