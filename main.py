@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 8.1 (исправлены индекс и группировка портфеля)
+# Версия: 8.1.1 (индекс, фильтр акций, разделение портфеля)
 # ==============================================
 
 import os
@@ -34,7 +34,7 @@ import plotly.io as pio
 pio.kaleido.scope.default_format = "png"
 
 # ---------- ВЕРСИЯ ----------
-VERSION = "8.1"
+VERSION = "8.1.1"
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -290,7 +290,7 @@ async def get_market_data():
                 sec_columns = json_data['securities']['columns']
                 sec_rows = json_data['securities']['data']
                 sec_df = pd.DataFrame(sec_rows, columns=sec_columns)
-                sec_df = sec_df[['SECID', 'SHORTNAME', 'LISTLEVEL']].copy()
+                sec_df = sec_df[['SECID', 'SHORTNAME', 'LISTLEVEL', 'BOARDID']].copy()
                 merged = pd.merge(market_df, sec_df, on='SECID', how='left')
                 return merged
         except Exception:
@@ -303,8 +303,7 @@ async def get_moex_index_info():
     last, change_percent
     """
     global http_session
-    # Прямой запрос к индексу IMOEX через marketdata
-    url = "https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX.json?iss.meta=off&iss.only=marketdata"
+    url = "https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX.json?iss.meta=off"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     try:
         async with http_session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
@@ -312,25 +311,24 @@ async def get_moex_index_info():
                 logging.warning(f"MOEX index returned status {resp.status}")
                 return None
             json_data = await resp.json()
-            if 'marketdata' not in json_data:
-                logging.warning("No marketdata in index response")
-                return None
-            columns = json_data['marketdata']['columns']
-            data_rows = json_data['marketdata']['data']
-            if not data_rows:
-                logging.warning("Empty index data")
-                return None
-            row = data_rows[0]
-            last_idx = columns.index('LAST') if 'LAST' in columns else None
-            change_percent_idx = columns.index('CHANGEPERCENT') if 'CHANGEPERCENT' in columns else None
-            result = {}
-            if last_idx is not None:
-                result['last'] = float(row[last_idx])
-            if change_percent_idx is not None:
-                result['change_percent'] = float(row[change_percent_idx])
-            if result:
-                logging.info(f"Индекс IMOEX: {result}")
-                return result
+            logging.info(f"Полный ответ индекса: {json_data.keys()}")
+            if 'securities' in json_data:
+                columns = json_data['securities']['columns']
+                data_rows = json_data['securities']['data']
+                logging.info(f"Колонки индекса: {columns}")
+                if data_rows:
+                    row = data_rows[0]
+                    last_idx = columns.index('LAST') if 'LAST' in columns else None
+                    change_percent_idx = columns.index('CHANGEPERCENT') if 'CHANGEPERCENT' in columns else None
+                    result = {}
+                    if last_idx is not None:
+                        result['last'] = float(row[last_idx])
+                    if change_percent_idx is not None:
+                        result['change_percent'] = float(row[change_percent_idx])
+                    if result:
+                        logging.info(f"Индекс IMOEX из securities: {result}")
+                        return result
+            logging.warning("Не найдены данные индекса")
             return None
     except Exception as e:
         logging.error(f"Ошибка получения индекса: {e}")
@@ -364,6 +362,8 @@ async def get_historical_shares(from_date: str, till_date: str):
 def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool = True):
     if data.empty:
         return pd.DataFrame(), pd.DataFrame()
+    # Исключаем всё, что не акции (доска TQBR)
+    data = data[data['BOARDID'] == 'TQBR'].copy()
     if exclude_level3 and 'LISTLEVEL' in data.columns:
         data = data[data['LISTLEVEL'] < 3].copy()
     data = data.copy()
@@ -488,8 +488,6 @@ async def get_portfolio_summary():
                 continue
             filtered_positions.append(pos)
 
-        logging.info(f"После фильтрации осталось {len(filtered_positions)} позиций")
-
         for pos in filtered_positions:
             quantity = float(pos.get("quantity", {}).get("units", 0))
             avg_price = float(pos.get("averagePositionPrice", {}).get("units", 0))
@@ -525,10 +523,17 @@ async def get_portfolio_summary():
             else:
                 pos_yield_pct = 0.0
             instrument_type = pos.get("instrumentType", "")
-            if instrument_type not in type_map:
-                type_display = "Акции"
+            # Определяем тип отображения
+            if instrument_type in type_map:
+                type_display = type_map[instrument_type]
             else:
-                type_display = type_map.get(instrument_type, instrument_type)
+                # Если тип неизвестен, пробуем определить по имени или тикеру
+                if "ОФЗ" in name or "SU" in ticker:
+                    type_display = "Облигации"
+                elif "ETF" in name or "LQDT" in ticker or "TGLD" in ticker:
+                    type_display = "Фонды"
+                else:
+                    type_display = "Акции"
 
             result["positions"].append({
                 "figi": figi,
@@ -570,15 +575,13 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     total_yield = portfolio_data["total_yield_pct"]
     balance = portfolio_data.get("balance", 0.0)
 
-    # Создаём отдельную фигуру для каждой группы (проще и надёжнее)
-    # Но для красоты используем одну фигуру с subplots
+    # Создаём фигуру с subplots типа table
     rows = len(ordered_groups)
     specs = [[{"type": "table"} for _ in range(1)] for _ in range(rows)]
     fig = make_subplots(rows=rows, cols=1, shared_xaxes=False,
                         vertical_spacing=0.05, subplot_titles=[g[0] for g in ordered_groups],
                         specs=specs)
 
-    # Определяем общую высоту
     height = 200 + sum(len(v) * 25 for _, v in ordered_groups) + rows * 60
 
     col_labels = ["Название", "Кол-во", "Цена", "Средняя", "Доходность"]
@@ -598,7 +601,6 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
                 f"{pos['pos_yield_pct']:+.2f}%"
             ])
 
-        # Создаём таблицу для этой группы
         table_trace = go.Table(
             header=dict(
                 values=col_labels,
@@ -620,7 +622,6 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
 
         fig.add_trace(table_trace, row=idx, col=1)
 
-    # Обновляем макет
     fig.update_layout(
         title=dict(
             text=f"Портфель<br>Сумма: {total_amount:.2f} ₽   Вложено: {total_cost:.2f} ₽   "
