@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 8.10.1 (фильтр по SECTYPE 1 и 2)
+# Версия: 8.10.2 (фильтр по SECTYPE 1 и 2)
 # ==============================================
 
 import os
@@ -34,7 +34,7 @@ import plotly.io as pio
 pio.kaleido.scope.default_format = "png"
 
 # ---------- ВЕРСИЯ ----------
-VERSION = "8.10.1"
+VERSION = "8.10.2"
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -417,7 +417,7 @@ def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool 
         return pd.DataFrame(), pd.DataFrame()
     # Фильтрация по типу акций (SECTYPE 1 или 2)
     if 'SECTYPE' in data.columns:
-        data = data[data['SECTYPE'].isin([1, 2])].copy()
+        data = data[data['SECTYPE'].isin(['1', '2'])].copy()
     if 'BOARDID' in data.columns:
         data = data[data['BOARDID'] == 'TQBR'].copy()
     if exclude_level3 and 'LISTLEVEL' in data.columns:
