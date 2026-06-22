@@ -101,7 +101,7 @@ async def get_market_data(http_session):
             await asyncio.sleep(2)
     return pd.DataFrame()
 
-async def get_historical_shares(http_session, from_date: str, till_date: str):
+async def get_historical_shares(http_session, from_date, till_date):
     url = f"https://iss.moex.com/iss/history/engines/stock/markets/shares/boards/TQBR/securities.json?from={from_date}&till={till_date}&iss.meta=off&iss.only=history"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     for attempt in range(3):
@@ -121,7 +121,7 @@ async def get_historical_shares(http_session, from_date: str, till_date: str):
             await asyncio.sleep(2)
     return pd.DataFrame()
 
-async def get_historical_close(http_session, ticker: str, target_date: datetime.date) -> float | None:
+async def get_historical_close(http_session, ticker, target_date):
     from_date = (target_date - datetime.timedelta(days=10)).strftime("%Y-%m-%d")
     till_date = target_date.strftime("%Y-%m-%d")
     df = await get_historical_shares(http_session, from_date, till_date)
@@ -185,7 +185,7 @@ async def get_moex_index(http_session):
     info = await get_moex_index_info(http_session)
     return info.get('last') if info else None
 
-def get_top_movers(data: pd.DataFrame, top_n: int = 10, exclude_level3: bool = True):
+def get_top_movers(data, top_n=10, exclude_level3=True):
     if data.empty:
         return pd.DataFrame(), pd.DataFrame()
     if 'SECTYPE' in data.columns:
@@ -221,7 +221,7 @@ def get_top_movers(data: pd.DataFrame, top_n: int = 10, exclude_level3: bool = T
     losers = negative.nsmallest(top_n, 'CHANGEPERCENT') if not negative.empty else pd.DataFrame()
     return gainers, losers
 
-def calc_period_change(df: pd.DataFrame) -> pd.DataFrame:
+def calc_period_change(df):
     if df.empty:
         return pd.DataFrame()
     df = df.copy()
