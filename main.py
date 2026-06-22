@@ -6,6 +6,7 @@ import asyncio
 import aiohttp
 from aiohttp import web
 from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
 from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION
 import db
 from moex_api import load_instrument_names
@@ -15,7 +16,6 @@ from handlers import register_handlers, set_http_session, set_bot
 logging.basicConfig(level=logging.INFO)
 
 # ---------- ПЕРЕХВАТ КРИТИЧЕСКИХ ОШИБОК ИМПОРТА ----------
-# (если вдруг остались проблемы с импортами, они будут видны)
 try:
     from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION
     import db
@@ -30,7 +30,7 @@ if not API_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
 
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(storage=MemoryStorage())  # <-- добавлено хранилище для FSM
 
 # ---------- HEALTH‑СЕРВЕР ----------
 async def health_handler(request):

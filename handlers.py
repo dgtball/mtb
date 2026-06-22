@@ -4,6 +4,8 @@ import datetime
 import pandas as pd
 from aiogram import types, Bot
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 from config import MY_CHAT_ID, TOP_N
 from utils import (
@@ -23,7 +25,6 @@ from keyboards import main_keyboard
 last_messages = {}
 update_tasks = {}
 auto_update_enabled = {}
-user_state = {}
 
 _http_session = None
 _bot = None
@@ -35,6 +36,11 @@ def set_http_session(session):
 def set_bot(bot_instance):
     global _bot
     _bot = bot_instance
+
+# ---------- FSM: Состояния добавления/удаления ----------
+class AddRemoveStates(StatesGroup):
+    waiting_for_add = State()
+    waiting_for_remove = State()
 
 # ---------- УДАЛЕНИЕ СООБЩЕНИЙ ----------
 async def safe_delete_message(chat_id: int, message_id: int):
@@ -214,12 +220,13 @@ async def auto_update_task(chat_id: int, message_id: int):
             break
 
 # ---------- ОБРАБОТЧИКИ ----------
-async def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message, state: FSMContext):
     if message.from_user.id != MY_CHAT_ID:
         await message.answer("⛔ Доступ запрещён.")
         return
     chat_id = message.chat.id
     auto_update_enabled[chat_id] = True
+    await state.clear()  # сбрасываем любые состояния
     try:
         await message.answer(
             "👋 Привет! Я бот для отслеживания топ-акций Мосбиржи и вашего портфеля Т-Инвестиций.\n\n"
@@ -231,13 +238,14 @@ async def cmd_start(message: types.Message):
         logging.error(f"❌ Ошибка в /start: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка при запуске: {e}")
 
-async def handle_buttons_and_commands(message: types.Message):
+async def handle_buttons_and_commands(message: types.Message, state: FSMContext):
     if message.from_user.id != MY_CHAT_ID:
         await message.answer("⛔ Доступ запрещён.")
         return
     text = message.text
     logging.info(f"🔄 Обработка сообщения: '{text}'")
 
+    # ---------- ПОРТФЕЛЬ ----------
     if text == "/portfolio" or text == "📈 Портфель":
         logging.info("🔍 Обработка портфеля")
         if not _http_session:
@@ -271,6 +279,7 @@ async def handle_buttons_and_commands(message: types.Message):
             await safe_delete_message(message.chat.id, message.message_id)
         return
 
+    # ---------- ТОП ДНЯ ----------
     if text == "📌 Топ дня":
         shares_df = await get_market_data(_http_session)
         gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
@@ -293,6 +302,7 @@ async def handle_buttons_and_commands(message: types.Message):
         await safe_delete_message(message.chat.id, message.message_id)
         return
 
+    # ---------- ТОП НЕДЕЛИ / МЕСЯЦА ----------
     if text == "📊 Топ недели":
         await send_top(message, 'week')
         await safe_delete_message(message.chat.id, message.message_id)
@@ -303,6 +313,7 @@ async def handle_buttons_and_commands(message: types.Message):
         await safe_delete_message(message.chat.id, message.message_id)
         return
 
+    # ---------- ИЗБРАННЫЕ ----------
     if text == "⭐ Избранные":
         try:
             loading_msg = await message.answer("⏳ Загружаю избранное...")
@@ -331,45 +342,63 @@ async def handle_buttons_and_commands(message: types.Message):
             await safe_delete_message(message.chat.id, message.message_id)
         return
 
+    # ---------- ДОБАВИТЬ ТИКЕР (FSM) ----------
     if text == "✅ Добавить тикер":
+        await state.set_state(AddRemoveStates.waiting_for_add)
         prompt_msg = await message.answer("Введите тикер для добавления (например, SBER или SBER, GAZP):")
-        user_state[message.chat.id] = {'state': 'add', 'prompt_msg_id': prompt_msg.message_id}
+        await state.update_data(prompt_msg_id=prompt_msg.message_id)
         await safe_delete_message(message.chat.id, message.message_id)
         return
 
+    # ---------- УДАЛИТЬ ТИКЕР (FSM) ----------
     if text == "❌ Удалить тикер":
+        await state.set_state(AddRemoveStates.waiting_for_remove)
         prompt_msg = await message.answer("Введите тикер для удаления (например, SBER или SBER, GAZP):")
-        user_state[message.chat.id] = {'state': 'remove', 'prompt_msg_id': prompt_msg.message_id}
+        await state.update_data(prompt_msg_id=prompt_msg.message_id)
         await safe_delete_message(message.chat.id, message.message_id)
         return
 
-    chat_id = message.chat.id
-    if chat_id in user_state:
-        state_data = user_state[chat_id]
-        state = state_data['state']
-        prompt_msg_id = state_data['prompt_msg_id']
-
-        await safe_delete_message(chat_id, prompt_msg_id)
-        await safe_delete_message(chat_id, message.message_id)
+    # ---------- ОБРАБОТКА ТЕКСТА В ЗАВИСИМОСТИ ОТ СОСТОЯНИЯ ----------
+    current_state = await state.get_state()
+    if current_state == AddRemoveStates.waiting_for_add.state:
+        data = await state.get_data()
+        prompt_msg_id = data.get('prompt_msg_id')
+        if prompt_msg_id:
+            await safe_delete_message(message.chat.id, prompt_msg_id)
+        await safe_delete_message(message.chat.id, message.message_id)
 
         raw = message.text.strip()
         tickers = [t.strip().upper() for t in raw.split(',') if t.strip()]
         results = []
         for ticker in tickers:
-            if state == 'add':
-                if add_favorite(chat_id, ticker):
-                    results.append(f"✅ {ticker} добавлен")
-                else:
-                    results.append(f"ℹ️ {ticker} уже есть")
-            elif state == 'remove':
-                if remove_favorite(chat_id, ticker):
-                    results.append(f"✅ {ticker} удалён")
-                else:
-                    results.append(f"ℹ️ {ticker} не найден")
+            if add_favorite(message.chat.id, ticker):
+                results.append(f"✅ {ticker} добавлен")
+            else:
+                results.append(f"ℹ️ {ticker} уже есть")
         await message.answer("\n".join(results) if results else "Ничего не сделано.")
-        del user_state[chat_id]
+        await state.clear()
         return
 
+    if current_state == AddRemoveStates.waiting_for_remove.state:
+        data = await state.get_data()
+        prompt_msg_id = data.get('prompt_msg_id')
+        if prompt_msg_id:
+            await safe_delete_message(message.chat.id, prompt_msg_id)
+        await safe_delete_message(message.chat.id, message.message_id)
+
+        raw = message.text.strip()
+        tickers = [t.strip().upper() for t in raw.split(',') if t.strip()]
+        results = []
+        for ticker in tickers:
+            if remove_favorite(message.chat.id, ticker):
+                results.append(f"✅ {ticker} удалён")
+            else:
+                results.append(f"ℹ️ {ticker} не найден")
+        await message.answer("\n".join(results) if results else "Ничего не сделано.")
+        await state.clear()
+        return
+
+    # Если сообщение не попало ни в одно состояние и не является командой
     logging.info(f"FALLBACK: получено сообщение: '{text}'")
     await message.answer("Используйте кнопки меню.", reply_markup=main_keyboard())
     await safe_delete_message(message.chat.id, message.message_id)
