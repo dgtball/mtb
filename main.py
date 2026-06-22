@@ -1,12 +1,21 @@
-import logging
-import asyncio
-import datetime
-import pandas as pd
-import aiohttp
-from config import ticker_to_name
+import sys, logging, traceback
 
-_logged_market_structure = False
-
+try:
+    import os
+    import asyncio
+    import aiohttp
+    from aiohttp import web
+    from aiogram import Bot, Dispatcher
+    from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION
+    import db
+    from moex_api import load_instrument_names
+    from handlers import register_handlers, set_http_session, set_bot
+except Exception as e:
+    # Вывод ошибки в консоль, если логгер ещё не готов
+    print("CRITICAL IMPORT ERROR:", file=sys.stderr)
+    traceback.print_exc()
+    sys.exit(1)
+    
 async def load_instrument_names(http_session):
     global ticker_to_name
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
