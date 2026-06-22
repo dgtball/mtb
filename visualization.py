@@ -25,10 +25,10 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     for key, vals in groups.items():
         ordered_groups.append((key, vals))
 
-    # Логируем группы и примеры тикеров
+    # --- ДИАГНОСТИКА: выводим все тикеры каждой группы ---
     for group_name, positions in ordered_groups:
-        sample_tickers = [p['ticker'] for p in positions[:3]]
-        logging.info(f"Группа {group_name}: {len(positions)} позиций. Примеры тикеров: {sample_tickers}")
+        tickers_in_group = [p['ticker'] for p in positions]
+        logging.info(f"Группа {group_name}: {len(positions)} позиций. Тикеры: {tickers_in_group}")
 
     if not ordered_groups:
         return None
@@ -39,13 +39,19 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     balance = portfolio_data.get("balance", 0.0)
 
     rows = len(ordered_groups)
-    specs = [[{"type": "table"} for _ in range(1)] for _ in range(rows)]
-    fig = make_subplots(rows=rows, cols=1, shared_xaxes=False,
-                        vertical_spacing=0.05, subplot_titles=[g[0] for g in ordered_groups],
-                        specs=specs)
+    # Вычисляем высоту каждой строки таблицы: 30 пикселей на позицию + 30 на заголовок
+    row_heights = [30 * len(positions) + 40 for _, positions in ordered_groups]
+    total_height = sum(row_heights) + 150  # дополнительно на заголовок всего графика и отступы
 
-    # Увеличим запас высоты на 20% для надёжности
-    height = int((200 + sum(len(v) * 25 for _, v in ordered_groups) + rows * 60) * 1.2)
+    specs = [[{"type": "table"} for _ in range(1)] for _ in range(rows)]
+    fig = make_subplots(
+        rows=rows, cols=1,
+        row_heights=row_heights,  # <-- явно задаём высоту для каждой панели
+        shared_xaxes=False,
+        vertical_spacing=0.05,
+        subplot_titles=[g[0] for g in ordered_groups],
+        specs=specs
+    )
 
     col_labels = ["Название", "Кол-во", "Цена", "Средняя", "Доходность"]
 
@@ -88,9 +94,11 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
             x=0.5, xanchor='center',
             font=dict(size=14, family='Arial', color='black')
         ),
-        width=800, height=height,
+        width=800,
+        height=total_height,
         margin=dict(l=20, r=20, t=80, b=20),
-        paper_bgcolor='white', showlegend=False
+        paper_bgcolor='white',
+        showlegend=False
     )
 
     try:
