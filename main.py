@@ -14,6 +14,7 @@ from handlers import register_handlers, set_http_session, set_bot
 
 # ---------- ЛОГИРОВАНИЕ ----------
 logging.basicConfig(level=logging.INFO)
+logging.getLogger('aiohttp.access').setLevel(logging.WARNING)
 
 # ---------- ПЕРЕХВАТ КРИТИЧЕСКИХ ОШИБОК ИМПОРТА ----------
 try:

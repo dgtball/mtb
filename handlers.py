@@ -15,7 +15,8 @@ from utils import (
 from db import add_favorite, remove_favorite, get_favorites
 from moex_api import (
     get_market_data, get_historical_shares, get_historical_close,
-    get_moex_index_info, get_top_movers, calc_period_change
+    get_moex_index_info, get_top_movers, calc_period_change,
+    get_historical_prices_batch   # <-- новая функция
 )
 from tinkoff_api import get_portfolio_summary
 from visualization import generate_portfolio_image, generate_favorites_image
@@ -117,17 +118,23 @@ async def get_favorites_data(chat_id: int):
     first_of_month = now.replace(day=1)
     month_reference = (first_of_month - datetime.timedelta(days=1)).date()
 
+    # Пакетная загрузка исторических цен для всех тикеров
+    tickers = fav_df['SECID'].tolist()
+    target_dates = [week_reference, month_reference]
+    prices = await get_historical_prices_batch(_http_session, tickers, target_dates)
+
     week_changes = []
     month_changes = []
     for _, row in fav_df.iterrows():
         ticker = row['SECID']
         current_price = row['LAST']
-        week_price = await get_historical_close(_http_session, ticker, week_reference)
+        week_price = prices.get((ticker, week_reference))
+        month_price = prices.get((ticker, month_reference))
+
         if week_price is not None and week_price > 0:
             week_change = ((current_price - week_price) / week_price) * 100
         else:
             week_change = None
-        month_price = await get_historical_close(_http_session, ticker, month_reference)
         if month_price is not None and month_price > 0:
             month_change = ((current_price - month_price) / month_price) * 100
         else:
@@ -226,7 +233,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         return
     chat_id = message.chat.id
     auto_update_enabled[chat_id] = True
-    await state.clear()  # сбрасываем любые состояния
+    await state.clear()
     try:
         await message.answer(
             "👋 Привет! Я бот для отслеживания топ-акций Мосбиржи и вашего портфеля Т-Инвестиций.\n\n"
