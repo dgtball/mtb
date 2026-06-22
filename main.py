@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 8.2 (исправлены BOARDID, названия, падения)
+# Версия: 8.3 (индекс из marketdata, больше переопределений)
 # ==============================================
 
 import os
@@ -34,7 +34,7 @@ import plotly.io as pio
 pio.kaleido.scope.default_format = "png"
 
 # ---------- ВЕРСИЯ ----------
-VERSION = "8.2"
+VERSION = "8.3"
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -71,6 +71,8 @@ NAME_OVERRIDES = {
     "Роснефть": "Роснефть",
     "Газпотреб": "Газпром нефть",
     "ГАЗПРОМ ао": "Газпром",
+    "Ростел -ао": "Ростелеком",
+    "Т-Техно ао": "Т-Технологии",
 }
 
 # ---------- СПИСОК НЕТОРГОВЫХ ВЫХОДНЫХ 2026 ----------
@@ -305,7 +307,6 @@ async def get_market_data():
                 sec_columns = json_data['securities']['columns']
                 sec_rows = json_data['securities']['data']
                 sec_df = pd.DataFrame(sec_rows, columns=sec_columns)
-                # Выбираем нужные колонки, включая BOARDID
                 available_cols = ['SECID', 'SHORTNAME', 'LISTLEVEL']
                 if 'BOARDID' in sec_df.columns:
                     available_cols.append('BOARDID')
@@ -331,20 +332,31 @@ async def get_moex_index_info():
                 return None
             json_data = await resp.json()
             logging.info(f"Полный ответ индекса: {json_data.keys()}")
+            # Проверяем marketdata
+            if 'marketdata' in json_data:
+                md_columns = json_data['marketdata']['columns']
+                md_rows = json_data['marketdata']['data']
+                logging.info(f"Колонки marketdata индекса: {md_columns}")
+                if md_rows:
+                    row = md_rows[0]
+                    last_idx = md_columns.index('LAST') if 'LAST' in md_columns else None
+                    change_percent_idx = md_columns.index('CHANGEPERCENT') if 'CHANGEPERCENT' in md_columns else None
+                    result = {}
+                    if last_idx is not None:
+                        result['last'] = float(row[last_idx])
+                    if change_percent_idx is not None:
+                        result['change_percent'] = float(row[change_percent_idx])
+                    if result:
+                        logging.info(f"Индекс IMOEX из marketdata: {result}")
+                        return result
+            # Если не нашли, пробуем securities
             if 'securities' in json_data:
                 columns = json_data['securities']['columns']
                 data_rows = json_data['securities']['data']
-                logging.info(f"Колонки индекса: {columns}")
                 if data_rows:
                     row = data_rows[0]
-                    # Ищем LAST и CHANGEPERCENT
-                    last_idx = None
-                    change_percent_idx = None
-                    for idx, col in enumerate(columns):
-                        if col == 'LAST':
-                            last_idx = idx
-                        if col == 'CHANGEPERCENT':
-                            change_percent_idx = idx
+                    last_idx = columns.index('LAST') if 'LAST' in columns else None
+                    change_percent_idx = columns.index('CHANGEPERCENT') if 'CHANGEPERCENT' in columns else None
                     result = {}
                     if last_idx is not None:
                         result['last'] = float(row[last_idx])
@@ -387,7 +399,6 @@ async def get_historical_shares(from_date: str, till_date: str):
 def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool = True):
     if data.empty:
         return pd.DataFrame(), pd.DataFrame()
-    # Фильтрация по BOARDID, если колонка есть
     if 'BOARDID' in data.columns:
         data = data[data['BOARDID'] == 'TQBR'].copy()
     if exclude_level3 and 'LISTLEVEL' in data.columns:
@@ -514,6 +525,8 @@ async def get_portfolio_summary():
                 continue
             filtered_positions.append(pos)
 
+        logging.info(f"После фильтрации осталось {len(filtered_positions)} позиций")
+
         for pos in filtered_positions:
             quantity = float(pos.get("quantity", {}).get("units", 0))
             avg_price = float(pos.get("averagePositionPrice", {}).get("units", 0))
@@ -539,9 +552,7 @@ async def get_portfolio_summary():
         for pos in filtered_positions:
             figi = pos.get("figi")
             ticker = pos.get("ticker") or figi
-            # Получаем название из словаря или из MOEX
             raw_name = ticker_to_name.get(ticker, ticker)
-            # Переопределяем, если есть в словаре
             name = NAME_OVERRIDES.get(raw_name, raw_name)
 
             quantity = float(pos.get("quantity", {}).get("units", 0))
@@ -554,17 +565,14 @@ async def get_portfolio_summary():
                 pos_yield_pct = 0.0
             instrument_type = pos.get("instrumentType", "")
 
-            # Определяем тип отображения
             if instrument_type in type_map:
                 type_display = type_map[instrument_type]
             else:
-                # Если тип неизвестен, определяем эвристически
                 if "ОФЗ" in name or "SU" in ticker:
                     type_display = "Облигации"
                 elif "ETF" in name or "LQDT" in ticker or "TGLD" in ticker:
                     type_display = "Фонды"
                 else:
-                    # По умолчанию относим к акциям
                     type_display = "Акции"
 
             result["positions"].append({
@@ -601,6 +609,10 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
 
     if not ordered_groups:
         return None
+
+    # Логируем количество позиций в группах
+    for group_name, positions in ordered_groups:
+        logging.info(f"Группа {group_name}: {len(positions)} позиций")
 
     total_amount = portfolio_data["total_amount"]
     total_cost = portfolio_data["total_cost"]
