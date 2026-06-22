@@ -19,27 +19,34 @@ from tinkoff_api import get_portfolio_summary
 from visualization import generate_portfolio_image, generate_favorites_image
 from keyboards import main_keyboard
 
-# Глобальные переменные, используемые обработчиками
+# ---------- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ----------
 last_messages = {}
 update_tasks = {}
 auto_update_enabled = {}
 user_state = {}
 
-# Сессия HTTP будет установлена из main
 _http_session = None
+_bot = None
 
 def set_http_session(session):
     global _http_session
     _http_session = session
 
+def set_bot(bot_instance):
+    global _bot
+    _bot = bot_instance
+
 # ---------- УДАЛЕНИЕ СООБЩЕНИЙ ----------
 async def safe_delete_message(chat_id: int, message_id: int):
     try:
-        await Bot.get_current().delete_message(chat_id, message_id)
+        if _bot is None:
+            logging.error("Bot instance not set, cannot delete message")
+            return
+        await _bot.delete_message(chat_id, message_id)
     except Exception as e:
         logging.warning(f"Не удалось удалить сообщение {message_id}: {e}")
 
-# ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ФОРМАТИРОВАНИЯ ----------
+# ---------- ФОРМАТИРОВАНИЕ ----------
 def format_message(gainers, losers, index_info, update_time, session_status):
     header = ""
     if index_info and 'last' in index_info:
@@ -186,6 +193,9 @@ async def auto_update_task(chat_id: int, message_id: int):
     while True:
         await asyncio.sleep(30)
         try:
+            if _bot is None:
+                logging.error("Bot instance not set, cannot auto-update")
+                break
             shares_df = await get_market_data(_http_session)
             gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
             if gainers.empty and losers.empty:
@@ -194,7 +204,7 @@ async def auto_update_task(chat_id: int, message_id: int):
             session_status = get_session_status()
             update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
             text = format_message(gainers, losers, index_info, update_time, session_status)
-            await Bot.get_current().edit_message_text(text, chat_id=chat_id, message_id=message_id, parse_mode="HTML")
+            await _bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, parse_mode="HTML")
         except Exception as e:
             logging.error(f"Ошибка автообновления для чата {chat_id}: {e}")
             break
@@ -360,7 +370,6 @@ async def handle_buttons_and_commands(message: types.Message):
     await message.answer("Используйте кнопки меню.", reply_markup=main_keyboard())
     await safe_delete_message(message.chat.id, message.message_id)
 
-# Функция для регистрации всех обработчиков в диспетчере
 def register_handlers(dp):
     dp.message.register(cmd_start, Command("start"))
     dp.message.register(handle_buttons_and_commands)

@@ -88,8 +88,15 @@ def build_table_universal(df, title, headers, data_columns):
             val = row.get(col, "")
             if col == 'SHORTNAME' and len(str(val)) > 25:
                 val = str(val)[:22] + "…"
-            elif col == 'LAST' and isinstance(val, (int, float)):
-                val = smart_price(val)
+            elif col == 'LAST':
+                # Попытка привести к числу, если пришло строкой
+                if isinstance(val, str):
+                    try:
+                        val = float(val)
+                    except ValueError:
+                        pass
+                if isinstance(val, (int, float)):
+                    val = smart_price(val)
             elif col in ('CHANGEPERCENT', 'CHANGE_PCT') and isinstance(val, (int, float)):
                 val = f"{val:+.2f}%"
             row_data.append(val)

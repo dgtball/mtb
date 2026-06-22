@@ -7,7 +7,7 @@ from aiogram import Bot, Dispatcher
 from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION
 import db
 from moex_api import load_instrument_names
-from handlers import register_handlers, set_http_session
+from handlers import register_handlers, set_http_session, set_bot
 
 # ---------- ЛОГИРОВАНИЕ ----------
 logging.basicConfig(level=logging.INFO)
@@ -36,20 +36,16 @@ async def run_health_server():
 
 # ---------- ГЛАВНАЯ ФУНКЦИЯ ----------
 async def main():
-    # Инициализация БД
     db.init_db()
 
-    # Создание HTTP‑сессии
     http_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
-    set_http_session(http_session)  # передаём в handlers
+    set_http_session(http_session)
+    set_bot(bot)  # <-- передаём экземпляр бота
 
-    # Загружаем названия инструментов
     await load_instrument_names(http_session)
 
-    # Регистрируем обработчики
     register_handlers(dp)
 
-    # Удаляем вебхук и запускаем поллинг
     await bot.delete_webhook(drop_pending_updates=True)
     logging.info("✅ Вебхук удалён")
 
