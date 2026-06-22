@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 7.6 (исправлен портфель и индекс в топе дня)
+# Версия: 7.7 (исправлен портфель, индекс в топе дня)
 # ==============================================
 
 import os
@@ -33,7 +33,7 @@ import plotly.io as pio
 pio.kaleido.scope.default_format = "png"
 
 # ---------- ВЕРСИЯ ----------
-VERSION = "7.6"
+VERSION = "7.7"
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -326,6 +326,7 @@ async def get_moex_index_info():
                 result['last'] = float(row[last_idx])
             if change_percent_idx is not None:
                 result['change_percent'] = float(row[change_percent_idx])
+            logging.info(f"Индекс IMOEX: {result}")
             return result
     except Exception as e:
         logging.error(f"Ошибка получения индекса: {e}")
@@ -468,7 +469,7 @@ async def get_portfolio_summary():
             "INSTRUMENT_TYPE_CURRENCY": "Валюта",
         }
 
-        # Находим валютную позицию по тикеру RUB000UTSTOM
+        # Находим валютную позицию по тикеру или типу
         for pos in positions:
             ticker = pos.get("ticker", "")
             if ticker == "RUB000UTSTOM" or pos.get("instrumentType") == "INSTRUMENT_TYPE_CURRENCY":
@@ -482,6 +483,8 @@ async def get_portfolio_summary():
             if ticker == "RUB000UTSTOM" or pos.get("instrumentType") == "INSTRUMENT_TYPE_CURRENCY":
                 continue
             filtered_positions.append(pos)
+
+        logging.info(f"После фильтрации осталось {len(filtered_positions)} позиций")
 
         for pos in filtered_positions:
             quantity = float(pos.get("quantity", {}).get("units", 0))
@@ -518,9 +521,11 @@ async def get_portfolio_summary():
             else:
                 pos_yield_pct = 0.0
             instrument_type = pos.get("instrumentType", "")
-            type_display = type_map.get(instrument_type, instrument_type)
-            if type_display == "INSTRUMENT_TYPE_CURRENCY":
-                continue  # на всякий случай
+            # Если тип неизвестен, относим к Акциям
+            if instrument_type not in type_map:
+                type_display = "Акции"
+            else:
+                type_display = type_map.get(instrument_type, instrument_type)
 
             result["positions"].append({
                 "figi": figi,
@@ -554,7 +559,9 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     for key in order:
         if key in groups:
             ordered_groups.append((key, groups.pop(key)))
-    # Не добавляем другие группы
+    # Добавляем остальные группы (если есть)
+    for key, vals in groups.items():
+        ordered_groups.append((key, vals))
 
     total_amount = portfolio_data["total_amount"]
     total_cost = portfolio_data["total_cost"]
