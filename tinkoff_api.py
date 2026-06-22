@@ -73,7 +73,7 @@ async def get_portfolio_summary(http_session):
                 continue
             filtered_positions.append(pos)
 
-        logging.info(f"После фильтрации осталось {len(filtered_positions)} позиций")
+        #logging.info(f"После фильтрации осталось {len(filtered_positions)} позиций")
 
         for pos in filtered_positions:
             quantity = float(pos.get("quantity", {}).get("units", 0))

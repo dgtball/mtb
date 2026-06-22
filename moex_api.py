@@ -4,6 +4,7 @@ import datetime
 import pandas as pd
 import aiohttp
 from config import ticker_to_name, NO_TRADING_WEEKENDS_2026  # ticker_to_name – глобальный словарь
+_logged_market_structure = False
 
 async def load_instrument_names(http_session):
     global ticker_to_name
@@ -81,10 +82,13 @@ async def get_market_data(http_session):
                 sec_df = pd.DataFrame(sec_rows, columns=sec_columns)
                 
                 # Отладочная информация (можно убрать)
-                logging.info(f"Колонки securities: {sec_columns}")
-                if 'SECTYPE' in sec_columns:
-                    sample = sec_df['SECTYPE'].head(10).tolist()
-                    logging.info(f"Примеры SECTYPE: {sample}")
+                global _logged_market_structure
+                    if not _logged_market_structure:
+                        logging.info(f"Структура marketdata (однократно): колонки securities: {sec_columns}")
+                        if 'SECTYPE' in sec_columns:
+                            sample = sec_df['SECTYPE'].head(10).tolist()
+                            logging.info(f"Примеры SECTYPE: {sample}")
+                        _logged_market_structure = True
                 
                 available_cols = ['SECID', 'SHORTNAME', 'LISTLEVEL']
                 if 'SECTYPE' in sec_columns:
