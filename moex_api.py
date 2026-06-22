@@ -217,8 +217,11 @@ def get_top_movers(data: pd.DataFrame, top_n: int = 10, exclude_level3: bool = T
     data = data.dropna(subset=['CHANGEPERCENT', 'LAST'])
     if data.empty:
         return pd.DataFrame(), pd.DataFrame()
-    gainers = data.nlargest(top_n, 'CHANGEPERCENT')
-    losers = data.nsmallest(top_n, 'CHANGEPERCENT')
+    # Разделяем на положительные и отрицательные
+    positive = data[data['CHANGEPERCENT'] > 0].copy()
+    negative = data[data['CHANGEPERCENT'] < 0].copy()
+    gainers = positive.nlargest(top_n, 'CHANGEPERCENT') if not positive.empty else pd.DataFrame()
+    losers = negative.nsmallest(top_n, 'CHANGEPERCENT') if not negative.empty else pd.DataFrame()
     return gainers, losers
 
 def calc_period_change(df: pd.DataFrame) -> pd.DataFrame:

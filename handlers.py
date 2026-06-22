@@ -61,8 +61,10 @@ def format_message(gainers, losers, index_info, update_time, session_status):
     header += f"📌 {session_status}\n"
     header += f"🕒 Обновлено: {update_time}\n\n"
     text = header
-    text += build_table_universal(gainers, "📈 Лидеры роста", ["Тикер", "Название", "Цена", "Изменение"], ['SECID', 'SHORTNAME', 'LAST', 'CHANGEPERCENT'])
-    text += build_table_universal(losers, "📉 Лидеры падения", ["Тикер", "Название", "Цена", "Изменение"], ['SECID', 'SHORTNAME', 'LAST', 'CHANGEPERCENT'])
+    if not gainers.empty:
+        text += build_table_universal(gainers, "📈 Лидеры роста", ["Тикер", "Название", "Цена", "Изменение"], ['SECID', 'SHORTNAME', 'LAST', 'CHANGEPERCENT'])
+    if not losers.empty:
+        text += build_table_universal(losers, "📉 Лидеры падения", ["Тикер", "Название", "Цена", "Изменение"], ['SECID', 'SHORTNAME', 'LAST', 'CHANGEPERCENT'])
     return text
 
 def format_historical_table(gainers, losers, period, from_date_dt, till_date_dt):
@@ -75,8 +77,10 @@ def format_historical_table(gainers, losers, period, from_date_dt, till_date_dt)
         title = f"🗓️ Топ {month_name}"
         period_str = f"Период: {from_date_dt.strftime('%d/%m/%y')} – {till_date_dt.strftime('%d/%m/%y')}"
     text = f"{title}\n{period_str}\n\n"
-    text += build_table_universal(gainers, "📈 Рост", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
-    text += build_table_universal(losers, "📉 Падение", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
+    if not gainers.empty:
+        text += build_table_universal(gainers, "📈 Рост", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
+    if not losers.empty:
+        text += build_table_universal(losers, "📉 Падение", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
     return text
 
 # ---------- ПОЛУЧЕНИЕ ДАННЫХ ИЗБРАННОГО ----------
