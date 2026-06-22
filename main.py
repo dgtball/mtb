@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 7.5 (индекс в топе дня, убрана валюта из портфеля)
+# Версия: 7.6 (исправлен портфель и индекс в топе дня)
 # ==============================================
 
 import os
@@ -31,6 +31,9 @@ from tabulate import tabulate
 import plotly.graph_objects as go
 import plotly.io as pio
 pio.kaleido.scope.default_format = "png"
+
+# ---------- ВЕРСИЯ ----------
+VERSION = "7.6"
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -304,13 +307,16 @@ async def get_moex_index_info():
     try:
         async with http_session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
             if resp.status != 200:
+                logging.warning(f"MOEX index returned status {resp.status}")
                 return None
             json_data = await resp.json()
             if 'securities' not in json_data:
+                logging.warning("No 'securities' in index response")
                 return None
             columns = json_data['securities']['columns']
             data_rows = json_data['securities']['data']
             if not data_rows:
+                logging.warning("Empty index data")
                 return None
             row = data_rows[0]
             last_idx = columns.index('LAST') if 'LAST' in columns else None
@@ -326,7 +332,6 @@ async def get_moex_index_info():
         return None
 
 async def get_moex_index():
-    # оставляем для совместимости, но используем get_moex_index_info
     info = await get_moex_index_info()
     return info.get('last') if info else None
 
@@ -463,18 +468,20 @@ async def get_portfolio_summary():
             "INSTRUMENT_TYPE_CURRENCY": "Валюта",
         }
 
-        # Находим валютную позицию для баланса
+        # Находим валютную позицию по тикеру RUB000UTSTOM
         for pos in positions:
-            if pos.get("instrumentType") == "INSTRUMENT_TYPE_CURRENCY":
+            ticker = pos.get("ticker", "")
+            if ticker == "RUB000UTSTOM" or pos.get("instrumentType") == "INSTRUMENT_TYPE_CURRENCY":
                 balance = float(pos.get("quantity", {}).get("units", 0)) * float(pos.get("currentPrice", {}).get("units", 1))
                 break
 
         # Остальные позиции (исключаем валюту)
         filtered_positions = []
         for pos in positions:
-            inst_type = pos.get("instrumentType", "")
-            if inst_type != "INSTRUMENT_TYPE_CURRENCY" and inst_type.lower() != "currency":
-                filtered_positions.append(pos)
+            ticker = pos.get("ticker", "")
+            if ticker == "RUB000UTSTOM" or pos.get("instrumentType") == "INSTRUMENT_TYPE_CURRENCY":
+                continue
+            filtered_positions.append(pos)
 
         for pos in filtered_positions:
             quantity = float(pos.get("quantity", {}).get("units", 0))
@@ -510,13 +517,17 @@ async def get_portfolio_summary():
                 pos_yield_pct = (expected_yield / (avg_price * quantity)) * 100
             else:
                 pos_yield_pct = 0.0
+            instrument_type = pos.get("instrumentType", "")
+            type_display = type_map.get(instrument_type, instrument_type)
+            if type_display == "INSTRUMENT_TYPE_CURRENCY":
+                continue  # на всякий случай
 
             result["positions"].append({
                 "figi": figi,
                 "ticker": ticker,
                 "name": name,
-                "instrument_type": pos.get("instrumentType"),
-                "type_display": type_map.get(pos.get("instrumentType"), pos.get("instrumentType")),
+                "instrument_type": instrument_type,
+                "type_display": type_display,
                 "quantity": quantity,
                 "price": price,
                 "avg_price": avg_price,
@@ -531,6 +542,7 @@ async def get_portfolio_summary():
 # ---------- ГЕНЕРАЦИЯ КАРТИНКИ ПОРТФЕЛЯ (PLOTLY) ----------
 def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     if not portfolio_data or not portfolio_data["positions"]:
+        logging.warning("Нет позиций для отображения портфеля")
         return None
 
     groups = defaultdict(list)
@@ -542,7 +554,7 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     for key in order:
         if key in groups:
             ordered_groups.append((key, groups.pop(key)))
-    # Не добавляем остальные группы (чтобы валюта не попала)
+    # Не добавляем другие группы
 
     total_amount = portfolio_data["total_amount"]
     total_cost = portfolio_data["total_cost"]
@@ -580,6 +592,10 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
             else:
                 row_colors.append('#fce4e4')
 
+    if not cells:
+        logging.warning("Нет данных для построения таблицы портфеля")
+        return None
+
     fig = go.Figure()
     fig.add_trace(go.Table(
         header=dict(
@@ -609,8 +625,12 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
         paper_bgcolor='white'
     )
 
-    img_bytes = pio.to_image(fig, format='png', engine='kaleido')
-    return io.BytesIO(img_bytes)
+    try:
+        img_bytes = pio.to_image(fig, format='png', engine='kaleido')
+        return io.BytesIO(img_bytes)
+    except Exception as e:
+        logging.error(f"Ошибка экспорта портфеля в PNG: {e}")
+        return None
 
 # ---------- ОСТАЛЬНЫЕ ФУНКЦИИ ----------
 def build_table_universal(df, title, headers, data_columns):
@@ -1014,7 +1034,7 @@ async def main():
     logging.info("✅ Вебхук удалён")
 
     try:
-        await bot.send_message(MY_CHAT_ID, "🚀 Бот перезапущен и готов к работе!")
+        await bot.send_message(MY_CHAT_ID, f"🚀 Бот перезапущен и готов к работе! ver: {VERSION}")
         logging.info("✅ Уведомление о запуске отправлено")
     except Exception as e:
         logging.error(f"❌ Не удалось отправить уведомление о запуске: {e}")
