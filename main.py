@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 6.8 (Modern UI портфель, названия для облигаций и ETF)
+# Версия: 6.9 (портфель без заливки, баланс в шапке)
 # ==============================================
 
 import os
@@ -17,7 +17,6 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.ticker import FuncFormatter
-import numpy as np
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -209,13 +208,13 @@ def get_month_name_ru(month_num):
     }
     return months.get(month_num, str(month_num))
 
-# ---------- ЗАГРУЗКА НАЗВАНИЙ ИЗ MOEX (акции, облигации, ETF) ----------
+# ---------- ЗАГРУЗКА НАЗВАНИЙ ИЗ MOEX ----------
 async def load_instrument_names():
     global ticker_to_name
     global http_session
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-    # 1. Акции (TQBR)
+    # Акции (TQBR)
     url_shares = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=securities"
     try:
         async with http_session.get(url_shares, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
@@ -231,9 +230,7 @@ async def load_instrument_names():
     except Exception as e:
         logging.error(f"Ошибка загрузки акций: {e}")
 
-    # 2. Облигации (TQOB для ОФЗ, TQCB для корпоративных)
-    # Определяем доску по первым буквам тикера: SU -> ОФЗ, иначе корпоративные
-    # Мы не можем заранее знать все тикеры, поэтому загружаем обе доски
+    # Облигации (TQOB и TQCB)
     for board in ['TQOB', 'TQCB']:
         url_bonds = f"https://iss.moex.com/iss/engines/stock/markets/bonds/boards/{board}/securities.json?iss.meta=off&iss.only=securities"
         try:
@@ -250,7 +247,7 @@ async def load_instrument_names():
         except Exception as e:
             logging.error(f"Ошибка загрузки облигаций {board}: {e}")
 
-    # 3. ETF (TQTF)
+    # ETF (TQTF)
     url_etf = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQTF/securities.json?iss.meta=off&iss.only=securities"
     try:
         async with http_session.get(url_etf, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
@@ -422,7 +419,6 @@ async def get_portfolio_data(account_id: str) -> dict:
 
 async def get_portfolio_summary():
     try:
-        # Загружаем названия, если словарь пуст
         if not ticker_to_name:
             await load_instrument_names()
 
@@ -441,7 +437,22 @@ async def get_portfolio_summary():
 
         total_cost = 0.0
         total_value = 0.0
+        balance = 0.0
+
+        type_map = {
+            "INSTRUMENT_TYPE_SHARE": "Акции",
+            "INSTRUMENT_TYPE_BOND": "Облигации",
+            "INSTRUMENT_TYPE_ETF": "Фонды",
+            "INSTRUMENT_TYPE_CURRENCY": "Валюта",
+        }
+
+        # Сначала пройдём по позициям, чтобы вычислить общую стоимость и баланс
         for pos in positions:
+            instrument_type = pos.get("instrumentType", "unknown")
+            if instrument_type == "INSTRUMENT_TYPE_CURRENCY":
+                # Это валюта (баланс)
+                balance = float(pos.get("currentPrice", {}).get("units", 0)) * float(pos.get("quantity", {}).get("units", 0))
+                continue
             quantity = float(pos.get("quantity", {}).get("units", 0))
             avg_price = float(pos.get("averagePositionPrice", {}).get("units", 0))
             price = float(pos.get("currentPrice", {}).get("units", 0))
@@ -458,22 +469,19 @@ async def get_portfolio_summary():
             "currency": total_currency,
             "total_cost": total_cost,
             "total_yield_pct": total_yield_pct,
+            "balance": balance,
             "positions": [],
             "expected_dividends": float(data.get("expectedDividends", 0))
         }
 
-        type_map = {
-            "INSTRUMENT_TYPE_SHARE": "Акции",
-            "INSTRUMENT_TYPE_BOND": "Облигации",
-            "INSTRUMENT_TYPE_ETF": "Фонды",
-            "INSTRUMENT_TYPE_CURRENCY": "Валюта",
-        }
-
+        # Теперь собираем позиции (кроме валюты)
         for pos in positions:
+            instrument_type = pos.get("instrumentType", "unknown")
+            if instrument_type == "INSTRUMENT_TYPE_CURRENCY":
+                continue
             figi = pos.get("figi")
             ticker = pos.get("ticker") or figi
             name = ticker_to_name.get(ticker, ticker)
-            instrument_type = pos.get("instrumentType", "unknown")
             quantity = float(pos.get("quantity", {}).get("units", 0))
             price = float(pos.get("currentPrice", {}).get("units", 0))
             avg_price = float(pos.get("averagePositionPrice", {}).get("units", 0))
@@ -481,7 +489,6 @@ async def get_portfolio_summary():
             currency = pos.get("currentPrice", {}).get("currency", "RUB")
             current_value = quantity * price
             invested = quantity * avg_price
-            dividends = float(pos.get("expectedDividend", 0))
             if invested > 0:
                 pos_yield_pct = (expected_yield / invested) * 100
             else:
@@ -501,8 +508,6 @@ async def get_portfolio_summary():
                 "current_value": current_value,
                 "invested": invested,
                 "pos_yield_pct": pos_yield_pct,
-                "dividends": dividends,
-                "share": (current_value / total_value * 100) if total_value > 0 else 0
             })
 
         return result
@@ -520,7 +525,7 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     for pos in portfolio_data["positions"]:
         groups[pos["type_display"]].append(pos)
 
-    order = ["Акции", "Облигации", "Фонды", "Валюта"]
+    order = ["Акции", "Облигации", "Фонды"]
     ordered_groups = []
     for key in order:
         if key in groups:
@@ -528,84 +533,68 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     for key, vals in groups.items():
         ordered_groups.append((key, vals))
 
-    # Определяем общее количество строк
+    # Подсчёт общего количества строк
     total_rows = 0
     for _, positions in ordered_groups:
-        total_rows += len(positions) + 2  # заголовок и пустая строка после группы? Но мы будем рисовать отдельные таблицы, поэтому считаем общее количество строк для высоты.
-    # Высота = заголовок + сумма строк + отступы
+        total_rows += len(positions) + 1  # каждая группа с заголовком
     height = max(6, total_rows * 0.35 + 3)
+
     fig, ax = plt.subplots(figsize=(10, height))
     ax.axis('off')
 
-    # Общий заголовок
+    # Заголовок с балансом
     total_amount = portfolio_data["total_amount"]
     total_cost = portfolio_data["total_cost"]
     total_yield = portfolio_data["total_yield_pct"]
-    title = f"Портфель\nСумма: {total_amount:.2f} ₽   Вложено: {total_cost:.2f} ₽   Доходность: {total_yield:+.2f}%"
+    balance = portfolio_data.get("balance", 0.0)
+    title = (f"Портфель\n"
+             f"Сумма: {total_amount:.2f} ₽   Вложено: {total_cost:.2f} ₽   "
+             f"Доходность: {total_yield:+.2f}%   Баланс: {balance:.2f} ₽")
     ax.text(0.5, 0.98, title, fontsize=14, fontweight='bold', ha='center', va='top', transform=ax.transAxes)
 
-    # Начинаем рисовать таблицы снизу вверх (чтобы правильно расположить)
-    y_offset = 0.92  # начальная позиция по вертикали (относительно фигуры)
-    row_height = 0.04  # высота строки
-    header_height = 0.06  # высота заголовка группы
+    y_offset = 0.92
+    row_height = 0.04
+    header_height = 0.06
 
     for group_name, positions in ordered_groups:
         if not positions:
             continue
 
-        # Заголовок группы
         ax.text(0.05, y_offset, group_name, fontsize=12, fontweight='bold', va='bottom', transform=ax.transAxes)
         y_offset -= header_height
 
-        # Подготовка данных для таблицы
-        col_labels = ["Название", "Кол-во", "Цена", "Средняя", "Доходность", "Вложено", "Доля"]
+        col_labels = ["Название", "Кол-во", "Цена", "Средняя", "Доходность", "Вложено"]
         table_data = []
-        row_colors = []
         for pos in positions:
-            # Название: если есть имя, используем, иначе тикер
             if pos["name"] and pos["name"] != pos["ticker"]:
-                display_name = pos["name"][:30]  # обрезаем
+                display_name = pos["name"][:30]
             else:
                 display_name = pos["ticker"]
-            # Данные
             table_data.append([
                 display_name,
                 f"{pos['quantity']:.0f}",
                 f"{pos['price']:.2f}",
                 f"{pos['avg_price']:.2f}",
                 f"{pos['pos_yield_pct']:+.2f}%",
-                f"{pos['invested']:.2f}",
-                f"{pos['share']:.1f}%"
+                f"{pos['invested']:.2f}"
             ])
-            # Цвет фона для доходности (зелёный/красный)
-            if pos['pos_yield_pct'] > 0:
-                row_colors.append('#e6f9e6')  # очень светлый зелёный
-            else:
-                row_colors.append('#fce4e4')  # очень светлый красный
 
-        # Создаём таблицу для этой группы
         table = ax.table(cellText=table_data, colLabels=col_labels, loc='center',
                          bbox=[0.05, y_offset - len(table_data)*row_height, 0.9, len(table_data)*row_height],
-                         cellLoc='center', colColours=['#f0f0f0']*len(col_labels),
-                         rowColours=row_colors)
+                         cellLoc='center', colColours=['#f0f0f0']*len(col_labels))
         table.auto_set_font_size(False)
         table.set_fontsize(8)
         table.scale(1, 1.5)
 
-        # Настройка границ: убираем вертикальные линии, оставляем только горизонтальные разделители
         for (i, j), cell in table.get_celld().items():
-            if i == 0:  # заголовок
+            if i == 0:
                 cell.set_linewidth(0.5)
                 cell.set_edgecolor('gray')
                 cell.set_text_props(fontweight='bold', color='black')
             else:
                 cell.set_linewidth(0.3)
                 cell.set_edgecolor('lightgray')
-                # Убираем левую и правую границы
-                cell.set_visible(True)
-                # Можно убрать вертикальные границы, установив edgecolor прозрачным для левой/правой, но проще оставить как есть
 
-        # Обновляем y_offset для следующей группы
         y_offset -= len(table_data) * row_height + 0.02
 
     fig.tight_layout()
@@ -616,10 +605,6 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     return buf
 
 # ---------- ОСТАЛЬНЫЕ ФУНКЦИИ (без изменений) ----------
-# build_table_universal, format_message, format_historical_table, generate_favorites_image, send_top, auto_update_task
-# (они уже есть в предыдущих версиях, я их не меняю, просто копирую)
-
-# ---------- ФУНКЦИИ ДЛЯ ТОПА И ИЗБРАННОГО (копируем из предыдущей версии) ----------
 def build_table_universal(df, title, headers, data_columns):
     if df.empty:
         return ""
@@ -787,7 +772,7 @@ async def send_top(message: types.Message, period: str = 'day'):
                 await message.answer(f"Нет данных за {period}.")
                 return
             changes = calc_period_change(df)
-            shares_all = await get_market_data()  # для названий
+            shares_all = await get_market_data()
             if not shares_all.empty:
                 allowed_tickers = shares_all[shares_all['LISTLEVEL'] < 3]['SECID'].unique()
                 changes = changes[changes['SECID'].isin(allowed_tickers)]
@@ -1042,7 +1027,6 @@ async def main():
     init_db()
     http_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
 
-    # Загружаем названия для всех инструментов
     await load_instrument_names()
 
     await bot.delete_webhook(drop_pending_updates=True)
