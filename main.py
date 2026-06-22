@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 8.5 (только акции в топе, шапка с индексом и сессией)
+# Версия: 8.6 (индекс из CURRENTVALUE)
 # ==============================================
 
 import os
@@ -34,7 +34,7 @@ import plotly.io as pio
 pio.kaleido.scope.default_format = "png"
 
 # ---------- ВЕРСИЯ ----------
-VERSION = "8.5"
+VERSION = "8.6"
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -322,7 +322,7 @@ async def get_market_data():
 async def get_moex_index_info():
     """
     Возвращает словарь с данными индекса IMOEX:
-    last, change_percent
+    last (текущее значение), change_percent
     """
     global http_session
     url = "https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX.json?iss.meta=off"
@@ -338,13 +338,17 @@ async def get_moex_index_info():
                 md_rows = json_data['marketdata']['data']
                 if md_rows:
                     row = md_rows[0]
-                    last_idx = md_columns.index('LASTVALUE') if 'LASTVALUE' in md_columns else None
+                    # Текущее значение — CURRENTVALUE
+                    current_idx = md_columns.index('CURRENTVALUE') if 'CURRENTVALUE' in md_columns else None
+                    if current_idx is None:
+                        current_idx = md_columns.index('LASTVALUE') if 'LASTVALUE' in md_columns else None
+                    # Изменение в процентах — LASTCHANGEPRC
                     change_idx = md_columns.index('LASTCHANGEPRC') if 'LASTCHANGEPRC' in md_columns else None
                     if change_idx is None:
                         change_idx = md_columns.index('LASTCHANGETOOPENPRC') if 'LASTCHANGETOOPENPRC' in md_columns else None
                     result = {}
-                    if last_idx is not None:
-                        result['last'] = float(row[last_idx])
+                    if current_idx is not None:
+                        result['last'] = float(row[current_idx])
                     if change_idx is not None:
                         result['change_percent'] = float(row[change_idx])
                     if result:
