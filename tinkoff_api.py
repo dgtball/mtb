@@ -6,14 +6,12 @@ async def tinkoff_api_request(http_session, method: str, endpoint: str, params: 
     if not TINKOFF_TOKEN:
         raise ValueError("Токен TITN не задан")
     url = f"{TINKOFF_API_URL}{endpoint}"
-    logging.info(f"🔗 Запрос к API Т-Инвестиций: {url}")
     headers = {
         "Authorization": f"Bearer {TINKOFF_TOKEN}",
         "Content-Type": "application/json",
         "Accept": "application/json"
     }
     async with http_session.request(method, url, headers=headers, json=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-        logging.info(f"📊 Статус ответа: {resp.status}")
         if resp.status != 200:
             text = await resp.text()
             logging.error(f"Ошибка API: статус {resp.status}, тело: {text[:500]}")
@@ -33,7 +31,6 @@ async def get_portfolio_data(http_session, account_id: str) -> dict:
 
 async def get_portfolio_summary(http_session):
     try:
-        # если ticker_to_name пуст, он будет загружен в main заранее
         accounts = await get_accounts(http_session)
         if not accounts:
             return None
@@ -43,6 +40,8 @@ async def get_portfolio_summary(http_session):
 
         data = await get_portfolio_data(http_session, account_id)
         positions = data.get("positions", [])
+        logging.info(f"Позиций от API: {len(positions)}")  # <-- ДИАГНОСТИКА
+
         total_amount = data.get("totalAmountPortfolio", {})
         total = float(total_amount.get("units", 0))
         total_currency = total_amount.get("currency", "RUB")
@@ -73,7 +72,7 @@ async def get_portfolio_summary(http_session):
                 continue
             filtered_positions.append(pos)
 
-        #logging.info(f"После фильтрации осталось {len(filtered_positions)} позиций")
+        logging.info(f"Позиций после фильтрации валют: {len(filtered_positions)}")  # <-- ДИАГНОСТИКА
 
         for pos in filtered_positions:
             quantity = float(pos.get("quantity", {}).get("units", 0))
@@ -134,6 +133,9 @@ async def get_portfolio_summary(http_session):
                 "avg_price": avg_price,
                 "pos_yield_pct": pos_yield_pct,
             })
+
+        logging.info(f"Позиций в результате: {len(result['positions'])}")  # <-- ДИАГНОСТИКА
+        logging.info(f"Тикеры в результате: {[p['ticker'] for p in result['positions']]}")  # <-- ПОЛНЫЙ СПИСОК
 
         return result
     except Exception as e:
