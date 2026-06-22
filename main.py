@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 7.9 (исправлен индекс IMOEX, отдельные таблицы портфеля)
+# Версия: 8.0 (исправлены индекс и портфель)
 # ==============================================
 
 import os
@@ -34,7 +34,7 @@ import plotly.io as pio
 pio.kaleido.scope.default_format = "png"
 
 # ---------- ВЕРСИЯ ----------
-VERSION = "7.9"
+VERSION = "8.0"
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -311,24 +311,7 @@ async def get_moex_index_info():
                 logging.warning(f"MOEX index returned status {resp.status}")
                 return None
             json_data = await resp.json()
-            # Проверяем marketdata
-            if 'marketdata' in json_data:
-                md_columns = json_data['marketdata']['columns']
-                md_rows = json_data['marketdata']['data']
-                if md_rows:
-                    row = md_rows[0]
-                    try:
-                        last_idx = md_columns.index('LAST')
-                        change_percent_idx = md_columns.index('CHANGEPERCENT')
-                        result = {
-                            'last': float(row[last_idx]),
-                            'change_percent': float(row[change_percent_idx])
-                        }
-                        logging.info(f"Индекс IMOEX из marketdata: {result}")
-                        return result
-                    except ValueError as e:
-                        logging.warning(f"Не найдены колонки в marketdata: {e}")
-            # Проверяем securities
+            # Проверяем securities (там всегда есть LAST, CHANGEPERCENT)
             if 'securities' in json_data:
                 columns = json_data['securities']['columns']
                 data_rows = json_data['securities']['data']
@@ -584,10 +567,12 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     total_yield = portfolio_data["total_yield_pct"]
     balance = portfolio_data.get("balance", 0.0)
 
-    # Создаём фигуру с subplots
+    # Создаём фигуру с subplots типа table
     rows = len(ordered_groups)
+    specs = [[{"type": "table"} for _ in range(1)] for _ in range(rows)]
     fig = make_subplots(rows=rows, cols=1, shared_xaxes=False,
-                        vertical_spacing=0.05, subplot_titles=[g[0] for g in ordered_groups])
+                        vertical_spacing=0.05, subplot_titles=[g[0] for g in ordered_groups],
+                        specs=specs)
 
     # Определяем общую высоту
     height = 200 + sum(len(v) * 25 for _, v in ordered_groups) + rows * 60
