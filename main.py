@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 7.7 (исправлен портфель, индекс в топе дня)
+# Версия: 7.9 (исправлен индекс IMOEX, отдельные таблицы портфеля)
 # ==============================================
 
 import os
@@ -29,11 +29,12 @@ import aiohttp
 import pandas as pd
 from tabulate import tabulate
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import plotly.io as pio
 pio.kaleido.scope.default_format = "png"
 
 # ---------- ВЕРСИЯ ----------
-VERSION = "7.7"
+VERSION = "7.9"
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -310,24 +311,41 @@ async def get_moex_index_info():
                 logging.warning(f"MOEX index returned status {resp.status}")
                 return None
             json_data = await resp.json()
-            if 'securities' not in json_data:
-                logging.warning("No 'securities' in index response")
-                return None
-            columns = json_data['securities']['columns']
-            data_rows = json_data['securities']['data']
-            if not data_rows:
-                logging.warning("Empty index data")
-                return None
-            row = data_rows[0]
-            last_idx = columns.index('LAST') if 'LAST' in columns else None
-            change_percent_idx = columns.index('CHANGEPERCENT') if 'CHANGEPERCENT' in columns else None
-            result = {}
-            if last_idx is not None:
-                result['last'] = float(row[last_idx])
-            if change_percent_idx is not None:
-                result['change_percent'] = float(row[change_percent_idx])
-            logging.info(f"Индекс IMOEX: {result}")
-            return result
+            # Проверяем marketdata
+            if 'marketdata' in json_data:
+                md_columns = json_data['marketdata']['columns']
+                md_rows = json_data['marketdata']['data']
+                if md_rows:
+                    row = md_rows[0]
+                    try:
+                        last_idx = md_columns.index('LAST')
+                        change_percent_idx = md_columns.index('CHANGEPERCENT')
+                        result = {
+                            'last': float(row[last_idx]),
+                            'change_percent': float(row[change_percent_idx])
+                        }
+                        logging.info(f"Индекс IMOEX из marketdata: {result}")
+                        return result
+                    except ValueError as e:
+                        logging.warning(f"Не найдены колонки в marketdata: {e}")
+            # Проверяем securities
+            if 'securities' in json_data:
+                columns = json_data['securities']['columns']
+                data_rows = json_data['securities']['data']
+                if data_rows:
+                    row = data_rows[0]
+                    last_idx = columns.index('LAST') if 'LAST' in columns else None
+                    change_percent_idx = columns.index('CHANGEPERCENT') if 'CHANGEPERCENT' in columns else None
+                    result = {}
+                    if last_idx is not None:
+                        result['last'] = float(row[last_idx])
+                    if change_percent_idx is not None:
+                        result['change_percent'] = float(row[change_percent_idx])
+                    if result:
+                        logging.info(f"Индекс IMOEX из securities: {result}")
+                        return result
+            logging.warning("Не найдены данные индекса")
+            return None
     except Exception as e:
         logging.error(f"Ошибка получения индекса: {e}")
         return None
@@ -521,7 +539,6 @@ async def get_portfolio_summary():
             else:
                 pos_yield_pct = 0.0
             instrument_type = pos.get("instrumentType", "")
-            # Если тип неизвестен, относим к Акциям
             if instrument_type not in type_map:
                 type_display = "Акции"
             else:
@@ -544,7 +561,7 @@ async def get_portfolio_summary():
         logging.error(f"Ошибка портфеля: {e}")
         return None
 
-# ---------- ГЕНЕРАЦИЯ КАРТИНКИ ПОРТФЕЛЯ (PLOTLY) ----------
+# ---------- ГЕНЕРАЦИЯ КАРТИНКИ ПОРТФЕЛЯ (ОТДЕЛЬНЫЕ ТАБЛИЦЫ) ----------
 def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     if not portfolio_data or not portfolio_data["positions"]:
         logging.warning("Нет позиций для отображения портфеля")
@@ -555,81 +572,79 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
         groups[pos["type_display"]].append(pos)
 
     order = ["Акции", "Облигации", "Фонды"]
-    ordered_groups = []
-    for key in order:
-        if key in groups:
-            ordered_groups.append((key, groups.pop(key)))
-    # Добавляем остальные группы (если есть)
+    ordered_groups = [(key, groups.pop(key)) for key in order if key in groups]
     for key, vals in groups.items():
         ordered_groups.append((key, vals))
+
+    if not ordered_groups:
+        return None
 
     total_amount = portfolio_data["total_amount"]
     total_cost = portfolio_data["total_cost"]
     total_yield = portfolio_data["total_yield_pct"]
     balance = portfolio_data.get("balance", 0.0)
 
-    title_text = (f"Портфель<br>"
-                  f"Сумма: {total_amount:.2f} ₽   Вложено: {total_cost:.2f} ₽   "
-                  f"Доходность: {total_yield:+.2f}%   Баланс: {balance:.2f} ₽")
+    # Создаём фигуру с subplots
+    rows = len(ordered_groups)
+    fig = make_subplots(rows=rows, cols=1, shared_xaxes=False,
+                        vertical_spacing=0.05, subplot_titles=[g[0] for g in ordered_groups])
+
+    # Определяем общую высоту
+    height = 200 + sum(len(v) * 25 for _, v in ordered_groups) + rows * 60
 
     col_labels = ["Название", "Кол-во", "Цена", "Средняя", "Доходность"]
-    cells = []
-    row_colors = []
 
-    for group_name, positions in ordered_groups:
-        # Заголовок группы
-        row = [group_name, "", "", "", ""]
-        cells.append(row)
-        row_colors.append('#d0d0d0')
+    for idx, (group_name, positions) in enumerate(ordered_groups, start=1):
+        table_data = []
         for pos in positions:
             if pos["name"] and pos["name"] != pos["ticker"]:
                 display_name = pos["name"][:30]
             else:
                 display_name = pos["ticker"]
-            row = [
+            table_data.append([
                 display_name,
                 f"{pos['quantity']:.0f}",
                 f"{pos['price']:.2f}",
                 f"{pos['avg_price']:.2f}",
                 f"{pos['pos_yield_pct']:+.2f}%"
-            ]
-            cells.append(row)
-            if pos['pos_yield_pct'] > 0:
-                row_colors.append('#e6f9e6')
-            else:
-                row_colors.append('#fce4e4')
+            ])
 
-    if not cells:
-        logging.warning("Нет данных для построения таблицы портфеля")
-        return None
-
-    fig = go.Figure()
-    fig.add_trace(go.Table(
-        header=dict(
-            values=col_labels,
-            fill_color='#f0f0f0',
-            align='center',
-            font=dict(size=12, color='black', family='Arial')
-        ),
-        cells=dict(
-            values=[list(col) for col in zip(*cells)],
-            fill_color=[row_colors],
-            align='center',
-            font=dict(size=11, color='black', family='Arial')
+        # Создаём таблицу для этой группы
+        table_trace = go.Table(
+            header=dict(
+                values=col_labels,
+                fill_color='#f0f0f0',
+                align='center',
+                font=dict(size=12, color='black', family='Arial')
+            ),
+            cells=dict(
+                values=[list(col) for col in zip(*table_data)] if table_data else [[]],
+                fill_color=[[
+                    '#e6f9e6' if float(row[4].replace('%', '').replace('+', '')) > 0 else '#fce4e4'
+                    for row in table_data
+                ]],
+                align='center',
+                font=dict(size=11, color='black', family='Arial')
+            ),
+            name=group_name
         )
-    ))
 
+        fig.add_trace(table_trace, row=idx, col=1)
+
+    # Обновляем макет
     fig.update_layout(
         title=dict(
-            text=title_text,
+            text=f"Портфель<br>Сумма: {total_amount:.2f} ₽   Вложено: {total_cost:.2f} ₽   "
+                 f"Доходность: {total_yield:+.2f}%   Баланс: {balance:.2f} ₽",
             x=0.5,
             xanchor='center',
             font=dict(size=14, family='Arial', color='black')
         ),
         width=800,
-        height=200 + len(cells) * 25,
-        margin=dict(l=20, r=20, t=60, b=20),
-        paper_bgcolor='white'
+        height=height,
+        margin=dict(l=20, r=20, t=80, b=20),
+        paper_bgcolor='white',
+        showlegend=False
     )
 
     try:
