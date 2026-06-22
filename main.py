@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 8.3 (индекс из marketdata, больше переопределений)
+# Версия: 8.4 (индекс из marketdata, больше названий)
 # ==============================================
 
 import os
@@ -34,7 +34,7 @@ import plotly.io as pio
 pio.kaleido.scope.default_format = "png"
 
 # ---------- ВЕРСИЯ ----------
-VERSION = "8.3"
+VERSION = "8.4"
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -73,6 +73,8 @@ NAME_OVERRIDES = {
     "ГАЗПРОМ ао": "Газпром",
     "Ростел -ао": "Ростелеком",
     "Т-Техно ао": "Т-Технологии",
+    "КЦ ИКС 5": "X5",
+    "Самолет ао": "Самолет",
 }
 
 # ---------- СПИСОК НЕТОРГОВЫХ ВЫХОДНЫХ 2026 ----------
@@ -94,7 +96,7 @@ NO_TRADING_WEEKENDS_2026 = [
 # ---------- ЛОГИРОВАНИЕ ----------
 logging.basicConfig(level=logging.INFO)
 
-# ---------- ГЛОБАЛЬНЫЙ СЛОВАРЬ ДЛЯ НАЗВАНИЙ ----------
+# ---------- ГЛОБАЛЬНЫЙ СЛОВАРЬ ДЛЯ НАЗВАНИЙ ИЗ MOEX ----------
 ticker_to_name = {}
 
 # ---------- ИНИЦИАЛИЗАЦИЯ БОТА ----------
@@ -331,21 +333,22 @@ async def get_moex_index_info():
                 logging.warning(f"MOEX index returned status {resp.status}")
                 return None
             json_data = await resp.json()
-            logging.info(f"Полный ответ индекса: {json_data.keys()}")
             # Проверяем marketdata
             if 'marketdata' in json_data:
                 md_columns = json_data['marketdata']['columns']
                 md_rows = json_data['marketdata']['data']
-                logging.info(f"Колонки marketdata индекса: {md_columns}")
                 if md_rows:
                     row = md_rows[0]
-                    last_idx = md_columns.index('LAST') if 'LAST' in md_columns else None
-                    change_percent_idx = md_columns.index('CHANGEPERCENT') if 'CHANGEPERCENT' in md_columns else None
+                    # Ищем LASTVALUE, LASTCHANGEPRC (или LASTCHANGETOOPENPRC)
+                    last_idx = md_columns.index('LASTVALUE') if 'LASTVALUE' in md_columns else None
+                    change_idx = md_columns.index('LASTCHANGEPRC') if 'LASTCHANGEPRC' in md_columns else None
+                    if change_idx is None:
+                        change_idx = md_columns.index('LASTCHANGETOOPENPRC') if 'LASTCHANGETOOPENPRC' in md_columns else None
                     result = {}
                     if last_idx is not None:
                         result['last'] = float(row[last_idx])
-                    if change_percent_idx is not None:
-                        result['change_percent'] = float(row[change_percent_idx])
+                    if change_idx is not None:
+                        result['change_percent'] = float(row[change_idx])
                     if result:
                         logging.info(f"Индекс IMOEX из marketdata: {result}")
                         return result
