@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 8.1.1 (индекс, фильтр акций, разделение портфеля)
+# Версия: 8.2 (исправлены BOARDID, названия, падения)
 # ==============================================
 
 import os
@@ -34,7 +34,7 @@ import plotly.io as pio
 pio.kaleido.scope.default_format = "png"
 
 # ---------- ВЕРСИЯ ----------
-VERSION = "8.1.1"
+VERSION = "8.2"
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -57,6 +57,21 @@ DB_PATH = os.path.join(DATA_DIR, 'favorites.db')
 PORT = int(os.getenv('PORT', 3000))
 
 TINKOFF_API_URL = os.getenv("TINKOFF_API_URL", "https://invest-public-api.tbank.ru/rest/")
+
+# ---------- ПЕРЕОПРЕДЕЛЕНИЕ НАЗВАНИЙ ДЛЯ ПОРТФЕЛЯ ----------
+NAME_OVERRIDES = {
+    "MDMG-ао": "Мать и Дитя",
+    "iАстра ао": "Астра",
+    "iСофтлайн": "Софтлайн",
+    "МКПАО \"ВК\"": "ВК",
+    "iВУШХолдинг": "ВУШ",
+    "iКаршеринг": "Делимобиль",
+    "Татнфт Зап": "Татнефть-ап",
+    "СевСт-ао": "Северсталь",
+    "Роснефть": "Роснефть",
+    "Газпотреб": "Газпром нефть",
+    "ГАЗПРОМ ао": "Газпром",
+}
 
 # ---------- СПИСОК НЕТОРГОВЫХ ВЫХОДНЫХ 2026 ----------
 NO_TRADING_WEEKENDS_2026 = [
@@ -290,7 +305,11 @@ async def get_market_data():
                 sec_columns = json_data['securities']['columns']
                 sec_rows = json_data['securities']['data']
                 sec_df = pd.DataFrame(sec_rows, columns=sec_columns)
-                sec_df = sec_df[['SECID', 'SHORTNAME', 'LISTLEVEL', 'BOARDID']].copy()
+                # Выбираем нужные колонки, включая BOARDID
+                available_cols = ['SECID', 'SHORTNAME', 'LISTLEVEL']
+                if 'BOARDID' in sec_df.columns:
+                    available_cols.append('BOARDID')
+                sec_df = sec_df[available_cols].copy()
                 merged = pd.merge(market_df, sec_df, on='SECID', how='left')
                 return merged
         except Exception:
@@ -318,8 +337,14 @@ async def get_moex_index_info():
                 logging.info(f"Колонки индекса: {columns}")
                 if data_rows:
                     row = data_rows[0]
-                    last_idx = columns.index('LAST') if 'LAST' in columns else None
-                    change_percent_idx = columns.index('CHANGEPERCENT') if 'CHANGEPERCENT' in columns else None
+                    # Ищем LAST и CHANGEPERCENT
+                    last_idx = None
+                    change_percent_idx = None
+                    for idx, col in enumerate(columns):
+                        if col == 'LAST':
+                            last_idx = idx
+                        if col == 'CHANGEPERCENT':
+                            change_percent_idx = idx
                     result = {}
                     if last_idx is not None:
                         result['last'] = float(row[last_idx])
@@ -362,8 +387,9 @@ async def get_historical_shares(from_date: str, till_date: str):
 def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool = True):
     if data.empty:
         return pd.DataFrame(), pd.DataFrame()
-    # Исключаем всё, что не акции (доска TQBR)
-    data = data[data['BOARDID'] == 'TQBR'].copy()
+    # Фильтрация по BOARDID, если колонка есть
+    if 'BOARDID' in data.columns:
+        data = data[data['BOARDID'] == 'TQBR'].copy()
     if exclude_level3 and 'LISTLEVEL' in data.columns:
         data = data[data['LISTLEVEL'] < 3].copy()
     data = data.copy()
@@ -513,7 +539,11 @@ async def get_portfolio_summary():
         for pos in filtered_positions:
             figi = pos.get("figi")
             ticker = pos.get("ticker") or figi
-            name = ticker_to_name.get(ticker, ticker)
+            # Получаем название из словаря или из MOEX
+            raw_name = ticker_to_name.get(ticker, ticker)
+            # Переопределяем, если есть в словаре
+            name = NAME_OVERRIDES.get(raw_name, raw_name)
+
             quantity = float(pos.get("quantity", {}).get("units", 0))
             price = float(pos.get("currentPrice", {}).get("units", 0))
             avg_price = float(pos.get("averagePositionPrice", {}).get("units", 0))
@@ -523,16 +553,18 @@ async def get_portfolio_summary():
             else:
                 pos_yield_pct = 0.0
             instrument_type = pos.get("instrumentType", "")
+
             # Определяем тип отображения
             if instrument_type in type_map:
                 type_display = type_map[instrument_type]
             else:
-                # Если тип неизвестен, пробуем определить по имени или тикеру
+                # Если тип неизвестен, определяем эвристически
                 if "ОФЗ" in name or "SU" in ticker:
                     type_display = "Облигации"
                 elif "ETF" in name or "LQDT" in ticker or "TGLD" in ticker:
                     type_display = "Фонды"
                 else:
+                    # По умолчанию относим к акциям
                     type_display = "Акции"
 
             result["positions"].append({
@@ -552,7 +584,7 @@ async def get_portfolio_summary():
         logging.error(f"Ошибка портфеля: {e}")
         return None
 
-# ---------- ГЕНЕРАЦИЯ КАРТИНКИ ПОРТФЕЛЯ (ОТДЕЛЬНЫЕ ТАБЛИЦЫ) ----------
+# ---------- ГЕНЕРАЦИЯ КАРТИНКИ ПОРТФЕЛЯ ----------
 def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     if not portfolio_data or not portfolio_data["positions"]:
         logging.warning("Нет позиций для отображения портфеля")
@@ -575,7 +607,6 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     total_yield = portfolio_data["total_yield_pct"]
     balance = portfolio_data.get("balance", 0.0)
 
-    # Создаём фигуру с subplots типа table
     rows = len(ordered_groups)
     specs = [[{"type": "table"} for _ in range(1)] for _ in range(rows)]
     fig = make_subplots(rows=rows, cols=1, shared_xaxes=False,
@@ -589,10 +620,7 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     for idx, (group_name, positions) in enumerate(ordered_groups, start=1):
         table_data = []
         for pos in positions:
-            if pos["name"] and pos["name"] != pos["ticker"]:
-                display_name = pos["name"][:30]
-            else:
-                display_name = pos["ticker"]
+            display_name = pos["name"][:30] if pos["name"] else pos["ticker"]
             table_data.append([
                 display_name,
                 f"{pos['quantity']:.0f}",
