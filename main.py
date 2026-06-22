@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 8.4 (индекс из marketdata, больше названий)
+# Версия: 8.5 (только акции в топе, шапка с индексом и сессией)
 # ==============================================
 
 import os
@@ -34,7 +34,7 @@ import plotly.io as pio
 pio.kaleido.scope.default_format = "png"
 
 # ---------- ВЕРСИЯ ----------
-VERSION = "8.4"
+VERSION = "8.5"
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -309,7 +309,7 @@ async def get_market_data():
                 sec_columns = json_data['securities']['columns']
                 sec_rows = json_data['securities']['data']
                 sec_df = pd.DataFrame(sec_rows, columns=sec_columns)
-                available_cols = ['SECID', 'SHORTNAME', 'LISTLEVEL']
+                available_cols = ['SECID', 'SHORTNAME', 'LISTLEVEL', 'SECTYPE']
                 if 'BOARDID' in sec_df.columns:
                     available_cols.append('BOARDID')
                 sec_df = sec_df[available_cols].copy()
@@ -333,13 +333,11 @@ async def get_moex_index_info():
                 logging.warning(f"MOEX index returned status {resp.status}")
                 return None
             json_data = await resp.json()
-            # Проверяем marketdata
             if 'marketdata' in json_data:
                 md_columns = json_data['marketdata']['columns']
                 md_rows = json_data['marketdata']['data']
                 if md_rows:
                     row = md_rows[0]
-                    # Ищем LASTVALUE, LASTCHANGEPRC (или LASTCHANGETOOPENPRC)
                     last_idx = md_columns.index('LASTVALUE') if 'LASTVALUE' in md_columns else None
                     change_idx = md_columns.index('LASTCHANGEPRC') if 'LASTCHANGEPRC' in md_columns else None
                     if change_idx is None:
@@ -352,7 +350,6 @@ async def get_moex_index_info():
                     if result:
                         logging.info(f"Индекс IMOEX из marketdata: {result}")
                         return result
-            # Если не нашли, пробуем securities
             if 'securities' in json_data:
                 columns = json_data['securities']['columns']
                 data_rows = json_data['securities']['data']
@@ -402,6 +399,9 @@ async def get_historical_shares(from_date: str, till_date: str):
 def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool = True):
     if data.empty:
         return pd.DataFrame(), pd.DataFrame()
+    # Фильтрация только акций (SECTYPE == 1)
+    if 'SECTYPE' in data.columns:
+        data = data[data['SECTYPE'] == 1].copy()
     if 'BOARDID' in data.columns:
         data = data[data['BOARDID'] == 'TQBR'].copy()
     if exclude_level3 and 'LISTLEVEL' in data.columns:
@@ -613,7 +613,6 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     if not ordered_groups:
         return None
 
-    # Логируем количество позиций в группах
     for group_name, positions in ordered_groups:
         logging.info(f"Группа {group_name}: {len(positions)} позиций")
 
@@ -708,6 +707,7 @@ def build_table_universal(df, title, headers, data_columns):
     return f"<b>{title}</b>\n<pre>{table}</pre>\n"
 
 def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_info: dict, update_time: str, session_status: str) -> str:
+    header = ""
     if index_info and 'last' in index_info:
         last = index_info['last']
         change = index_info.get('change_percent', 0)
@@ -716,9 +716,8 @@ def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_info: dict
             arrow = "📈"
         elif change < 0:
             arrow = "📉"
-        header = f"📊 Индекс МосБиржи: {last:.2f} ({change:+.2f}%) {arrow}\n"
-    else:
-        header = f"📊 {session_status}\n"
+        header += f"💼 Индекс МосБиржи: {last:.2f} ({change:+.2f}%) {arrow}\n"
+    header += f"📌 {session_status}\n"
     header += f"🕒 Обновлено: {update_time}\n\n"
     text = header
     text += build_table_universal(gainers, "📈 Лидеры роста", ["Тикер", "Название", "Цена", "Изменение"], ['SECID', 'SHORTNAME', 'LAST', 'CHANGEPERCENT'])
@@ -836,7 +835,7 @@ async def send_top(message: types.Message, period: str = 'day'):
             if gainers.empty and losers.empty:
                 await loading_msg.delete()
                 session_status = get_session_status()
-                await message.answer(f"📊 {session_status}\nДанные обновятся в рабочее время.")
+                await message.answer(f"📌 {session_status}\nДанные обновятся в рабочее время.")
                 return
             index_info = await get_moex_index_info()
             session_status = get_session_status()
@@ -966,7 +965,7 @@ async def handle_buttons_and_commands(message: types.Message):
         gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
         if gainers.empty and losers.empty:
             session_status = get_session_status()
-            await message.answer(f"📊 {session_status}\nДанные обновятся в рабочее время.")
+            await message.answer(f"📌 {session_status}\nДанные обновятся в рабочее время.")
             await safe_delete_message(message.chat.id, message.message_id)
             return
         index_info = await get_moex_index_info()
