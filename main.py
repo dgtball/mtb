@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 8.10 (фильтр по SECTYPE 1 и 2)
+# Версия: 8.10.1 (фильтр по SECTYPE 1 и 2)
 # ==============================================
 
 import os
@@ -34,7 +34,7 @@ import plotly.io as pio
 pio.kaleido.scope.default_format = "png"
 
 # ---------- ВЕРСИЯ ----------
-VERSION = "8.10"
+VERSION = "8.10.1"
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -309,14 +309,27 @@ async def get_market_data():
                 sec_columns = json_data['securities']['columns']
                 sec_rows = json_data['securities']['data']
                 sec_df = pd.DataFrame(sec_rows, columns=sec_columns)
-                # Добавляем SECTYPE
-                available_cols = ['SECID', 'SHORTNAME', 'LISTLEVEL', 'SECTYPE']
-                if 'BOARDID' in sec_df.columns:
+                
+                # Логируем колонки securities
+                logging.info(f"Колонки securities: {sec_columns}")
+                # Проверяем наличие SECTYPE
+                if 'SECTYPE' in sec_columns:
+                    sample = sec_df['SECTYPE'].head(10).tolist()
+                    logging.info(f"Примеры SECTYPE: {sample}")
+                else:
+                    logging.warning("SECTYPE отсутствует в ответе MOEX")
+                
+                # Выбираем доступные колонки
+                available_cols = ['SECID', 'SHORTNAME', 'LISTLEVEL']
+                if 'SECTYPE' in sec_columns:
+                    available_cols.append('SECTYPE')
+                if 'BOARDID' in sec_columns:
                     available_cols.append('BOARDID')
                 sec_df = sec_df[available_cols].copy()
                 merged = pd.merge(market_df, sec_df, on='SECID', how='left')
                 return merged
-        except Exception:
+        except Exception as e:
+            logging.error(f"Ошибка в get_market_data: {e}")
             await asyncio.sleep(2)
     return pd.DataFrame()
 
