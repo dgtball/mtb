@@ -40,7 +40,7 @@ async def get_portfolio_summary(http_session):
 
         data = await get_portfolio_data(http_session, account_id)
         positions = data.get("positions", [])
-        logging.info(f"Позиций от API: {len(positions)}")  # <-- ДИАГНОСТИКА
+        logging.info(f"Позиций от API: {len(positions)}")
 
         total_amount = data.get("totalAmountPortfolio", {})
         total = float(total_amount.get("units", 0))
@@ -72,7 +72,7 @@ async def get_portfolio_summary(http_session):
                 continue
             filtered_positions.append(pos)
 
-        logging.info(f"Позиций после фильтрации валют: {len(filtered_positions)}")  # <-- ДИАГНОСТИКА
+        logging.info(f"Позиций после фильтрации валют: {len(filtered_positions)}")
 
         for pos in filtered_positions:
             quantity = float(pos.get("quantity", {}).get("units", 0))
@@ -112,15 +112,23 @@ async def get_portfolio_summary(http_session):
                 pos_yield_pct = 0.0
             instrument_type = pos.get("instrumentType", "")
 
+            # --- Логика классификации ---
             if instrument_type in type_map:
                 type_display = type_map[instrument_type]
             else:
-                if "ОФЗ" in name or "SU" in ticker:
+                # Если API не дал тип, пытаемся угадать по названию/тикеру
+                name_lower = name.lower()
+                if "офз" in name_lower or "облиг" in name_lower:
                     type_display = "Облигации"
-                elif "ETF" in name or "LQDT" in ticker or "TGLD" in ticker:
+                elif ticker.startswith(("SU", "RU")):      # российские облигации
+                    type_display = "Облигации"
+                elif "ETF" in name or ticker in ("LQDT", "TGLD", "TGLD@"):
+                    type_display = "Фонды"
+                elif "фонд" in name_lower or "etf" in name_lower:
                     type_display = "Фонды"
                 else:
                     type_display = "Акции"
+                    logging.info(f"Неопознанный тип инструмента: ticker={ticker}, name={name}, instrumentType={instrument_type} — отнесён к акциям")
 
             result["positions"].append({
                 "figi": figi,
@@ -134,9 +142,7 @@ async def get_portfolio_summary(http_session):
                 "pos_yield_pct": pos_yield_pct,
             })
 
-        logging.info(f"Позиций в результате: {len(result['positions'])}")  # <-- ДИАГНОСТИКА
-        logging.info(f"Тикеры в результате: {[p['ticker'] for p in result['positions']]}")  # <-- ПОЛНЫЙ СПИСОК
-
+        logging.info(f"Позиций в результате: {len(result['positions'])}")
         return result
     except Exception as e:
         logging.error(f"Ошибка портфеля: {e}")

@@ -25,10 +25,10 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     for key, vals in groups.items():
         ordered_groups.append((key, vals))
 
-    # --- ДИАГНОСТИКА: выводим все тикеры каждой группы ---
+    # Диагностика: выводим количество и первые 3 тикера
     for group_name, positions in ordered_groups:
-        tickers_in_group = [p['ticker'] for p in positions]
-        logging.info(f"Группа {group_name}: {len(positions)} позиций. Тикеры: {tickers_in_group}")
+        sample_tickers = [p['ticker'] for p in positions[:3]]
+        logging.info(f"Группа {group_name}: {len(positions)} позиций. Примеры: {sample_tickers}")
 
     if not ordered_groups:
         return None
@@ -39,16 +39,16 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     balance = portfolio_data.get("balance", 0.0)
 
     rows = len(ordered_groups)
-    # Вычисляем высоту каждой строки таблицы: 30 пикселей на позицию + 30 на заголовок
-    row_heights = [30 * len(positions) + 40 for _, positions in ordered_groups]
-    total_height = sum(row_heights) + 150  # дополнительно на заголовок всего графика и отступы
+    # Высота строки на одну позицию, плюс заголовок таблицы (30px), плюс небольшой запас
+    row_heights = [30 * len(positions) + 50 for _, positions in ordered_groups]
+    total_height = sum(row_heights) + 100  # 100px на общий заголовок и поля
 
     specs = [[{"type": "table"} for _ in range(1)] for _ in range(rows)]
     fig = make_subplots(
         rows=rows, cols=1,
-        row_heights=row_heights,  # <-- явно задаём высоту для каждой панели
+        row_heights=row_heights,
         shared_xaxes=False,
-        vertical_spacing=0.05,
+        vertical_spacing=0.01,          # <-- минимальный зазор между подтаблицами
         subplot_titles=[g[0] for g in ordered_groups],
         specs=specs
     )
