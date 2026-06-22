@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 8.0 (исправлены индекс и портфель)
+# Версия: 8.1 (исправлены индекс и группировка портфеля)
 # ==============================================
 
 import os
@@ -34,7 +34,7 @@ import plotly.io as pio
 pio.kaleido.scope.default_format = "png"
 
 # ---------- ВЕРСИЯ ----------
-VERSION = "8.0"
+VERSION = "8.1"
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -303,7 +303,8 @@ async def get_moex_index_info():
     last, change_percent
     """
     global http_session
-    url = "https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX.json?iss.meta=off"
+    # Прямой запрос к индексу IMOEX через marketdata
+    url = "https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX.json?iss.meta=off&iss.only=marketdata"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     try:
         async with http_session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
@@ -311,23 +312,25 @@ async def get_moex_index_info():
                 logging.warning(f"MOEX index returned status {resp.status}")
                 return None
             json_data = await resp.json()
-            # Проверяем securities (там всегда есть LAST, CHANGEPERCENT)
-            if 'securities' in json_data:
-                columns = json_data['securities']['columns']
-                data_rows = json_data['securities']['data']
-                if data_rows:
-                    row = data_rows[0]
-                    last_idx = columns.index('LAST') if 'LAST' in columns else None
-                    change_percent_idx = columns.index('CHANGEPERCENT') if 'CHANGEPERCENT' in columns else None
-                    result = {}
-                    if last_idx is not None:
-                        result['last'] = float(row[last_idx])
-                    if change_percent_idx is not None:
-                        result['change_percent'] = float(row[change_percent_idx])
-                    if result:
-                        logging.info(f"Индекс IMOEX из securities: {result}")
-                        return result
-            logging.warning("Не найдены данные индекса")
+            if 'marketdata' not in json_data:
+                logging.warning("No marketdata in index response")
+                return None
+            columns = json_data['marketdata']['columns']
+            data_rows = json_data['marketdata']['data']
+            if not data_rows:
+                logging.warning("Empty index data")
+                return None
+            row = data_rows[0]
+            last_idx = columns.index('LAST') if 'LAST' in columns else None
+            change_percent_idx = columns.index('CHANGEPERCENT') if 'CHANGEPERCENT' in columns else None
+            result = {}
+            if last_idx is not None:
+                result['last'] = float(row[last_idx])
+            if change_percent_idx is not None:
+                result['change_percent'] = float(row[change_percent_idx])
+            if result:
+                logging.info(f"Индекс IMOEX: {result}")
+                return result
             return None
     except Exception as e:
         logging.error(f"Ошибка получения индекса: {e}")
@@ -567,7 +570,8 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     total_yield = portfolio_data["total_yield_pct"]
     balance = portfolio_data.get("balance", 0.0)
 
-    # Создаём фигуру с subplots типа table
+    # Создаём отдельную фигуру для каждой группы (проще и надёжнее)
+    # Но для красоты используем одну фигуру с subplots
     rows = len(ordered_groups)
     specs = [[{"type": "table"} for _ in range(1)] for _ in range(rows)]
     fig = make_subplots(rows=rows, cols=1, shared_xaxes=False,
