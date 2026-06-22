@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 7.1 (исправлена генерация картинки портфеля)
+# Версия: 7.2 (исправлена генерация картинки без set_span)
 # ==============================================
 
 import os
@@ -503,12 +503,11 @@ async def get_portfolio_summary():
         logging.error(f"Ошибка портфеля: {e}")
         return None
 
-# ---------- ГЕНЕРАЦИЯ КАРТИНКИ ПОРТФЕЛЯ ----------
+# ---------- ГЕНЕРАЦИЯ КАРТИНКИ ПОРТФЕЛЯ (БЕЗ set_span) ----------
 def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     if not portfolio_data or not portfolio_data["positions"]:
         return None
 
-    # Группировка по типу
     groups = defaultdict(list)
     for pos in portfolio_data["positions"]:
         groups[pos["type_display"]].append(pos)
@@ -521,39 +520,11 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     for key, vals in groups.items():
         ordered_groups.append((key, vals))
 
-    # Строим единый список строк для таблицы
-    table_rows = []
-    for group_name, positions in ordered_groups:
-        if not positions:
-            continue
-        # Заголовок группы – первая строка с текстом, остальные ячейки пустые (будут объединены)
-        row_header = [group_name, "", "", "", ""]  # 5 колонок
-        table_rows.append(row_header)
-        for pos in positions:
-            if pos["name"] and pos["name"] != pos["ticker"]:
-                display_name = pos["name"][:30]
-            else:
-                display_name = pos["ticker"]
-            table_rows.append([
-                display_name,
-                f"{pos['quantity']:.0f}",
-                f"{pos['price']:.2f}",
-                f"{pos['avg_price']:.2f}",
-                f"{pos['pos_yield_pct']:+.2f}%"
-            ])
-
-    if not table_rows:
-        return None
-
-    col_labels = ["Название", "Кол-во", "Цена", "Средняя", "Доходность"]
-    n_cols = len(col_labels)
-    n_rows = len(table_rows)
-
-    height = max(6, n_rows * 0.35 + 3)
+    total_rows = sum(len(v) for _, v in ordered_groups) + len(ordered_groups)  # + заголовки групп
+    height = max(6, total_rows * 0.35 + 3)
     fig, ax = plt.subplots(figsize=(10, height))
     ax.axis('off')
 
-    # Заголовок портфеля
     total_amount = portfolio_data["total_amount"]
     total_cost = portfolio_data["total_cost"]
     total_yield = portfolio_data["total_yield_pct"]
@@ -563,51 +534,55 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
              f"Доходность: {total_yield:+.2f}%   Баланс: {balance:.2f} ₽")
     ax.text(0.5, 0.98, title, fontsize=14, fontweight='bold', ha='center', va='top', transform=ax.transAxes)
 
-    # Создаём таблицу с данными
-    table = ax.table(cellText=table_rows, colLabels=col_labels, loc='center',
-                     bbox=[0.05, 0.05, 0.9, 0.85],
-                     cellLoc='center', colColours=['#f0f0f0']*n_cols)
-    table.auto_set_font_size(False)
-    table.set_fontsize(8)
-    table.scale(1, 1.5)
+    y_offset = 0.92
+    row_height = 0.04
+    col_labels = ["Название", "Кол-во", "Цена", "Средняя", "Доходность"]
 
-    # Объединяем ячейки для заголовков групп
-    row_idx = 0
     for group_name, positions in ordered_groups:
         if not positions:
             continue
-        # Объединяем все ячейки строки с заголовком
-        table[(row_idx, 0)].set_span((1, n_cols))
-        cell = table[(row_idx, 0)]
-        cell.set_text_props(text=group_name, fontweight='bold', fontsize=10)
-        cell.set_facecolor('#d0d0d0')
-        for col in range(1, n_cols):
-            table[(row_idx, col)].set_visible(False)
-        row_idx += len(positions) + 1  # +1 за заголовок
 
-    # Цвет текста доходности (зелёный/красный)
-    for i, row in enumerate(table_rows):
-        # Пропускаем заголовки групп
-        if any(row[0].startswith(name) for name in ["Акции", "Облигации", "Фонды"]):
-            continue
-        if len(row) > 4:
-            val = row[4]
-            if isinstance(val, str):
-                if val.startswith('+'):
-                    for j in range(n_cols):
-                        table[(i+1, j)].set_text_props(color='green')
-                elif val.startswith('-'):
-                    for j in range(n_cols):
-                        table[(i+1, j)].set_text_props(color='red')
+        # Заголовок группы
+        ax.text(0.05, y_offset, group_name, fontsize=12, fontweight='bold', va='bottom', transform=ax.transAxes)
+        y_offset -= 0.06
 
-    # Настройка линий
-    for (i, j), cell in table.get_celld().items():
-        if i == 0:  # заголовок таблицы (колонки)
-            cell.set_linewidth(0.5)
-            cell.set_edgecolor('gray')
-        else:
-            cell.set_linewidth(0.3)
-            cell.set_edgecolor('lightgray')
+        table_data = []
+        for pos in positions:
+            if pos["name"] and pos["name"] != pos["ticker"]:
+                display_name = pos["name"][:30]
+            else:
+                display_name = pos["ticker"]
+            table_data.append([
+                display_name,
+                f"{pos['quantity']:.0f}",
+                f"{pos['price']:.2f}",
+                f"{pos['avg_price']:.2f}",
+                f"{pos['pos_yield_pct']:+.2f}%"
+            ])
+
+        table = ax.table(cellText=table_data, colLabels=col_labels, loc='center',
+                         bbox=[0.05, y_offset - len(table_data)*row_height, 0.9, len(table_data)*row_height],
+                         cellLoc='center', colColours=['#f0f0f0']*len(col_labels))
+        table.auto_set_font_size(False)
+        table.set_fontsize(8)
+        table.scale(1, 1.5)
+
+        for (i, j), cell in table.get_celld().items():
+            if i == 0:
+                cell.set_linewidth(0.5)
+                cell.set_edgecolor('gray')
+                cell.set_text_props(fontweight='bold', color='black')
+            else:
+                cell.set_linewidth(0.3)
+                cell.set_edgecolor('lightgray')
+                if j == 4:
+                    val = cell.get_text().get_text()
+                    if val.startswith('+'):
+                        cell.set_text_props(color='green')
+                    elif val.startswith('-'):
+                        cell.set_text_props(color='red')
+
+        y_offset -= len(table_data) * row_height + 0.02
 
     fig.tight_layout()
     buf = io.BytesIO()
