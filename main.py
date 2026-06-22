@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 7.0 (портфель без валюты, исправлен баланс)
+# Версия: 7.0 (финальная картинка портфеля с групповыми заголовками)
 # ==============================================
 
 import os
@@ -34,11 +34,11 @@ API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
 
-TINKOFF_TOKEN = os.getenv("TITN")   # Токен Т-Инвестиций (read-only)
+TINKOFF_TOKEN = os.getenv("TITN")
 
 MY_CHAT_ID = os.getenv("MY_CHAT_ID")
 if not MY_CHAT_ID:
-    raise ValueError("MY_CHAT_ID не задан. Добавьте его в переменные окружения.")
+    raise ValueError("MY_CHAT_ID не задан")
 try:
     MY_CHAT_ID = int(MY_CHAT_ID)
 except ValueError:
@@ -214,7 +214,6 @@ async def load_instrument_names():
     global http_session
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-    # Акции (TQBR)
     url_shares = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=securities"
     try:
         async with http_session.get(url_shares, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
@@ -230,7 +229,6 @@ async def load_instrument_names():
     except Exception as e:
         logging.error(f"Ошибка загрузки акций: {e}")
 
-    # Облигации (TQOB и TQCB)
     for board in ['TQOB', 'TQCB']:
         url_bonds = f"https://iss.moex.com/iss/engines/stock/markets/bonds/boards/{board}/securities.json?iss.meta=off&iss.only=securities"
         try:
@@ -247,7 +245,6 @@ async def load_instrument_names():
         except Exception as e:
             logging.error(f"Ошибка загрузки облигаций {board}: {e}")
 
-    # ETF (TQTF)
     url_etf = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQTF/securities.json?iss.meta=off&iss.only=securities"
     try:
         async with http_session.get(url_etf, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
@@ -263,9 +260,9 @@ async def load_instrument_names():
     except Exception as e:
         logging.error(f"Ошибка загрузки ETF: {e}")
 
-    logging.info(f"✅ Загружено {len(ticker_to_name)} наименований инструментов")
+    logging.info(f"✅ Загружено {len(ticker_to_name)} наименований")
 
-# ---------- ЗАПРОСЫ К MOEX (для топа дня) ----------
+# ---------- ЗАПРОСЫ К MOEX ДЛЯ ТОПА ----------
 async def get_market_data():
     global http_session
     url = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=marketdata,securities"
@@ -387,7 +384,7 @@ async def get_historical_close(ticker: str, target_date: datetime.date) -> float
     ticker_data = ticker_data.sort_values('TRADEDATE')
     return ticker_data.iloc[-1]['CLOSE']
 
-# ---------- ФУНКЦИИ ДЛЯ РАБОТЫ С API Т-ИНВЕСТИЦИЙ ----------
+# ---------- ФУНКЦИИ ДЛЯ Т-ИНВЕСТИЦИЙ ----------
 async def tinkoff_api_request(method: str, endpoint: str, params: dict = None) -> dict:
     if not TINKOFF_TOKEN:
         raise ValueError("Токен TITN не задан")
@@ -446,12 +443,16 @@ async def get_portfolio_summary():
             "INSTRUMENT_TYPE_CURRENCY": "Валюта",
         }
 
+        # Сначала находим валютную позицию для баланса
         for pos in positions:
-            instrument_type = pos.get("instrumentType", "unknown")
-            if instrument_type == "INSTRUMENT_TYPE_CURRENCY":
-                # Это валюта (баланс)
-                balance = float(pos.get("currentPrice", {}).get("units", 0)) * float(pos.get("quantity", {}).get("units", 0))
-                continue
+            if pos.get("instrumentType") == "INSTRUMENT_TYPE_CURRENCY":
+                # Баланс = количество * цена (обычно цена = 1)
+                balance = float(pos.get("quantity", {}).get("units", 0)) * float(pos.get("currentPrice", {}).get("units", 1))
+                break
+
+        # Собираем остальные позиции (без валюты)
+        filtered_positions = [p for p in positions if p.get("instrumentType") != "INSTRUMENT_TYPE_CURRENCY"]
+        for pos in filtered_positions:
             quantity = float(pos.get("quantity", {}).get("units", 0))
             avg_price = float(pos.get("averagePositionPrice", {}).get("units", 0))
             price = float(pos.get("currentPrice", {}).get("units", 0))
@@ -473,10 +474,7 @@ async def get_portfolio_summary():
             "expected_dividends": float(data.get("expectedDividends", 0))
         }
 
-        for pos in positions:
-            instrument_type = pos.get("instrumentType", "unknown")
-            if instrument_type == "INSTRUMENT_TYPE_CURRENCY":
-                continue
+        for pos in filtered_positions:
             figi = pos.get("figi")
             ticker = pos.get("ticker") or figi
             name = ticker_to_name.get(ticker, ticker)
@@ -484,11 +482,8 @@ async def get_portfolio_summary():
             price = float(pos.get("currentPrice", {}).get("units", 0))
             avg_price = float(pos.get("averagePositionPrice", {}).get("units", 0))
             expected_yield = float(pos.get("expectedYield", {}).get("units", 0))
-            currency = pos.get("currentPrice", {}).get("currency", "RUB")
-            current_value = quantity * price
-            invested = quantity * avg_price
-            if invested > 0:
-                pos_yield_pct = (expected_yield / invested) * 100
+            if avg_price and quantity:
+                pos_yield_pct = (expected_yield / (avg_price * quantity)) * 100
             else:
                 pos_yield_pct = 0.0
 
@@ -496,24 +491,20 @@ async def get_portfolio_summary():
                 "figi": figi,
                 "ticker": ticker,
                 "name": name,
-                "instrument_type": instrument_type,
-                "type_display": type_map.get(instrument_type, instrument_type),
+                "instrument_type": pos.get("instrumentType"),
+                "type_display": type_map.get(pos.get("instrumentType"), pos.get("instrumentType")),
                 "quantity": quantity,
                 "price": price,
                 "avg_price": avg_price,
-                "expected_yield": expected_yield,
-                "currency": currency,
-                "current_value": current_value,
-                "invested": invested,
                 "pos_yield_pct": pos_yield_pct,
             })
 
         return result
     except Exception as e:
-        logging.error(f"Ошибка получения портфеля: {e}")
+        logging.error(f"Ошибка портфеля: {e}")
         return None
 
-# ---------- ГЕНЕРАЦИЯ КАРТИНКИ ПОРТФЕЛЯ (MODERN UI) ----------
+# ---------- ГЕНЕРАЦИЯ КАРТИНКИ ПОРТФЕЛЯ ----------
 def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     if not portfolio_data or not portfolio_data["positions"]:
         return None
@@ -531,16 +522,13 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     for key, vals in groups.items():
         ordered_groups.append((key, vals))
 
-    # Подсчёт общего количества строк
-    total_rows = 0
-    for _, positions in ordered_groups:
-        total_rows += len(positions) + 1  # каждая группа с заголовком
+    # Подсчёт строк
+    total_rows = sum(len(v) + 1 for _, v in ordered_groups)  # +1 для заголовка группы
     height = max(6, total_rows * 0.35 + 3)
-
     fig, ax = plt.subplots(figsize=(10, height))
     ax.axis('off')
 
-    # Заголовок с балансом
+    # Заголовок
     total_amount = portfolio_data["total_amount"]
     total_cost = portfolio_data["total_cost"]
     total_yield = portfolio_data["total_yield_pct"]
@@ -548,9 +536,9 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     title = (f"Портфель\n"
              f"Сумма: {total_amount:.2f} ₽   Вложено: {total_cost:.2f} ₽   "
              f"Доходность: {total_yield:+.2f}%   Баланс: {balance:.2f} ₽")
-    ax.text(0.5, 0.96, title, fontsize=14, fontweight='bold', ha='center', va='top', transform=ax.transAxes)
+    ax.text(0.5, 0.98, title, fontsize=14, fontweight='bold', ha='center', va='top', transform=ax.transAxes)
 
-    y_offset = 0.90
+    y_offset = 0.92
     row_height = 0.04
     header_height = 0.06
 
@@ -558,9 +546,7 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
         if not positions:
             continue
 
-        ax.text(0.05, y_offset, group_name, fontsize=12, fontweight='bold', va='bottom', transform=ax.transAxes)
-        y_offset -= header_height
-
+        # Таблица для группы
         col_labels = ["Название", "Кол-во", "Цена", "Средняя", "Доходность"]
         table_data = []
         for pos in positions:
@@ -576,9 +562,43 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
                 f"{pos['pos_yield_pct']:+.2f}%"
             ])
 
-        table = ax.table(cellText=table_data, colLabels=col_labels, loc='center',
-                         bbox=[0.05, y_offset - len(table_data)*row_height, 0.9, len(table_data)*row_height],
-                         cellLoc='center', colColours=['#f0f0f0']*len(col_labels))
+        # Вставляем заголовок группы как первую строку с colspan
+        # Для этого сначала создадим таблицу с дополнительной строкой
+        # Используем метод cell.set_span для объединения
+        n_rows = len(table_data) + 1  # + заголовок
+        n_cols = len(col_labels)
+        table = ax.table(cellText=None, cellLoc='center', colColours=['#f0f0f0']*n_cols,
+                         bbox=[0.05, y_offset - n_rows*row_height, 0.9, n_rows*row_height])
+
+        # Заполняем заголовок
+        table[(0,0)].set_facecolor('#d0d0d0')
+        table[(0,0)].set_text_props(text=group_name, fontweight='bold', fontsize=10)
+        # Объединяем все ячейки первой строки в одну
+        for j in range(1, n_cols):
+            cell = table[(0, j)]
+            cell.set_visible(False)
+            # Устанавливаем прозрачный цвет, чтобы не мешать
+        # Устанавливаем colspan для первой ячейки
+        # В matplotlib нет прямого colspan, но мы можем скрыть остальные ячейки и установить ширину?
+
+        # Вместо этого проще использовать text внутри ячейки и растянуть её вручную, но в matplotlib можно использовать set_span?
+        # Проверим: table[(0,0)].set_span((1, n_cols)) – это работает? В документации есть set_span.
+        # Попробуем.
+        table[(0,0)].set_span((1, n_cols))
+
+        # Заполняем остальные строки данными
+        for i, row_data in enumerate(table_data, start=1):
+            for j, val in enumerate(row_data):
+                cell = table[(i, j)]
+                cell.set_text_props(text=val)
+                # Цвет текста для доходности
+                if j == 4:
+                    if val.startswith('+'):
+                        cell.set_text_props(color='green')
+                    elif val.startswith('-'):
+                        cell.set_text_props(color='red')
+
+        # Настройка внешнего вида
         table.auto_set_font_size(False)
         table.set_fontsize(8)
         table.scale(1, 1.5)
@@ -587,12 +607,12 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
             if i == 0:
                 cell.set_linewidth(0.5)
                 cell.set_edgecolor('gray')
-                cell.set_text_props(fontweight='bold', color='black')
             else:
                 cell.set_linewidth(0.3)
                 cell.set_edgecolor('lightgray')
 
-        y_offset -= len(table_data) * row_height + 0.02
+        # Обновляем y_offset
+        y_offset -= n_rows * row_height + 0.02
 
     fig.tight_layout()
     buf = io.BytesIO()
@@ -601,7 +621,7 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     plt.close()
     return buf
 
-# ---------- ОСТАЛЬНЫЕ ФУНКЦИИ (без изменений) ----------
+# ---------- ОСТАЛЬНЫЕ ФУНКЦИИ (из предыдущей версии) ----------
 def build_table_universal(df, title, headers, data_columns):
     if df.empty:
         return ""
@@ -836,8 +856,8 @@ async def handle_buttons_and_commands(message: types.Message):
     text = message.text
     logging.info(f"🔄 Обработка сообщения: '{text}'")
 
-    if text == "/portfolio":
-        logging.info("🔍 Обработка команды /portfolio")
+    if text == "/portfolio" or text == "📈 Портфель":
+        logging.info("🔍 Обработка портфеля")
         if not TINKOFF_TOKEN:
             await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
             await safe_delete_message(message.chat.id, message.message_id)
@@ -927,38 +947,6 @@ async def handle_buttons_and_commands(message: types.Message):
             await safe_delete_message(message.chat.id, message.message_id)
         return
 
-    if text == "📈 Портфель":
-        logging.info("🔍 Обработка кнопки портфеля")
-        if not TINKOFF_TOKEN:
-            await message.answer("❌ Токен TITN не задан. Добавьте его в переменные окружения.")
-            await safe_delete_message(message.chat.id, message.message_id)
-            return
-        loading_msg = await message.answer("⏳ Загружаю данные портфеля...")
-        try:
-            data = await get_portfolio_summary()
-            if not data:
-                await loading_msg.delete()
-                await message.answer("❌ Не удалось получить данные портфеля.")
-                await safe_delete_message(message.chat.id, message.message_id)
-                return
-            img_buf = generate_portfolio_image(data)
-            if img_buf is None:
-                await loading_msg.delete()
-                await message.answer("Нет данных для отображения.")
-                await safe_delete_message(message.chat.id, message.message_id)
-                return
-            await message.answer_photo(
-                photo=BufferedInputFile(img_buf.getvalue(), filename="portfolio.png")
-            )
-            await loading_msg.delete()
-            await safe_delete_message(message.chat.id, message.message_id)
-        except Exception as e:
-            await loading_msg.delete()
-            logging.error(f"❌ Ошибка портфеля: {e}", exc_info=True)
-            await message.answer(f"❌ Ошибка: {e}")
-            await safe_delete_message(message.chat.id, message.message_id)
-        return
-
     if text == "✅ Добавить тикер":
         prompt_msg = await message.answer("Введите тикер для добавления (например, SBER или SBER, GAZP):")
         user_state[message.chat.id] = {'state': 'add', 'prompt_msg_id': prompt_msg.message_id}
@@ -971,7 +959,6 @@ async def handle_buttons_and_commands(message: types.Message):
         await safe_delete_message(message.chat.id, message.message_id)
         return
 
-    # ---- ВВОД ТИКЕРА (состояние) ----
     chat_id = message.chat.id
     if chat_id in user_state:
         state_data = user_state[chat_id]
@@ -999,7 +986,6 @@ async def handle_buttons_and_commands(message: types.Message):
         del user_state[chat_id]
         return
 
-    # ---- ФОЛБЭК ----
     logging.info(f"FALLBACK: получено сообщение: '{text}'")
     await message.answer("Используйте кнопки меню.", reply_markup=main_keyboard())
     await safe_delete_message(message.chat.id, message.message_id)
