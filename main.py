@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 6.9 (портфель без заливки, баланс в шапке)
+# Версия: 7.0 (портфель без валюты, исправлен баланс)
 # ==============================================
 
 import os
@@ -446,7 +446,6 @@ async def get_portfolio_summary():
             "INSTRUMENT_TYPE_CURRENCY": "Валюта",
         }
 
-        # Сначала пройдём по позициям, чтобы вычислить общую стоимость и баланс
         for pos in positions:
             instrument_type = pos.get("instrumentType", "unknown")
             if instrument_type == "INSTRUMENT_TYPE_CURRENCY":
@@ -474,7 +473,6 @@ async def get_portfolio_summary():
             "expected_dividends": float(data.get("expectedDividends", 0))
         }
 
-        # Теперь собираем позиции (кроме валюты)
         for pos in positions:
             instrument_type = pos.get("instrumentType", "unknown")
             if instrument_type == "INSTRUMENT_TYPE_CURRENCY":
@@ -550,9 +548,9 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     title = (f"Портфель\n"
              f"Сумма: {total_amount:.2f} ₽   Вложено: {total_cost:.2f} ₽   "
              f"Доходность: {total_yield:+.2f}%   Баланс: {balance:.2f} ₽")
-    ax.text(0.5, 0.98, title, fontsize=14, fontweight='bold', ha='center', va='top', transform=ax.transAxes)
+    ax.text(0.5, 0.96, title, fontsize=14, fontweight='bold', ha='center', va='top', transform=ax.transAxes)
 
-    y_offset = 0.92
+    y_offset = 0.90
     row_height = 0.04
     header_height = 0.06
 
@@ -563,7 +561,7 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
         ax.text(0.05, y_offset, group_name, fontsize=12, fontweight='bold', va='bottom', transform=ax.transAxes)
         y_offset -= header_height
 
-        col_labels = ["Название", "Кол-во", "Цена", "Средняя", "Доходность", "Вложено"]
+        col_labels = ["Название", "Кол-во", "Цена", "Средняя", "Доходность"]
         table_data = []
         for pos in positions:
             if pos["name"] and pos["name"] != pos["ticker"]:
@@ -575,8 +573,7 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
                 f"{pos['quantity']:.0f}",
                 f"{pos['price']:.2f}",
                 f"{pos['avg_price']:.2f}",
-                f"{pos['pos_yield_pct']:+.2f}%",
-                f"{pos['invested']:.2f}"
+                f"{pos['pos_yield_pct']:+.2f}%"
             ])
 
         table = ax.table(cellText=table_data, colLabels=col_labels, loc='center',
