@@ -1,5 +1,7 @@
+import os
+
 # ---------- ВЕРСИЯ ----------
-VERSION = "8.10.3"
+VERSION = "8.10.4"
 
 # ---------- ТОКЕНЫ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
