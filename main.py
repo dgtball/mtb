@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 7.2 (исправлена генерация картинки без set_span)
+# Версия: 7.3 (портфель на Plotly)
 # ==============================================
 
 import os
@@ -28,6 +28,9 @@ from aiohttp import web
 import aiohttp
 import pandas as pd
 from tabulate import tabulate
+import plotly.graph_objects as go
+import plotly.io as pio
+pio.kaleido.scope.default_format = "png"
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -503,7 +506,7 @@ async def get_portfolio_summary():
         logging.error(f"Ошибка портфеля: {e}")
         return None
 
-# ---------- ГЕНЕРАЦИЯ КАРТИНКИ ПОРТФЕЛЯ (БЕЗ set_span) ----------
+# ---------- ГЕНЕРАЦИЯ КАРТИНКИ ПОРТФЕЛЯ (PLOTLY) ----------
 def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     if not portfolio_data or not portfolio_data["positions"]:
         return None
@@ -520,76 +523,81 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     for key, vals in groups.items():
         ordered_groups.append((key, vals))
 
-    total_rows = sum(len(v) for _, v in ordered_groups) + len(ordered_groups)  # + заголовки групп
-    height = max(6, total_rows * 0.35 + 3)
-    fig, ax = plt.subplots(figsize=(10, height))
-    ax.axis('off')
-
     total_amount = portfolio_data["total_amount"]
     total_cost = portfolio_data["total_cost"]
     total_yield = portfolio_data["total_yield_pct"]
     balance = portfolio_data.get("balance", 0.0)
-    title = (f"Портфель\n"
-             f"Сумма: {total_amount:.2f} ₽   Вложено: {total_cost:.2f} ₽   "
-             f"Доходность: {total_yield:+.2f}%   Баланс: {balance:.2f} ₽")
-    ax.text(0.5, 0.98, title, fontsize=14, fontweight='bold', ha='center', va='top', transform=ax.transAxes)
 
-    y_offset = 0.92
-    row_height = 0.04
+    # Заголовок (будет добавлен позже как annotation)
+    title_text = (f"Портфель<br>"
+                  f"Сумма: {total_amount:.2f} ₽   Вложено: {total_cost:.2f} ₽   "
+                  f"Доходность: {total_yield:+.2f}%   Баланс: {balance:.2f} ₽")
+
+    # Собираем строки для таблицы
     col_labels = ["Название", "Кол-во", "Цена", "Средняя", "Доходность"]
+    # Создаём список списков для ячеек
+    cells = []
+    row_colors = []
 
+    # Будем добавлять заголовки групп как отдельные строки, объединённые по всем колонкам
     for group_name, positions in ordered_groups:
-        if not positions:
-            continue
-
-        # Заголовок группы
-        ax.text(0.05, y_offset, group_name, fontsize=12, fontweight='bold', va='bottom', transform=ax.transAxes)
-        y_offset -= 0.06
-
-        table_data = []
+        # Заголовок группы (одна строка с текстом, другие ячейки пустые)
+        row = [group_name, "", "", "", ""]
+        cells.append(row)
+        row_colors.append('#d0d0d0')  # серый фон для заголовка
         for pos in positions:
             if pos["name"] and pos["name"] != pos["ticker"]:
                 display_name = pos["name"][:30]
             else:
                 display_name = pos["ticker"]
-            table_data.append([
+            row = [
                 display_name,
                 f"{pos['quantity']:.0f}",
                 f"{pos['price']:.2f}",
                 f"{pos['avg_price']:.2f}",
                 f"{pos['pos_yield_pct']:+.2f}%"
-            ])
-
-        table = ax.table(cellText=table_data, colLabels=col_labels, loc='center',
-                         bbox=[0.05, y_offset - len(table_data)*row_height, 0.9, len(table_data)*row_height],
-                         cellLoc='center', colColours=['#f0f0f0']*len(col_labels))
-        table.auto_set_font_size(False)
-        table.set_fontsize(8)
-        table.scale(1, 1.5)
-
-        for (i, j), cell in table.get_celld().items():
-            if i == 0:
-                cell.set_linewidth(0.5)
-                cell.set_edgecolor('gray')
-                cell.set_text_props(fontweight='bold', color='black')
+            ]
+            cells.append(row)
+            # Цвет строки: светло-зелёный для положительной доходности, светло-красный для отрицательной
+            if pos['pos_yield_pct'] > 0:
+                row_colors.append('#e6f9e6')
             else:
-                cell.set_linewidth(0.3)
-                cell.set_edgecolor('lightgray')
-                if j == 4:
-                    val = cell.get_text().get_text()
-                    if val.startswith('+'):
-                        cell.set_text_props(color='green')
-                    elif val.startswith('-'):
-                        cell.set_text_props(color='red')
+                row_colors.append('#fce4e4')
 
-        y_offset -= len(table_data) * row_height + 0.02
+    # Создаём таблицу в Plotly
+    fig = go.Figure()
+    fig.add_trace(go.Table(
+        header=dict(
+            values=col_labels,
+            fill_color='#f0f0f0',
+            align='center',
+            font=dict(size=12, color='black', family='Arial')
+        ),
+        cells=dict(
+            values=[list(col) for col in zip(*cells)],  # transpose
+            fill_color=[row_colors],
+            align='center',
+            font=dict(size=11, color='black', family='Arial')
+        )
+    ))
 
-    fig.tight_layout()
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', dpi=120)
-    buf.seek(0)
-    plt.close()
-    return buf
+    # Обновляем макет: заголовок и размер
+    fig.update_layout(
+        title=dict(
+            text=title_text,
+            x=0.5,
+            xanchor='center',
+            font=dict(size=14, family='Arial', color='black')
+        ),
+        width=800,
+        height=200 + len(cells) * 25,
+        margin=dict(l=20, r=20, t=60, b=20),
+        paper_bgcolor='white'
+    )
+
+    # Экспортируем в PNG
+    img_bytes = pio.to_image(fig, format='png', engine='kaleido')
+    return io.BytesIO(img_bytes)
 
 # ---------- ОСТАЛЬНЫЕ ФУНКЦИИ (без изменений) ----------
 def build_table_universal(df, title, headers, data_columns):
@@ -858,9 +866,108 @@ async def handle_buttons_and_commands(message: types.Message):
             await safe_delete_message(message.chat.id, message.message_id)
         return
 
-    # ... остальные обработчики (Топ дня, недели, месяца, избранное, добавление/удаление тикеров) без изменений ...
-    # Они уже есть в вашем коде, я их не меняю, просто пропускаю для краткости.
-    # (В реальном коде они должны быть здесь)
+    # Остальные обработчики (Топ дня, недели, месяца, избранное, добавление/удаление тикеров) без изменений
+    if text == "📌 Топ дня":
+        shares_df = await get_market_data()
+        gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
+        if gainers.empty and losers.empty:
+            session_status = get_session_status()
+            await message.answer(f"📊 {session_status}\nДанные обновятся в рабочее время.")
+            await safe_delete_message(message.chat.id, message.message_id)
+            return
+        index_val = await get_moex_index()
+        session_status = get_session_status()
+        update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
+        text = format_message(gainers, losers, index_val, update_time, session_status)
+        sent_msg = await message.answer(text, parse_mode="HTML")
+        chat_id = message.chat.id
+        last_messages[chat_id] = sent_msg.message_id
+        if auto_update_enabled.get(chat_id, False):
+            if chat_id not in update_tasks or update_tasks[chat_id].done():
+                task = asyncio.create_task(auto_update_task(chat_id, sent_msg.message_id))
+                update_tasks[chat_id] = task
+        await safe_delete_message(message.chat.id, message.message_id)
+        return
+
+    if text == "📊 Топ недели":
+        await send_top(message, 'week')
+        await safe_delete_message(message.chat.id, message.message_id)
+        return
+
+    if text == "🗓️ Топ месяца":
+        await send_top(message, 'month')
+        await safe_delete_message(message.chat.id, message.message_id)
+        return
+
+    if text == "⭐ Избранные":
+        try:
+            loading_msg = await message.answer("⏳ Загружаю избранное...")
+            fav_df, error = await get_favorites_data(message.chat.id)
+            if error:
+                await loading_msg.delete()
+                await message.answer(error)
+                await safe_delete_message(message.chat.id, message.message_id)
+                return
+            img_buf = generate_favorites_image(fav_df)
+            if img_buf is None:
+                await loading_msg.delete()
+                await message.answer("Нет данных для отображения.")
+                await safe_delete_message(message.chat.id, message.message_id)
+                return
+            await message.answer_photo(
+                photo=BufferedInputFile(img_buf.getvalue(), filename="favorites.png")
+            )
+            await loading_msg.delete()
+            await safe_delete_message(message.chat.id, message.message_id)
+        except Exception as e:
+            await loading_msg.delete()
+            logging.error(f"❌ Ошибка в favorites: {e}", exc_info=True)
+            await message.answer(f"❌ Ошибка при загрузке избранного: {e}")
+            await safe_delete_message(message.chat.id, message.message_id)
+        return
+
+    if text == "✅ Добавить тикер":
+        prompt_msg = await message.answer("Введите тикер для добавления (например, SBER или SBER, GAZP):")
+        user_state[message.chat.id] = {'state': 'add', 'prompt_msg_id': prompt_msg.message_id}
+        await safe_delete_message(message.chat.id, message.message_id)
+        return
+
+    if text == "❌ Удалить тикер":
+        prompt_msg = await message.answer("Введите тикер для удаления (например, SBER или SBER, GAZP):")
+        user_state[message.chat.id] = {'state': 'remove', 'prompt_msg_id': prompt_msg.message_id}
+        await safe_delete_message(message.chat.id, message.message_id)
+        return
+
+    chat_id = message.chat.id
+    if chat_id in user_state:
+        state_data = user_state[chat_id]
+        state = state_data['state']
+        prompt_msg_id = state_data['prompt_msg_id']
+
+        await safe_delete_message(chat_id, prompt_msg_id)
+        await safe_delete_message(chat_id, message.message_id)
+
+        raw = message.text.strip()
+        tickers = [t.strip().upper() for t in raw.split(',') if t.strip()]
+        results = []
+        for ticker in tickers:
+            if state == 'add':
+                if add_favorite(chat_id, ticker):
+                    results.append(f"✅ {ticker} добавлен")
+                else:
+                    results.append(f"ℹ️ {ticker} уже есть")
+            elif state == 'remove':
+                if remove_favorite(chat_id, ticker):
+                    results.append(f"✅ {ticker} удалён")
+                else:
+                    results.append(f"ℹ️ {ticker} не найден")
+        await message.answer("\n".join(results) if results else "Ничего не сделано.")
+        del user_state[chat_id]
+        return
+
+    logging.info(f"FALLBACK: получено сообщение: '{text}'")
+    await message.answer("Используйте кнопки меню.", reply_markup=main_keyboard())
+    await safe_delete_message(message.chat.id, message.message_id)
 
 # ---------- ЗАПУСК ----------
 async def health_handler(request):
