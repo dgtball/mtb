@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 7.3 (портфель на Plotly)
+# Версия: 7.5 (индекс в топе дня, убрана валюта из портфеля)
 # ==============================================
 
 import os
@@ -293,25 +293,42 @@ async def get_market_data():
             await asyncio.sleep(2)
     return pd.DataFrame()
 
-async def get_moex_index():
+async def get_moex_index_info():
+    """
+    Возвращает словарь с данными индекса IMOEX:
+    last, change_percent
+    """
     global http_session
     url = "https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX.json?iss.meta=off"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    for attempt in range(3):
-        try:
-            async with http_session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status != 200:
-                    await asyncio.sleep(2)
-                    continue
-                json_data = await resp.json()
-                columns = json_data['securities']['columns']
-                data_rows = json_data['securities']['data']
-                if data_rows:
-                    last_idx = columns.index('LAST')
-                    return float(data_rows[0][last_idx])
-        except Exception:
-            await asyncio.sleep(2)
-    return None
+    try:
+        async with http_session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            if resp.status != 200:
+                return None
+            json_data = await resp.json()
+            if 'securities' not in json_data:
+                return None
+            columns = json_data['securities']['columns']
+            data_rows = json_data['securities']['data']
+            if not data_rows:
+                return None
+            row = data_rows[0]
+            last_idx = columns.index('LAST') if 'LAST' in columns else None
+            change_percent_idx = columns.index('CHANGEPERCENT') if 'CHANGEPERCENT' in columns else None
+            result = {}
+            if last_idx is not None:
+                result['last'] = float(row[last_idx])
+            if change_percent_idx is not None:
+                result['change_percent'] = float(row[change_percent_idx])
+            return result
+    except Exception as e:
+        logging.error(f"Ошибка получения индекса: {e}")
+        return None
+
+async def get_moex_index():
+    # оставляем для совместимости, но используем get_moex_index_info
+    info = await get_moex_index_info()
+    return info.get('last') if info else None
 
 async def get_historical_shares(from_date: str, till_date: str):
     global http_session
@@ -452,8 +469,13 @@ async def get_portfolio_summary():
                 balance = float(pos.get("quantity", {}).get("units", 0)) * float(pos.get("currentPrice", {}).get("units", 1))
                 break
 
-        # Остальные позиции
-        filtered_positions = [p for p in positions if p.get("instrumentType") != "INSTRUMENT_TYPE_CURRENCY"]
+        # Остальные позиции (исключаем валюту)
+        filtered_positions = []
+        for pos in positions:
+            inst_type = pos.get("instrumentType", "")
+            if inst_type != "INSTRUMENT_TYPE_CURRENCY" and inst_type.lower() != "currency":
+                filtered_positions.append(pos)
+
         for pos in filtered_positions:
             quantity = float(pos.get("quantity", {}).get("units", 0))
             avg_price = float(pos.get("averagePositionPrice", {}).get("units", 0))
@@ -520,31 +542,26 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     for key in order:
         if key in groups:
             ordered_groups.append((key, groups.pop(key)))
-    for key, vals in groups.items():
-        ordered_groups.append((key, vals))
+    # Не добавляем остальные группы (чтобы валюта не попала)
 
     total_amount = portfolio_data["total_amount"]
     total_cost = portfolio_data["total_cost"]
     total_yield = portfolio_data["total_yield_pct"]
     balance = portfolio_data.get("balance", 0.0)
 
-    # Заголовок (будет добавлен позже как annotation)
     title_text = (f"Портфель<br>"
                   f"Сумма: {total_amount:.2f} ₽   Вложено: {total_cost:.2f} ₽   "
                   f"Доходность: {total_yield:+.2f}%   Баланс: {balance:.2f} ₽")
 
-    # Собираем строки для таблицы
     col_labels = ["Название", "Кол-во", "Цена", "Средняя", "Доходность"]
-    # Создаём список списков для ячеек
     cells = []
     row_colors = []
 
-    # Будем добавлять заголовки групп как отдельные строки, объединённые по всем колонкам
     for group_name, positions in ordered_groups:
-        # Заголовок группы (одна строка с текстом, другие ячейки пустые)
+        # Заголовок группы
         row = [group_name, "", "", "", ""]
         cells.append(row)
-        row_colors.append('#d0d0d0')  # серый фон для заголовка
+        row_colors.append('#d0d0d0')
         for pos in positions:
             if pos["name"] and pos["name"] != pos["ticker"]:
                 display_name = pos["name"][:30]
@@ -558,13 +575,11 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
                 f"{pos['pos_yield_pct']:+.2f}%"
             ]
             cells.append(row)
-            # Цвет строки: светло-зелёный для положительной доходности, светло-красный для отрицательной
             if pos['pos_yield_pct'] > 0:
                 row_colors.append('#e6f9e6')
             else:
                 row_colors.append('#fce4e4')
 
-    # Создаём таблицу в Plotly
     fig = go.Figure()
     fig.add_trace(go.Table(
         header=dict(
@@ -574,14 +589,13 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
             font=dict(size=12, color='black', family='Arial')
         ),
         cells=dict(
-            values=[list(col) for col in zip(*cells)],  # transpose
+            values=[list(col) for col in zip(*cells)],
             fill_color=[row_colors],
             align='center',
             font=dict(size=11, color='black', family='Arial')
         )
     ))
 
-    # Обновляем макет: заголовок и размер
     fig.update_layout(
         title=dict(
             text=title_text,
@@ -595,11 +609,10 @@ def generate_portfolio_image(portfolio_data) -> io.BytesIO:
         paper_bgcolor='white'
     )
 
-    # Экспортируем в PNG
     img_bytes = pio.to_image(fig, format='png', engine='kaleido')
     return io.BytesIO(img_bytes)
 
-# ---------- ОСТАЛЬНЫЕ ФУНКЦИИ (без изменений) ----------
+# ---------- ОСТАЛЬНЫЕ ФУНКЦИИ ----------
 def build_table_universal(df, title, headers, data_columns):
     if df.empty:
         return ""
@@ -619,9 +632,16 @@ def build_table_universal(df, title, headers, data_columns):
     table = tabulate(table_data, headers=headers, tablefmt="simple", numalign="right", stralign="left")
     return f"<b>{title}</b>\n<pre>{table}</pre>\n"
 
-def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_value, update_time: str, session_status: str) -> str:
-    if index_value is not None:
-        header = f"📊 Индекс МосБиржи: {index_value:.2f}\n"
+def format_message(gainers: pd.DataFrame, losers: pd.DataFrame, index_info: dict, update_time: str, session_status: str) -> str:
+    if index_info and 'last' in index_info:
+        last = index_info['last']
+        change = index_info.get('change_percent', 0)
+        arrow = ""
+        if change > 0:
+            arrow = "📈"
+        elif change < 0:
+            arrow = "📉"
+        header = f"📊 Индекс МосБиржи: {last:.2f} ({change:+.2f}%) {arrow}\n"
     else:
         header = f"📊 {session_status}\n"
     header += f"🕒 Обновлено: {update_time}\n\n"
@@ -743,10 +763,10 @@ async def send_top(message: types.Message, period: str = 'day'):
                 session_status = get_session_status()
                 await message.answer(f"📊 {session_status}\nДанные обновятся в рабочее время.")
                 return
-            index_val = await get_moex_index()
+            index_info = await get_moex_index_info()
             session_status = get_session_status()
             update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
-            text = format_message(gainers, losers, index_val, update_time, session_status)
+            text = format_message(gainers, losers, index_info, update_time, session_status)
         else:
             now = get_moscow_time()
             if period == 'week':
@@ -798,10 +818,10 @@ async def auto_update_task(chat_id: int, message_id: int):
             gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
             if gainers.empty and losers.empty:
                 continue
-            index_val = await get_moex_index()
+            index_info = await get_moex_index_info()
             session_status = get_session_status()
             update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
-            text = format_message(gainers, losers, index_val, update_time, session_status)
+            text = format_message(gainers, losers, index_info, update_time, session_status)
             await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, parse_mode="HTML")
         except Exception as e:
             logging.error(f"Ошибка автообновления для чата {chat_id}: {e}")
@@ -866,7 +886,6 @@ async def handle_buttons_and_commands(message: types.Message):
             await safe_delete_message(message.chat.id, message.message_id)
         return
 
-    # Остальные обработчики (Топ дня, недели, месяца, избранное, добавление/удаление тикеров) без изменений
     if text == "📌 Топ дня":
         shares_df = await get_market_data()
         gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
@@ -875,10 +894,10 @@ async def handle_buttons_and_commands(message: types.Message):
             await message.answer(f"📊 {session_status}\nДанные обновятся в рабочее время.")
             await safe_delete_message(message.chat.id, message.message_id)
             return
-        index_val = await get_moex_index()
+        index_info = await get_moex_index_info()
         session_status = get_session_status()
         update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
-        text = format_message(gainers, losers, index_val, update_time, session_status)
+        text = format_message(gainers, losers, index_info, update_time, session_status)
         sent_msg = await message.answer(text, parse_mode="HTML")
         chat_id = message.chat.id
         last_messages[chat_id] = sent_msg.message_id
