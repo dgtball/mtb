@@ -1,6 +1,6 @@
 # ==============================================
 # БОТ ДЛЯ ТОП-АКЦИЙ МОСБИРЖИ И ПОРТФЕЛЯ Т-ИНВЕСТИЦИЙ
-# Версия: 8.7 (исправлена фильтрация акций)
+# Версия: 8.9 (фильтр акций по INSTRID EQIN)
 # ==============================================
 
 import os
@@ -34,7 +34,7 @@ import plotly.io as pio
 pio.kaleido.scope.default_format = "png"
 
 # ---------- ВЕРСИЯ ----------
-VERSION = "8.7"
+VERSION = "8.9"
 
 # ---------- КОНФИГУРАЦИЯ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -309,10 +309,11 @@ async def get_market_data():
                 sec_columns = json_data['securities']['columns']
                 sec_rows = json_data['securities']['data']
                 sec_df = pd.DataFrame(sec_rows, columns=sec_columns)
-                available_cols = ['SECID', 'SHORTNAME', 'LISTLEVEL']
+                # Берём INSTRID для фильтрации акций
+                available_cols = ['SECID', 'SHORTNAME', 'LISTLEVEL', 'INSTRID']
                 if 'BOARDID' in sec_df.columns:
                     available_cols.append('BOARDID')
-                # Не используем SECTYPE
+                # Оставляем только нужные колонки
                 sec_df = sec_df[available_cols].copy()
                 merged = pd.merge(market_df, sec_df, on='SECID', how='left')
                 return merged
@@ -402,6 +403,9 @@ async def get_historical_shares(from_date: str, till_date: str):
 def get_top_movers(data: pd.DataFrame, top_n: int = TOP_N, exclude_level3: bool = True):
     if data.empty:
         return pd.DataFrame(), pd.DataFrame()
+    # Фильтрация только акций (INSTRID == 'EQIN')
+    if 'INSTRID' in data.columns:
+        data = data[data['INSTRID'] == 'EQIN'].copy()
     # Фильтрация по BOARDID (акции)
     if 'BOARDID' in data.columns:
         data = data[data['BOARDID'] == 'TQBR'].copy()
