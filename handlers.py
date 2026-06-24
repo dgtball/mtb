@@ -42,6 +42,8 @@ def set_bot(bot_instance):
 class AddRemoveStates(StatesGroup):
     waiting_for_add = State()
     waiting_for_remove = State()
+    waiting_for_rename = State()
+    waiting_for_unrename = State()
 
 # ---------- УДАЛЕНИЕ СООБЩЕНИЙ ----------
 async def safe_delete_message(chat_id: int, message_id: int):
@@ -366,6 +368,37 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
         await state.update_data(prompt_msg_id=prompt_msg.message_id)
         await safe_delete_message(message.chat.id, message.message_id)
         return
+        
+    # ---------- ПЕРЕИМЕНОВАТЬ ТИКЕР ----------
+    if text == "✏️ Переименовать тикер":
+        await state.set_state(AddRemoveStates.waiting_for_rename)
+        prompt_msg = await message.answer(
+            "Введите тикер и новое название через пробел (например, SBER Сбер):"
+        )
+        await state.update_data(prompt_msg_id=prompt_msg.message_id)
+        await safe_delete_message(message.chat.id, message.message_id)
+        return
+
+    # ---------- УДАЛИТЬ ПЕРЕИМЕНОВАНИЕ ----------
+    if text == "🗑 Удалить переименование":
+        await state.set_state(AddRemoveStates.waiting_for_unrename)
+        prompt_msg = await message.answer(
+            "Введите тикер, для которого нужно удалить переименование (например, SBER):"
+        )
+        await state.update_data(prompt_msg_id=prompt_msg.message_id)
+        await safe_delete_message(message.chat.id, message.message_id)
+        return
+
+    # ---------- ПОКАЗАТЬ ВСЕ ПЕРЕИМЕНОВАНИЯ ----------
+    if text == "📋 Все переименования":
+        from config import NAME_OVERRIDES
+        if not NAME_OVERRIDES:
+            await message.answer("Переопределений названий пока нет.")
+        else:
+            lines = [f"{t} → {n}" for t, n in NAME_OVERRIDES.items()]
+            await message.answer("Текущие переименования:\n" + "\n".join(lines))
+        await safe_delete_message(message.chat.id, message.message_id)
+        return
 
     # ---------- ОБРАБОТКА ТЕКСТА В ЗАВИСИМОСТИ ОТ СОСТОЯНИЯ ----------
     current_state = await state.get_state()
@@ -388,24 +421,36 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
         await state.clear()
         return
 
-    if current_state == AddRemoveStates.waiting_for_remove.state:
+    if current_state == AddRemoveStates.waiting_for_rename.state:
         data = await state.get_data()
         prompt_msg_id = data.get('prompt_msg_id')
         if prompt_msg_id:
             await safe_delete_message(message.chat.id, prompt_msg_id)
         await safe_delete_message(message.chat.id, message.message_id)
 
-        raw = message.text.strip()
-        tickers = [t.strip().upper() for t in raw.split(',') if t.strip()]
-        results = []
-        for ticker in tickers:
-            if remove_favorite(message.chat.id, ticker):
-                results.append(f"✅ {ticker} удалён")
-            else:
-                results.append(f"ℹ️ {ticker} не найден")
-        await message.answer("\n".join(results) if results else "Ничего не сделано.")
+        parts = message.text.strip().split(maxsplit=1)
+        if len(parts) < 2:
+            await message.answer("Нужно указать тикер и название через пробел. Например: SBER Сбер")
+            await state.clear()
+            return
+        ticker, new_name = parts[0].upper(), parts[1].strip()
+        db.set_name_override(ticker, new_name)
+        await message.answer(f"✅ Тикер {ticker} теперь будет отображаться как «{new_name}»")
         await state.clear()
         return
+
+    if current_state == AddRemoveStates.waiting_for_unrename.state:
+        data = await state.get_data()
+        prompt_msg_id = data.get('prompt_msg_id')
+        if prompt_msg_id:
+            await safe_delete_message(message.chat.id, prompt_msg_id)
+        await safe_delete_message(message.chat.id, message.message_id)
+
+        ticker = message.text.strip().upper()
+        db.remove_name_override(ticker)
+        await message.answer(f"✅ Переименование для {ticker} удалено (если было)")
+        await state.clear()
+        return                                                                                                                                                                                                      
 
     # Если сообщение не попало ни в одно состояние и не является командой
     logging.info(f"FALLBACK: получено сообщение: '{text}'")

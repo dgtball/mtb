@@ -86,8 +86,13 @@ def build_table_universal(df, title, headers, data_columns):
         row_data = []
         for col in data_columns:
             val = row.get(col, "")
-            if col == 'SHORTNAME' and len(str(val)) > 25:
-                val = str(val)[:22] + "…"
+            if col == 'SHORTNAME':
+                # Применяем переопределение названия, если есть
+                from config import NAME_OVERRIDES
+                original = str(val)
+                val = NAME_OVERRIDES.get(original, original)
+                if len(val) > 25:
+                    val = val[:22] + "…"
             elif col == 'LAST':
                 # Попытка привести к числу, если пришло строкой
                 if isinstance(val, str):

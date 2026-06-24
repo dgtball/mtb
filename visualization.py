@@ -114,8 +114,11 @@ def generate_favorites_image(fav_df) -> io.BytesIO:
     table_data = []
     for _, row in fav_df.iterrows():
         name = row.get('SHORTNAME', row['SECID'])
+        # Применяем переопределение
+        from config import NAME_OVERRIDES
+        name = NAME_OVERRIDES.get(name, name)
         if len(name) > 20:
-            name = name[:17] + "…"
+            name = name[:17] + "…"                                                                                                                                                                  
         price = smart_price(row['LAST']) if isinstance(row['LAST'], (int, float)) else str(row['LAST'])
         day = f"{row['CHANGEPERCENT']:+.2f}%" if pd.notna(row['CHANGEPERCENT']) else "—"
         week = f"{row['change_week']:+.2f}%" if pd.notna(row['change_week']) else "—"

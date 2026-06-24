@@ -52,6 +52,7 @@ async def run_health_server():
 async def main():
     # Инициализация БД
     db.init_db()
+    db.load_name_overrides()
 
     # Создание HTTP‑сессии
     http_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
