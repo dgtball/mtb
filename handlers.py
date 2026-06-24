@@ -12,7 +12,7 @@ from utils import (
     get_moscow_time, get_local_time, is_weekend, get_session_status,
     get_week_number, get_month_name_ru, build_table_universal
 )
-from db import add_favorite, remove_favorite, get_favorites
+import db
 from moex_api import (
     get_market_data, get_historical_shares, get_historical_close,
     get_moex_index_info, get_top_movers, calc_period_change,
@@ -61,11 +61,6 @@ def format_message(gainers, losers, index_info, update_time, session_status):
     if index_info and 'last' in index_info:
         last = index_info['last']
         change = index_info.get('change_percent', 0)
-        arrow = ""
-        if change > 0:
-            arrow = "📈"
-        elif change < 0:
-            arrow = "📉"
         header += f"💼 Индекс МосБиржи: {last:.2f} ({change:+.2f}%) {arrow}\n"
     header += f"📌 {session_status}\n"
     header += f"🕒 Обновлено: {update_time}\n\n"
