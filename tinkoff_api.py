@@ -40,7 +40,6 @@ async def get_portfolio_summary(http_session):
 
         data = await get_portfolio_data(http_session, account_id)
         positions = data.get("positions", [])
-        logging.info(f"Позиций от API: {len(positions)}")
 
         total_amount = data.get("totalAmountPortfolio", {})
         total = float(total_amount.get("units", 0))
@@ -49,13 +48,6 @@ async def get_portfolio_summary(http_session):
         total_cost = 0.0
         total_value = 0.0
         balance = 0.0
-
-        type_map = {
-            "INSTRUMENT_TYPE_SHARE": "Акции",
-            "INSTRUMENT_TYPE_BOND": "Облигации",
-            "INSTRUMENT_TYPE_ETF": "Фонды",
-            "INSTRUMENT_TYPE_CURRENCY": "Валюта",
-        }
 
         # Находим валютную позицию
         for pos in positions:
@@ -71,8 +63,6 @@ async def get_portfolio_summary(http_session):
             if ticker == "RUB000UTSTOM" or pos.get("instrumentType") == "INSTRUMENT_TYPE_CURRENCY":
                 continue
             filtered_positions.append(pos)
-
-        logging.info(f"Позиций после фильтрации валют: {len(filtered_positions)}")
 
         for pos in filtered_positions:
             quantity = float(pos.get("quantity", {}).get("units", 0))
@@ -96,6 +86,18 @@ async def get_portfolio_summary(http_session):
             "expected_dividends": float(data.get("expectedDividends", 0))
         }
 
+        # Расширенная карта типов (полные и сокращённые значения)
+        type_map = {
+            "INSTRUMENT_TYPE_SHARE": "Акции",
+            "INSTRUMENT_TYPE_BOND": "Облигации",
+            "INSTRUMENT_TYPE_ETF": "Фонды",
+            "INSTRUMENT_TYPE_CURRENCY": "Валюта",
+            "SHARE": "Акции",
+            "BOND": "Облигации",
+            "ETF": "Фонды",
+            "CURRENCY": "Валюта",
+        }
+
         for pos in filtered_positions:
             figi = pos.get("figi")
             ticker = pos.get("ticker") or figi
@@ -112,15 +114,14 @@ async def get_portfolio_summary(http_session):
                 pos_yield_pct = 0.0
             instrument_type = pos.get("instrumentType", "").upper()
 
-            # --- Логика классификации ---
+            # Классификация
             if instrument_type in type_map:
                 type_display = type_map[instrument_type]
             else:
-                # Если API не дал тип, пытаемся угадать по названию/тикеру
                 name_lower = name.lower()
                 if "офз" in name_lower or "облиг" in name_lower:
                     type_display = "Облигации"
-                elif ticker.startswith(("SU", "RU")):      # российские облигации
+                elif ticker.startswith(("SU", "RU")):
                     type_display = "Облигации"
                 elif "ETF" in name or ticker in ("LQDT", "TGLD", "TGLD@"):
                     type_display = "Фонды"
@@ -128,7 +129,12 @@ async def get_portfolio_summary(http_session):
                     type_display = "Фонды"
                 else:
                     type_display = "Акции"
-                    logging.info(f"Неопознанный тип инструмента: ticker={ticker}, name={name}, instrumentType={instrument_type} — отнесён к акциям")
+                    # Логируем только действительно неопознанные
+                    if instrument_type and instrument_type not in ("SHARE", "BOND", "ETF", "CURRENCY"):
+                        logging.info(
+                            f"Неопознанный тип инструмента: ticker={ticker}, name={name}, "
+                            f"instrumentType={instrument_type} — отнесён к акциям"
+                        )
 
             result["positions"].append({
                 "figi": figi,
@@ -142,7 +148,6 @@ async def get_portfolio_summary(http_session):
                 "pos_yield_pct": pos_yield_pct,
             })
 
-        logging.info(f"Позиций в результате: {len(result['positions'])}")
         return result
     except Exception as e:
         logging.error(f"Ошибка портфеля: {e}")
