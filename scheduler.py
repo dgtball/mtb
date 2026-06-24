@@ -1,16 +1,13 @@
-import io
+import asyncio
+import datetime
 import logging
-import os
 import pandas as pd
-from collections import defaultdict
-from jinja2 import Environment, FileSystemLoader
-import cairosvg
-from utils import smart_price
-from config import NAME_OVERRIDES
+from aiogram import Bot
+from utils import get_moscow_time, get_local_time, get_session_status
+from handlers import format_message, format_historical_table, get_portfolio_change_str
+from moex_api import get_market_data, get_moex_index_info, get_top_movers, get_historical_shares, calc_period_change
+from config import MY_CHAT_ID, TOP_N
 
-# Настройка Jinja2 для загрузки шаблона из текущей директории
-env = Environment(loader=FileSystemLoader('.'))
-template = env.get_template('portfolio_template.svg')
 
 # ---------- НОВАЯ ВИЗУАЛИЗАЦИЯ ПОРТФЕЛЯ (SVG) ----------
 def generate_portfolio_image(portfolio_data, daily_change_pct=None) -> io.BytesIO:
