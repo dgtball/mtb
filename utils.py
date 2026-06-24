@@ -39,17 +39,17 @@ def get_session_status(no_trading_weekends=None):
     if now.hour < 6 or (now.hour == 6 and now.minute < 50):
         return "Биржа закрыта"
     elif now.hour == 6 and now.minute >= 50:
-        return "Утренняя сессия 06:50–09:50"
+        return "Утренняя сессия 07:50–10:50"
     elif now.hour < 9 or (now.hour == 9 and now.minute < 50):
-        return "Утренняя сессия 06:50–09:50"
+        return "Утренняя сессия 07:50–10:50"
     elif now.hour == 9 and now.minute >= 50:
-        return "Основная сессия 09:50–19:00"
+        return "Основная сессия 10:50–20:00"
     elif now.hour < 19:
-        return "Основная сессия 09:50–19:00"
+        return "Основная сессия 10:50–20:00"
     elif now.hour == 19 and now.minute == 0:
-        return "Вечерняя сессия 19:00–23:50"
+        return "Вечерняя сессия 20:00–00:50"
     elif now.hour < 23 or (now.hour == 23 and now.minute <= 50):
-        return "Вечерняя сессия 19:00–23:50"
+        return "Вечерняя сессия 00:00–00:50"
     else:
         return "Биржа закрыта"
 

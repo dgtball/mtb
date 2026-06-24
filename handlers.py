@@ -185,9 +185,11 @@ async def send_top(message: types.Message, period: str = 'day'):
             changes = calc_period_change(df)
             shares_all = await get_market_data(_http_session)
             if not shares_all.empty:
-                allowed_tickers = shares_all[shares_all['LISTLEVEL'] < 3]['SECID'].unique()
+                # Оставляем только акции (SECTYPE 1 или 2) и высокий уровень листинга
+                mask = (shares_all['LISTLEVEL'] < 3) & (shares_all['SECTYPE'].isin(['1', '2']))
+                allowed_tickers = shares_all[mask]['SECID'].unique()
                 changes = changes[changes['SECID'].isin(allowed_tickers)]
-                names = shares_all[['SECID', 'SHORTNAME']].drop_duplicates('SECID')
+                names = shares_all[mask][['SECID', 'SHORTNAME']].drop_duplicates('SECID')
                 changes = changes.merge(names, on='SECID', how='left')
             gainers = changes.nlargest(TOP_N, 'CHANGE_PCT')
             losers = changes.nsmallest(TOP_N, 'CHANGE_PCT')
