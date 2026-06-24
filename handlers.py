@@ -247,13 +247,18 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
                 await message.answer("❌ Не удалось получить данные портфеля.")
                 await safe_delete_message(message.chat.id, message.message_id)
                 return
+
             total_amount = data['total_amount']
             db.set_portfolio_value(total_amount)
             today = datetime.date.today().isoformat()
-            if db.get_daily_snapshot(today) is None:
+            snapshot = db.get_daily_snapshot(today)
+            if snapshot is not None and snapshot > 0:
+                daily_change = (total_amount - snapshot) / snapshot * 100
+            else:
+                daily_change = None
                 db.set_daily_snapshot(today, total_amount)
 
-            img_buf = generate_portfolio_image(data)
+            img_buf = generate_portfolio_image(data, daily_change_pct=daily_change)
             if img_buf is None:
                 await loading_msg.delete()
                 await message.answer("Нет данных для отображения.")

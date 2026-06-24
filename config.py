@@ -1,7 +1,7 @@
 import os
 
 # ---------- ВЕРСИЯ ----------
-VERSION = "2.17.2"
+VERSION = "2.18"
 
 # ---------- ТОКЕНЫ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")

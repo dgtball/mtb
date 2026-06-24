@@ -5,117 +5,119 @@ from collections import defaultdict
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import plotly.io as pio
 pio.kaleido.scope.default_format = "png"
 from utils import smart_price
 from config import NAME_OVERRIDES
 
-def generate_portfolio_image(portfolio_data) -> io.BytesIO:
+# ---------- НОВАЯ ВИЗУАЛИЗАЦИЯ ПОРТФЕЛЯ ----------
+def generate_portfolio_image(portfolio_data, daily_change_pct=None) -> io.BytesIO:
     if not portfolio_data or not portfolio_data["positions"]:
         logging.warning("Нет позиций для отображения портфеля")
         return None
 
-    groups = defaultdict(list)
-    for pos in portfolio_data["positions"]:
-        groups[pos["type_display"]].append(pos)
-
-    order = ["Акции", "Облигации", "Фонды"]
-    ordered_groups = [(key, groups.pop(key)) for key in order if key in groups]
-    for key, vals in groups.items():
-        ordered_groups.append((key, vals))
-
-    # Диагностика: выводим количество и первые 3 тикера
-    for group_name, positions in ordered_groups:
-        sample_tickers = [p['ticker'] for p in positions[:3]]
-        logging.info(f"Группа {group_name}: {len(positions)} позиций. Примеры: {sample_tickers}")
-
-    if not ordered_groups:
-        return None
-
+    positions = portfolio_data["positions"]
     total_amount = portfolio_data["total_amount"]
-    total_cost = portfolio_data["total_cost"]
     total_yield = portfolio_data["total_yield_pct"]
+    total_cost = portfolio_data["total_cost"]
     balance = portfolio_data.get("balance", 0.0)
 
-    rows = len(ordered_groups)
-    # Высота строки на одну позицию, плюс заголовок таблицы (30px), плюс небольшой запас
-    row_heights = [30 * len(positions) + 50 for _, positions in ordered_groups]
-    total_height = sum(row_heights) + 100  # 100px на общий заголовок и поля
+    # Группировка по типам для кольцевой диаграммы
+    type_sums = defaultdict(float)
+    for pos in positions:
+        value = pos["quantity"] * pos["price"]
+        type_sums[pos["type_display"]] += value
 
-    specs = [[{"type": "table"} for _ in range(1)] for _ in range(rows)]
-    fig = make_subplots(
-        rows=rows, cols=1,
-        row_heights=row_heights,
-        shared_xaxes=False,
-        vertical_spacing=0.01,          # <-- минимальный зазор между подтаблицами
-        subplot_titles=[g[0] for g in ordered_groups],
-        specs=specs
+    # Топ-10 по стоимости
+    sorted_pos = sorted(positions, key=lambda p: p["quantity"] * p["price"], reverse=True)
+    top10 = sorted_pos[:10]
+
+    # Создание фигуры
+    fig, (ax_donut, ax_bars) = plt.subplots(
+        1, 2, figsize=(12, 6),
+        gridspec_kw={'width_ratios': [1, 2]}
     )
+    fig.patch.set_facecolor('white')
 
-    col_labels = ["Название", "Кол-во", "Цена", "Средняя", "Доходность"]
+    # --- Кольцевая диаграмма ---
+    labels = list(type_sums.keys())
+    sizes = list(type_sums.values())
+    donut_colors = {'Акции': '#2196F3', 'Облигации': '#FF9800', 'Фонды': '#4CAF50'}
+    pie_colors = [donut_colors.get(l, '#9E9E9E') for l in labels]
 
-    for idx, (group_name, positions) in enumerate(ordered_groups, start=1):
-        table_data = []
-        for pos in positions:
-            display_name = pos["name"][:30] if pos["name"] else pos["ticker"]
-            table_data.append([
-                display_name,
-                f"{pos['quantity']:.0f}",
-                smart_price(pos['price']),
-                smart_price(pos['avg_price']),
-                f"{pos['pos_yield_pct']:+.2f}%"
-            ])
+    wedges, texts, autotexts = ax_donut.pie(
+        sizes, labels=labels, autopct='%1.1f%%',
+        startangle=90, pctdistance=0.85, colors=pie_colors,
+        wedgeprops=dict(width=0.4, edgecolor='white')
+    )
+    for autotext in autotexts:
+        autotext.set_fontsize(9)
+    ax_donut.set_title('Структура портфеля', fontsize=12, fontweight='bold')
 
-        table_trace = go.Table(
-            header=dict(
-                values=col_labels,
-                fill_color='#f0f0f0',
-                align='center',
-                font=dict(size=12, color='black', family='Arial')
-            ),
-            cells=dict(
-                values=[list(col) for col in zip(*table_data)] if table_data else [[]],
-                fill_color=[[
-                    '#e6f9e6' if float(row[4].replace('%', '').replace('+', '')) > 0 else '#fce4e4'
-                    for row in table_data
-                ]],
-                align='center',
-                font=dict(size=11, color='black', family='Arial')
-            ),
-            name=group_name
+    # --- Горизонтальные бары (топ-10) ---
+    names = []
+    values = []
+    pct_changes = []
+    for pos in top10:
+        # Используем переопределённое имя или тикер
+        ticker = pos['ticker']
+        name = pos['name']
+        display = NAME_OVERRIDES.get(name, name)  # переопределение
+        if len(display) > 15:
+            display = display[:12] + '…'
+        names.append(display)
+        val = pos['quantity'] * pos['price']
+        values.append(val)
+        pct_changes.append(pos['pos_yield_pct'])
+
+    y_pos = range(len(names))
+    bar_colors = ['#4CAF50' if p >= 0 else '#F44336' for p in pct_changes]
+    ax_bars.barh(y_pos, values, color=bar_colors, height=0.6)
+    ax_bars.set_yticks(y_pos)
+    ax_bars.set_yticklabels(names)
+    ax_bars.invert_yaxis()
+    ax_bars.set_xlabel('Стоимость, ₽')
+    ax_bars.set_title('Топ-10 позиций', fontsize=12, fontweight='bold')
+    ax_bars.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'{x:,.0f}'))
+
+    # Подписи доходности справа
+    max_val = max(values) if values else 1
+    for i, (val, pct) in enumerate(zip(values, pct_changes)):
+        ax_bars.text(
+            val + max_val * 0.02, i,
+            f'{pct:+.1f}%', va='center', fontsize=8,
+            color='#4CAF50' if pct >= 0 else '#F44336'
         )
-        fig.add_trace(table_trace, row=idx, col=1)
 
-    fig.update_layout(
-        title=dict(
-            text=f"Портфель<br>Сумма: {total_amount:.2f} ₽   Вложено: {total_cost:.2f} ₽   "
-                 f"Доходность: {total_yield:+.2f}%   Баланс: {balance:.2f} ₽",
-            x=0.5, xanchor='center',
-            font=dict(size=14, family='Arial', color='black')
-        ),
-        width=800,
-        height=total_height,
-        margin=dict(l=20, r=20, t=80, b=20),
-        paper_bgcolor='white',
-        showlegend=False
+    # --- Общая информация ---
+    info_text = (
+        f"Сумма: {total_amount:,.2f} ₽    "
+        f"Вложено: {total_cost:,.2f} ₽    "
+        f"Доходность: {total_yield:+.2f}%"
     )
+    if daily_change_pct is not None:
+        info_text += f"    Изм. за день: {daily_change_pct:+.2f}%"
+    if balance > 0:
+        info_text += f"    Баланс: {balance:,.2f} ₽"
+    fig.suptitle(info_text, fontsize=10, y=0.02)
 
-    try:
-        img_bytes = pio.to_image(fig, format='png', engine='kaleido')
-        return io.BytesIO(img_bytes)
-    except Exception as e:
-        logging.error(f"Ошибка экспорта портфеля в PNG: {e}")
-        return None
+    plt.tight_layout(rect=[0, 0.03, 1, 0.97])
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    buf.seek(0)
+    plt.close()
+    return buf
 
+# ---------- ИЗБРАННОЕ (БЕЗ ИЗМЕНЕНИЙ) ----------
 def generate_favorites_image(fav_df) -> io.BytesIO:
     if fav_df.empty:
         return None
     table_data = []
     for _, row in fav_df.iterrows():
         name = row.get('SHORTNAME', row['SECID'])
-        secid = row['SECID']                           # <-- тикер
+        secid = row['SECID']
         # Применяем переопределение: сначала по тикеру, потом по названию
         display = NAME_OVERRIDES.get(secid, name)
         if display == name:
