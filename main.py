@@ -1,13 +1,13 @@
 import os
 import sys
 import logging
-import traceback
+import datetime
 import asyncio
 import aiohttp
 from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
-from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION
+from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION, TINKOFF_TOKEN
 import db
 from moex_api import load_instrument_names
 from handlers import register_handlers, set_http_session, set_bot
@@ -31,7 +31,7 @@ if not API_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
 
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher(storage=MemoryStorage())  # <-- добавлено хранилище для FSM
+dp = Dispatcher(storage=MemoryStorage())
 
 # ---------- HEALTH‑СЕРВЕР ----------
 async def health_handler(request):
@@ -48,24 +48,38 @@ async def run_health_server():
     logging.info(f"✅ Health‑сервер запущен на порту {PORT}")
     await asyncio.Event().wait()
 
+# ---------- ФОНОВОЕ ОБНОВЛЕНИЕ ПОРТФЕЛЯ ----------
+async def portfolio_updater(http_session):
+    """Периодически обновляет снэпшот портфеля раз в 5 минут."""
+    await asyncio.sleep(10)  # первичная задержка после запуска
+    while True:
+        try:
+            from tinkoff_api import get_portfolio_summary
+            data = await get_portfolio_summary(http_session)
+            if data:
+                total = data['total_amount']
+                db.set_portfolio_value(total)
+                today = datetime.date.today().isoformat()
+                if db.get_daily_snapshot(today) is None:
+                    db.set_daily_snapshot(today, total)
+                logging.debug(f"Портфель автообновлён: {total:.2f}")
+        except Exception as e:
+            logging.error(f"Ошибка автообновления портфеля: {e}")
+        await asyncio.sleep(300)  # 5 минут
+
 # ---------- ГЛАВНАЯ ФУНКЦИЯ ----------
 async def main():
-    # Инициализация БД
     db.init_db()
     db.load_name_overrides()
 
-    # Создание HTTP‑сессии
     http_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
-    set_http_session(http_session)  # передаём в handlers
-    set_bot(bot)                    # передаём экземпляр бота
+    set_http_session(http_session)
+    set_bot(bot)
 
-    # Загружаем названия инструментов
     await load_instrument_names(http_session)
 
-    # Регистрируем обработчики
     register_handlers(dp)
 
-    # Удаляем вебхук и запускаем поллинг
     await bot.delete_webhook(drop_pending_updates=True)
     logging.info("✅ Вебхук удалён")
 
@@ -73,6 +87,10 @@ async def main():
         await bot.send_message(MY_CHAT_ID, f"🚀 Бот перезапущен и готов к работе! ver: {VERSION}")
     except Exception as e:
         logging.error(f"❌ Не удалось отправить уведомление о запуске: {e}")
+
+    # Запускаем фоновое обновление портфеля, если есть токен
+    if TINKOFF_TOKEN:
+        asyncio.create_task(portfolio_updater(http_session))
 
     logging.info("✅ Запускаем polling...")
     polling_task = asyncio.create_task(dp.start_polling(bot))

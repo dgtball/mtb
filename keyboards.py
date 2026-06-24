@@ -9,7 +9,7 @@ def main_keyboard():
         [KeyboardButton(text="✅ Добавить тикер"), KeyboardButton(text="❌ Удалить тикер")],
     ]
     if TINKOFF_TOKEN:
-        kb.append([KeyboardButton(text="📈 Портфель")])          # теперь строка 4
+        kb.append([KeyboardButton(text="💼 Портфель")])          # теперь строка 4
     # Новые кнопки управления переименованиями в одной строке
     kb.append([
         KeyboardButton(text="✏️ Переименовать тикер"),
