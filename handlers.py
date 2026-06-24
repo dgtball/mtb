@@ -16,7 +16,7 @@ import db
 from moex_api import (
     get_market_data, get_historical_shares, get_historical_close,
     get_moex_index_info, get_top_movers, calc_period_change,
-    get_historical_prices_batch   # <-- новая функция
+    get_historical_prices_batch
 )
 from tinkoff_api import get_portfolio_summary
 from visualization import generate_portfolio_image, generate_favorites_image
@@ -38,7 +38,7 @@ def set_bot(bot_instance):
     global _bot
     _bot = bot_instance
 
-# ---------- FSM: Состояния добавления/удаления ----------
+# ---------- FSM: Состояния добавления/удаления/переименования ----------
 class AddRemoveStates(StatesGroup):
     waiting_for_add = State()
     waiting_for_remove = State()
@@ -61,7 +61,7 @@ def format_message(gainers, losers, index_info, update_time, session_status):
     if index_info and 'last' in index_info:
         last = index_info['last']
         change = index_info.get('change_percent', 0)
-        header += f"💼 Индекс МосБиржи: {last:.2f} ({change:+.2f}%) {arrow}\n"
+        header += f"💼 Индекс МосБиржи: {last:.2f} ({change:+.2f}%)\n"
     header += f"📌 {session_status}\n"
     header += f"🕒 Обновлено: {update_time}\n\n"
     text = header
@@ -89,7 +89,7 @@ def format_historical_table(gainers, losers, period, from_date_dt, till_date_dt)
 
 # ---------- ПОЛУЧЕНИЕ ДАННЫХ ИЗБРАННОГО ----------
 async def get_favorites_data(chat_id: int):
-    favs = get_favorites(chat_id)
+    favs = db.get_favorites(chat_id)
     if not favs:
         return None, "⭐ У вас пока нет избранных акций.\n\nДобавьте их через кнопку ✅ Добавить тикер."
     shares_df = await get_market_data(_http_session)
@@ -115,7 +115,6 @@ async def get_favorites_data(chat_id: int):
     first_of_month = now.replace(day=1)
     month_reference = (first_of_month - datetime.timedelta(days=1)).date()
 
-    # Пакетная загрузка исторических цен для всех тикеров
     tickers = fav_df['SECID'].tolist()
     target_dates = [week_reference, month_reference]
     prices = await get_historical_prices_batch(_http_session, tickers, target_dates)
@@ -127,7 +126,6 @@ async def get_favorites_data(chat_id: int):
         current_price = row['LAST']
         week_price = prices.get((ticker, week_reference))
         month_price = prices.get((ticker, month_reference))
-
         if week_price is not None and week_price > 0:
             week_change = ((current_price - week_price) / week_price) * 100
         else:
@@ -182,7 +180,6 @@ async def send_top(message: types.Message, period: str = 'day'):
             changes = calc_period_change(df)
             shares_all = await get_market_data(_http_session)
             if not shares_all.empty:
-                # Оставляем только акции (SECTYPE 1 или 2) и высокий уровень листинга
                 mask = (shares_all['LISTLEVEL'] < 3) & (shares_all['SECTYPE'].isin(['1', '2']))
                 allowed_tickers = shares_all[mask]['SECID'].unique()
                 changes = changes[changes['SECID'].isin(allowed_tickers)]
@@ -363,7 +360,7 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
         await state.update_data(prompt_msg_id=prompt_msg.message_id)
         await safe_delete_message(message.chat.id, message.message_id)
         return
-        
+
     # ---------- ПЕРЕИМЕНОВАТЬ ТИКЕР ----------
     if text == "✏️ Переименовать тикер":
         await state.set_state(AddRemoveStates.waiting_for_rename)
@@ -397,32 +394,12 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
 
     # ---------- ОБРАБОТКА ТЕКСТА В ЗАВИСИМОСТИ ОТ СОСТОЯНИЯ ----------
     current_state = await state.get_state()
-    if current_state == AddRemoveStates.waiting_for_add.state:
-        data = await state.get_data()
-        prompt_msg_id = data.get('prompt_msg_id')
-        if prompt_msg_id:
-            await safe_delete_message(message.chat.id, prompt_msg_id)
-        await safe_delete_message(message.chat.id, message.message_id)
-
-        raw = message.text.strip()
-        tickers = [t.strip().upper() for t in raw.split(',') if t.strip()]
-        results = []
-        for ticker in tickers:
-            if add_favorite(message.chat.id, ticker):
-                results.append(f"✅ {ticker} добавлен")
-            else:
-                results.append(f"ℹ️ {ticker} уже есть")
-        await message.answer("\n".join(results) if results else "Ничего не сделано.")
-        await state.clear()
-        return
-
     if current_state == AddRemoveStates.waiting_for_rename.state:
         data = await state.get_data()
         prompt_msg_id = data.get('prompt_msg_id')
         if prompt_msg_id:
             await safe_delete_message(message.chat.id, prompt_msg_id)
         await safe_delete_message(message.chat.id, message.message_id)
-
         parts = message.text.strip().split(maxsplit=1)
         if len(parts) < 2:
             await message.answer("Нужно указать тикер и название через пробел. Например: SBER Сбер")
@@ -440,14 +417,48 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
         if prompt_msg_id:
             await safe_delete_message(message.chat.id, prompt_msg_id)
         await safe_delete_message(message.chat.id, message.message_id)
-
         ticker = message.text.strip().upper()
         db.remove_name_override(ticker)
         await message.answer(f"✅ Переименование для {ticker} удалено (если было)")
         await state.clear()
-        return                                                                                                                                                                                                      
+        return
 
-    # Если сообщение не попало ни в одно состояние и не является командой
+    if current_state == AddRemoveStates.waiting_for_add.state:
+        data = await state.get_data()
+        prompt_msg_id = data.get('prompt_msg_id')
+        if prompt_msg_id:
+            await safe_delete_message(message.chat.id, prompt_msg_id)
+        await safe_delete_message(message.chat.id, message.message_id)
+        raw = message.text.strip()
+        tickers = [t.strip().upper() for t in raw.split(',') if t.strip()]
+        results = []
+        for ticker in tickers:
+            if db.add_favorite(message.chat.id, ticker):
+                results.append(f"✅ {ticker} добавлен")
+            else:
+                results.append(f"ℹ️ {ticker} уже есть")
+        await message.answer("\n".join(results) if results else "Ничего не сделано.")
+        await state.clear()
+        return
+
+    if current_state == AddRemoveStates.waiting_for_remove.state:
+        data = await state.get_data()
+        prompt_msg_id = data.get('prompt_msg_id')
+        if prompt_msg_id:
+            await safe_delete_message(message.chat.id, prompt_msg_id)
+        await safe_delete_message(message.chat.id, message.message_id)
+        raw = message.text.strip()
+        tickers = [t.strip().upper() for t in raw.split(',') if t.strip()]
+        results = []
+        for ticker in tickers:
+            if db.remove_favorite(message.chat.id, ticker):
+                results.append(f"✅ {ticker} удалён")
+            else:
+                results.append(f"ℹ️ {ticker} не найден")
+        await message.answer("\n".join(results) if results else "Ничего не сделано.")
+        await state.clear()
+        return
+
     logging.info(f"FALLBACK: получено сообщение: '{text}'")
     await message.answer("Используйте кнопки меню.", reply_markup=main_keyboard())
     await safe_delete_message(message.chat.id, message.message_id)
