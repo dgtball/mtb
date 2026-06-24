@@ -10,7 +10,7 @@ def main_keyboard():
     if TINKOFF_TOKEN:
         kb.append([KeyboardButton(text="💼 Портфель")])
     kb.append([
-        KeyboardButton(text="✏️ Переименовать"),
+        KeyboardButton(text="✏️ Изменить"),
         KeyboardButton(text="🗑 Удалить"),
         KeyboardButton(text="📋 Список имён")
     ])

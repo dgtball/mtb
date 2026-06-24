@@ -330,7 +330,7 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
         return
 
     # ---------- ПЕРЕИМЕНОВАТЬ ТИКЕР ----------
-    if text == "✏️ Переименовать":
+    if text == "✏️ Изменить":
         await state.set_state(AddRemoveStates.waiting_for_rename)
         prompt_msg = await message.answer(
             "Введите тикер и новое название через пробел (например, SBER Сбер):"
