@@ -1,6 +1,7 @@
 import datetime
 import pandas as pd
 from tabulate import tabulate
+from config import NAME_OVERRIDES
 
 # ---------- ВРЕМЯ ----------
 def get_moscow_time():
@@ -107,18 +108,22 @@ def build_table_universal(df, title, headers, data_columns):
         return ""
     table_data = []
     for _, row in df.iterrows():
+        secid = row.get('SECID', '')          # <-- тикер для переопределения
         row_data = []
         for col in data_columns:
             val = row.get(col, "")
             if col == 'SHORTNAME':
-                # Применяем переопределение названия, если есть
-                from config import NAME_OVERRIDES
+                # Применяем переопределение: сначала ищем по тикеру, потом по исходному названию
                 original = str(val)
-                val = NAME_OVERRIDES.get(original, original)
-                if len(val) > 25:
-                    val = val[:22] + "…"
+                display = NAME_OVERRIDES.get(secid, original)  # по тикеру
+                if display == original:                         # если не нашли, попробуем по названию
+                    display = NAME_OVERRIDES.get(original, original)
+                if len(display) > 25:
+                    display = display[:22] + "…"
+                val = display
+            elif col == 'LAST' and isinstance(val, (int, float)):
+                val = smart_price(val)
             elif col == 'LAST':
-                # Попытка привести к числу, если пришло строкой
                 if isinstance(val, str):
                     try:
                         val = float(val)

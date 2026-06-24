@@ -110,7 +110,7 @@ async def get_portfolio_summary(http_session):
                 pos_yield_pct = (expected_yield / (avg_price * quantity)) * 100
             else:
                 pos_yield_pct = 0.0
-            instrument_type = pos.get("instrumentType", "")
+            instrument_type = pos.get("instrumentType", "").upper()
 
             # --- Логика классификации ---
             if instrument_type in type_map:

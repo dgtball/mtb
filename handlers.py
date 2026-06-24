@@ -199,8 +199,10 @@ async def send_top(message: types.Message, period: str = 'day'):
                 changes = changes[changes['SECID'].isin(allowed_tickers)]
                 names = shares_all[mask][['SECID', 'SHORTNAME']].drop_duplicates('SECID')
                 changes = changes.merge(names, on='SECID', how='left')
-            gainers = changes.nlargest(TOP_N, 'CHANGE_PCT')
-            losers = changes.nsmallest(TOP_N, 'CHANGE_PCT')
+            positive = changes[changes['CHANGE_PCT'] > 0]
+            negative = changes[changes['CHANGE_PCT'] < 0]
+            gainers = positive.nlargest(TOP_N, 'CHANGE_PCT') if not positive.empty else pd.DataFrame()
+            losers = negative.nsmallest(TOP_N, 'CHANGE_PCT') if not negative.empty else pd.DataFrame()
             text = format_historical_table(gainers, losers, period_name_short, from_date, till_date)
 
         sent_msg = await message.answer(text, parse_mode="HTML")

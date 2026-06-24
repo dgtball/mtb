@@ -10,6 +10,7 @@ from plotly.subplots import make_subplots
 import plotly.io as pio
 pio.kaleido.scope.default_format = "png"
 from utils import smart_price
+from config import NAME_OVERRIDES
 
 def generate_portfolio_image(portfolio_data) -> io.BytesIO:
     if not portfolio_data or not portfolio_data["positions"]:
@@ -114,16 +115,18 @@ def generate_favorites_image(fav_df) -> io.BytesIO:
     table_data = []
     for _, row in fav_df.iterrows():
         name = row.get('SHORTNAME', row['SECID'])
-        # Применяем переопределение
-        from config import NAME_OVERRIDES
-        name = NAME_OVERRIDES.get(name, name)
-        if len(name) > 20:
-            name = name[:17] + "…"                                                                                                                                                                  
+        secid = row['SECID']                           # <-- тикер
+        # Применяем переопределение: сначала по тикеру, потом по названию
+        display = NAME_OVERRIDES.get(secid, name)
+        if display == name:
+            display = NAME_OVERRIDES.get(name, name)
+        if len(display) > 20:
+            display = display[:17] + "…"
         price = smart_price(row['LAST']) if isinstance(row['LAST'], (int, float)) else str(row['LAST'])
         day = f"{row['CHANGEPERCENT']:+.2f}%" if pd.notna(row['CHANGEPERCENT']) else "—"
         week = f"{row['change_week']:+.2f}%" if pd.notna(row['change_week']) else "—"
         month = f"{row['change_month']:+.2f}%" if pd.notna(row['change_month']) else "—"
-        table_data.append([name, price, day, week, month])
+        table_data.append([display, price, day, week, month])
     headers = ["Название", "Цена", "День", "Неделя", "Месяц"]
     fig, ax = plt.subplots(figsize=(8, max(3, len(table_data) * 0.4 + 1)))
     ax.axis('off')
