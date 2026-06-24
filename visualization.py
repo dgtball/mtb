@@ -29,12 +29,9 @@ def generate_portfolio_image(portfolio_data, daily_change_pct=None) -> io.BytesI
         type_values[pos["type_display"]] += value
 
     total_value = sum(type_values.values())
-    type_percents = {}
     labels = []
     sizes = []
     for t, v in type_values.items():
-        pct = (v / total_value * 100) if total_value > 0 else 0
-        type_percents[t] = pct
         labels.append(t)
         sizes.append(v)
 
@@ -45,7 +42,7 @@ def generate_portfolio_image(portfolio_data, daily_change_pct=None) -> io.BytesI
     # Создание тёмной фигуры
     fig, (ax_donut, ax_bars) = plt.subplots(
         1, 2, figsize=(12, 6),
-        gridspec_kw={'width_ratios': [1, 2],
+        gridspec_kw={'width_ratios': [1, 2]},
         facecolor='#121212'
     )
     ax_donut.set_facecolor('#121212')
@@ -124,7 +121,7 @@ def generate_portfolio_image(portfolio_data, daily_change_pct=None) -> io.BytesI
     plt.close()
     return buf
 
-# ---------- ИЗБРАННОЕ (БЕЗ ИЗМЕНЕНИЙ) ----------
+# ---------- ИЗБРАННОЕ ----------
 def generate_favorites_image(fav_df) -> io.BytesIO:
     if fav_df.empty:
         return None
