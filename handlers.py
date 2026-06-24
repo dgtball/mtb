@@ -23,10 +23,6 @@ from visualization import generate_portfolio_image, generate_favorites_image
 from keyboards import main_keyboard
 
 # ---------- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ----------
-last_messages = {}
-update_tasks = {}
-auto_update_enabled = {}
-
 _http_session = None
 _bot = None
 
@@ -38,7 +34,7 @@ def set_bot(bot_instance):
     global _bot
     _bot = bot_instance
 
-# ---------- FSM: Состояния добавления/удаления/переименования ----------
+# ---------- FSM ----------
 class AddRemoveStates(StatesGroup):
     waiting_for_add = State()
     waiting_for_remove = State()
@@ -155,7 +151,7 @@ async def get_favorites_data(chat_id: int):
     fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
     return fav_df, None
 
-# ---------- ОТПРАВКА ТОПА ----------
+# ---------- ОТПРАВКА ТОПА (РАЗОВАЯ) ----------
 async def send_top(message: types.Message, period: str = 'day'):
     loading_msg = await message.answer("⏳ Загружаю данные...")
     try:
@@ -172,6 +168,7 @@ async def send_top(message: types.Message, period: str = 'day'):
             update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
             portfolio_line = get_portfolio_change_str()
             text = format_message(gainers, losers, index_info, update_time, session_status, portfolio_line)
+            await message.answer(text, parse_mode="HTML")
         else:
             now = get_moscow_time()
             if period == 'week':
@@ -204,53 +201,23 @@ async def send_top(message: types.Message, period: str = 'day'):
             gainers = positive.nlargest(TOP_N, 'CHANGE_PCT') if not positive.empty else pd.DataFrame()
             losers = negative.nsmallest(TOP_N, 'CHANGE_PCT') if not negative.empty else pd.DataFrame()
             text = format_historical_table(gainers, losers, period_name_short, from_date, till_date)
-
-        sent_msg = await message.answer(text, parse_mode="HTML")
-        chat_id = message.chat.id
-        last_messages[chat_id] = sent_msg.message_id
-        if period == 'day' and auto_update_enabled.get(chat_id, False):
-            if chat_id not in update_tasks or update_tasks[chat_id].done():
-                task = asyncio.create_task(auto_update_task(chat_id, sent_msg.message_id))
-                update_tasks[chat_id] = task
+            await message.answer(text, parse_mode="HTML")
         await loading_msg.delete()
     except Exception as e:
         await loading_msg.delete()
         logging.error(f"❌ Ошибка в send_top (period={period}): {e}", exc_info=True)
         await message.answer(f"❌ Ошибка при загрузке данных: {e}")
 
-async def auto_update_task(chat_id: int, message_id: int):
-    while True:
-        await asyncio.sleep(30)
-        try:
-            if _bot is None:
-                logging.error("Bot instance not set, cannot auto-update")
-                break
-            shares_df = await get_market_data(_http_session)
-            gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
-            if gainers.empty and losers.empty:
-                continue
-            index_info = await get_moex_index_info(_http_session)
-            session_status = get_session_status(time_offset=1)
-            update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
-            portfolio_line = get_portfolio_change_str()
-            text = format_message(gainers, losers, index_info, update_time, session_status, portfolio_line)
-            await _bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, parse_mode="HTML")
-        except Exception as e:
-            logging.error(f"Ошибка автообновления для чата {chat_id}: {e}")
-            break
-
 # ---------- ОБРАБОТЧИКИ ----------
 async def cmd_start(message: types.Message, state: FSMContext):
     if message.from_user.id != MY_CHAT_ID:
         await message.answer("⛔ Доступ запрещён.")
+        await _bot.send_message(MY_CHAT_ID, f"⚠️ Попытка доступа от {message.from_user.full_name} (@{message.from_user.username}, id={message.from_user.id})")
         return
-    chat_id = message.chat.id
-    auto_update_enabled[chat_id] = True
     await state.clear()
     try:
         await message.answer(
-            "👋 Привет! Я бот для отслеживания топ-акций Мосбиржи и вашего портфеля Т-Инвестиций.\n\n"
-            "Используйте кнопки ниже для навигации.",
+            "👋 Привет! Используй кнопки для навигации",
             reply_markup=main_keyboard()
         )
         await send_top(message, 'day')
@@ -261,6 +228,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
 async def handle_buttons_and_commands(message: types.Message, state: FSMContext):
     if message.from_user.id != MY_CHAT_ID:
         await message.answer("⛔ Доступ запрещён.")
+        await _bot.send_message(MY_CHAT_ID, f"⚠️ Попытка доступа от {message.from_user.full_name} (@{message.from_user.username}, id={message.from_user.id})")
         return
     text = message.text
     logging.info(f"🔄 Обработка сообщения: '{text}'")
@@ -280,7 +248,6 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
                 await message.answer("❌ Не удалось получить данные портфеля.")
                 await safe_delete_message(message.chat.id, message.message_id)
                 return
-            # Сохраняем текущую стоимость портфеля и дневной снэпшот
             total_amount = data['total_amount']
             db.set_portfolio_value(total_amount)
             today = datetime.date.today().isoformat()
@@ -306,36 +273,13 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
             await safe_delete_message(message.chat.id, message.message_id)
         return
 
-    # ---------- ТОП ДНЯ ----------
-    if text == "📌 Топ дня":
-        shares_df = await get_market_data(_http_session)
-        gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
-        if gainers.empty and losers.empty:
-            session_status = get_session_status(time_offset=1)
-            await message.answer(f"📌 {session_status}\nДанные обновятся в рабочее время.")
-            await safe_delete_message(message.chat.id, message.message_id)
-            return
-        index_info = await get_moex_index_info(_http_session)
-        session_status = get_session_status(time_offset=1)
-        update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
-        portfolio_line = get_portfolio_change_str()
-        text = format_message(gainers, losers, index_info, update_time, session_status, portfolio_line)
-        sent_msg = await message.answer(text, parse_mode="HTML")
-        chat_id = message.chat.id
-        last_messages[chat_id] = sent_msg.message_id
-        if auto_update_enabled.get(chat_id, False):
-            if chat_id not in update_tasks or update_tasks[chat_id].done():
-                task = asyncio.create_task(auto_update_task(chat_id, sent_msg.message_id))
-                update_tasks[chat_id] = task
-        await safe_delete_message(message.chat.id, message.message_id)
-        return
-
-    # ---------- ТОП НЕДЕЛИ / МЕСЯЦА ----------
+    # ---------- ТОП НЕДЕЛИ ----------
     if text == "📊 Топ недели":
         await send_top(message, 'week')
         await safe_delete_message(message.chat.id, message.message_id)
         return
 
+    # ---------- ТОП МЕСЯЦА ----------
     if text == "🗓️ Топ месяца":
         await send_top(message, 'month')
         await safe_delete_message(message.chat.id, message.message_id)
@@ -370,7 +314,7 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
             await safe_delete_message(message.chat.id, message.message_id)
         return
 
-    # ---------- ДОБАВИТЬ ТИКЕР (FSM) ----------
+    # ---------- ДОБАВИТЬ ТИКЕР ----------
     if text == "✅ Добавить тикер":
         await state.set_state(AddRemoveStates.waiting_for_add)
         prompt_msg = await message.answer("Введите тикер для добавления (например, SBER или SBER, GAZP):")
@@ -378,7 +322,7 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
         await safe_delete_message(message.chat.id, message.message_id)
         return
 
-    # ---------- УДАЛИТЬ ТИКЕР (FSM) ----------
+    # ---------- УДАЛИТЬ ТИКЕР ----------
     if text == "❌ Удалить тикер":
         await state.set_state(AddRemoveStates.waiting_for_remove)
         prompt_msg = await message.answer("Введите тикер для удаления (например, SBER или SBER, GAZP):")
@@ -417,7 +361,7 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
         await safe_delete_message(message.chat.id, message.message_id)
         return
 
-    # ---------- ОБРАБОТКА ТЕКСТА В ЗАВИСИМОСТИ ОТ СОСТОЯНИЯ ----------
+    # ---------- ОБРАБОТКА ТЕКСТА ПО СОСТОЯНИЮ ----------
     current_state = await state.get_state()
     if current_state == AddRemoveStates.waiting_for_rename.state:
         data = await state.get_data()

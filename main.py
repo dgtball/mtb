@@ -1,7 +1,6 @@
 import os
 import sys
 import logging
-import datetime
 import asyncio
 import aiohttp
 from aiohttp import web
@@ -11,12 +10,13 @@ from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION, TINKOFF_TOKEN
 import db
 from moex_api import load_instrument_names
 from handlers import register_handlers, set_http_session, set_bot
+import scheduler
 
-# ---------- ЛОГИРОВАНИЕ ----------
 logging.basicConfig(level=logging.INFO)
+logging.getLogger('aiogram.event').setLevel(logging.WARNING)
 logging.getLogger('aiohttp.access').setLevel(logging.WARNING)
+logging.getLogger('aiohttp.client').setLevel(logging.WARNING)
 
-# ---------- ПЕРЕХВАТ КРИТИЧЕСКИХ ОШИБОК ИМПОРТА ----------
 try:
     from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION
     import db
@@ -26,14 +26,12 @@ except Exception as e:
     logging.critical("CRITICAL IMPORT ERROR", exc_info=True)
     sys.exit(1)
 
-# ---------- ИНИЦИАЛИЗАЦИЯ ----------
 if not API_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# ---------- HEALTH‑СЕРВЕР ----------
 async def health_handler(request):
     return web.Response(text="OK")
 
@@ -48,26 +46,6 @@ async def run_health_server():
     logging.info(f"✅ Health‑сервер запущен на порту {PORT}")
     await asyncio.Event().wait()
 
-# ---------- ФОНОВОЕ ОБНОВЛЕНИЕ ПОРТФЕЛЯ ----------
-async def portfolio_updater(http_session):
-    """Периодически обновляет снэпшот портфеля раз в 5 минут."""
-    await asyncio.sleep(10)  # первичная задержка после запуска
-    while True:
-        try:
-            from tinkoff_api import get_portfolio_summary
-            data = await get_portfolio_summary(http_session)
-            if data:
-                total = data['total_amount']
-                db.set_portfolio_value(total)
-                today = datetime.date.today().isoformat()
-                if db.get_daily_snapshot(today) is None:
-                    db.set_daily_snapshot(today, total)
-                logging.debug(f"Портфель автообновлён: {total:.2f}")
-        except Exception as e:
-            logging.error(f"Ошибка автообновления портфеля: {e}")
-        await asyncio.sleep(300)  # 5 минут
-
-# ---------- ГЛАВНАЯ ФУНКЦИЯ ----------
 async def main():
     db.init_db()
     db.load_name_overrides()
@@ -75,6 +53,8 @@ async def main():
     http_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
     set_http_session(http_session)
     set_bot(bot)
+    scheduler.set_bot(bot)
+    scheduler.set_http_session(http_session)
 
     await load_instrument_names(http_session)
 
@@ -88,9 +68,7 @@ async def main():
     except Exception as e:
         logging.error(f"❌ Не удалось отправить уведомление о запуске: {e}")
 
-    # Запускаем фоновое обновление портфеля, если есть токен
-    if TINKOFF_TOKEN:
-        asyncio.create_task(portfolio_updater(http_session))
+    asyncio.create_task(scheduler.scheduler_loop())
 
     logging.info("✅ Запускаем polling...")
     polling_task = asyncio.create_task(dp.start_polling(bot))
