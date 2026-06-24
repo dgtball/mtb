@@ -45,7 +45,7 @@ def generate_portfolio_image(portfolio_data, daily_change_pct=None) -> io.BytesI
     # Создание тёмной фигуры
     fig, (ax_donut, ax_bars) = plt.subplots(
         1, 2, figsize=(12, 6),
-        gridspec_kw={'width_ratios': [1, 2]],
+        gridspec_kw={'width_ratios': [1, 2],
         facecolor='#121212'
     )
     ax_donut.set_facecolor('#121212')
