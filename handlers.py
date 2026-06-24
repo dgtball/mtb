@@ -55,13 +55,26 @@ async def safe_delete_message(chat_id: int, message_id: int):
     except Exception as e:
         logging.warning(f"Не удалось удалить сообщение {message_id}: {e}")
 
+# ---------- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ПОРТФЕЛЯ ----------
+def get_portfolio_change_str():
+    """Возвращает строку с изменением портфеля за день или пустую строку."""
+    today = datetime.date.today().isoformat()
+    snapshot = db.get_daily_snapshot(today)
+    current = db.get_portfolio_value()
+    if snapshot is None or current is None or snapshot == 0:
+        return ""
+    change = (current - snapshot) / snapshot * 100
+    return f"💼 Портфель: {change:+.2f}% за день\n"
+
 # ---------- ФОРМАТИРОВАНИЕ ----------
-def format_message(gainers, losers, index_info, update_time, session_status):
+def format_message(gainers, losers, index_info, update_time, session_status, portfolio_change_str=""):
     header = ""
     if index_info and 'last' in index_info:
         last = index_info['last']
         change = index_info.get('change_percent', 0)
-        header += f"💼 Индекс МосБиржи: {last:.2f} ({change:+.2f}%)\n"
+        header += f"📈 Индекс МосБиржи: {last:.2f} ({change:+.2f}%)\n"
+    if portfolio_change_str:
+        header += portfolio_change_str
     header += f"📌 {session_status}\n"
     header += f"🕒 Обновлено: {update_time}\n\n"
     text = header
@@ -151,13 +164,14 @@ async def send_top(message: types.Message, period: str = 'day'):
             gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
             if gainers.empty and losers.empty:
                 await loading_msg.delete()
-                session_status = get_session_status()
+                session_status = get_session_status(time_offset=1)
                 await message.answer(f"📌 {session_status}\nДанные обновятся в рабочее время.")
                 return
             index_info = await get_moex_index_info(_http_session)
-            session_status = get_session_status()
+            session_status = get_session_status(time_offset=1)
             update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
-            text = format_message(gainers, losers, index_info, update_time, session_status)
+            portfolio_line = get_portfolio_change_str()
+            text = format_message(gainers, losers, index_info, update_time, session_status, portfolio_line)
         else:
             now = get_moscow_time()
             if period == 'week':
@@ -214,9 +228,10 @@ async def auto_update_task(chat_id: int, message_id: int):
             if gainers.empty and losers.empty:
                 continue
             index_info = await get_moex_index_info(_http_session)
-            session_status = get_session_status()
+            session_status = get_session_status(time_offset=1)
             update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
-            text = format_message(gainers, losers, index_info, update_time, session_status)
+            portfolio_line = get_portfolio_change_str()
+            text = format_message(gainers, losers, index_info, update_time, session_status, portfolio_line)
             await _bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, parse_mode="HTML")
         except Exception as e:
             logging.error(f"Ошибка автообновления для чата {chat_id}: {e}")
@@ -249,7 +264,7 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
     logging.info(f"🔄 Обработка сообщения: '{text}'")
 
     # ---------- ПОРТФЕЛЬ ----------
-    if text == "/portfolio" or text == "📈 Портфель":
+    if text == "/portfolio" or text == "💼 Портфель":
         logging.info("🔍 Обработка портфеля")
         if not _http_session:
             await message.answer("❌ Нет активной сессии.")
@@ -263,6 +278,13 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
                 await message.answer("❌ Не удалось получить данные портфеля.")
                 await safe_delete_message(message.chat.id, message.message_id)
                 return
+            # Сохраняем текущую стоимость портфеля и дневной снэпшот
+            total_amount = data['total_amount']
+            db.set_portfolio_value(total_amount)
+            today = datetime.date.today().isoformat()
+            if db.get_daily_snapshot(today) is None:
+                db.set_daily_snapshot(today, total_amount)
+
             img_buf = generate_portfolio_image(data)
             if img_buf is None:
                 await loading_msg.delete()
@@ -287,14 +309,15 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
         shares_df = await get_market_data(_http_session)
         gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
         if gainers.empty and losers.empty:
-            session_status = get_session_status()
+            session_status = get_session_status(time_offset=1)
             await message.answer(f"📌 {session_status}\nДанные обновятся в рабочее время.")
             await safe_delete_message(message.chat.id, message.message_id)
             return
         index_info = await get_moex_index_info(_http_session)
-        session_status = get_session_status()
+        session_status = get_session_status(time_offset=1)
         update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
-        text = format_message(gainers, losers, index_info, update_time, session_status)
+        portfolio_line = get_portfolio_change_str()
+        text = format_message(gainers, losers, index_info, update_time, session_status, portfolio_line)
         sent_msg = await message.answer(text, parse_mode="HTML")
         chat_id = message.chat.id
         last_messages[chat_id] = sent_msg.message_id

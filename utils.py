@@ -18,40 +18,64 @@ def is_weekend():
     return now.weekday() in (5, 6)
 
 # ---------- СТАТУС СЕССИИ ----------
-def get_session_status(no_trading_weekends=None):
-    now = get_moscow_time()
-    today_str = now.strftime("%Y-%m-%d")
-    weekend = now.weekday() in (5, 6)
+def get_session_status(no_trading_weekends=None, time_offset=0):
+    """
+    Возвращает статус сессии Московской биржи.
+    time_offset: смещение часов для отображаемого времени (например, 1 для UTC+4).
+    """
+    now_moscow = get_moscow_time()  # UTC+3
+    today_str = now_moscow.strftime("%Y-%m-%d")
+    weekend = now_moscow.weekday() in (5, 6)
 
     if weekend and no_trading_weekends:
         for start, end in no_trading_weekends:
             if start <= today_str <= end:
                 return "Биржа закрыта (выходной)"
 
+    # Определяем сессию по московскому времени
     if weekend:
-        if (now.hour > 9 or (now.hour == 9 and now.minute >= 50)) and (
-            now.hour < 19 or (now.hour == 19 and now.minute == 0)
+        if (now_moscow.hour > 9 or (now_moscow.hour == 9 and now_moscow.minute >= 50)) and (
+            now_moscow.hour < 19 or (now_moscow.hour == 19 and now_moscow.minute == 0)
         ):
-            return "Сессия выходного дня"
+            session = "Сессия выходного дня"
+            return session
         else:
             return "Биржа закрыта"
 
-    if now.hour < 6 or (now.hour == 6 and now.minute < 50):
+    if now_moscow.hour < 6 or (now_moscow.hour == 6 and now_moscow.minute < 50):
         return "Биржа закрыта"
-    elif now.hour == 6 and now.minute >= 50:
-        return "Утренняя сессия 07:50–10:50"
-    elif now.hour < 9 or (now.hour == 9 and now.minute < 50):
-        return "Утренняя сессия 07:50–10:50"
-    elif now.hour == 9 and now.minute >= 50:
-        return "Основная сессия 10:50–20:00"
-    elif now.hour < 19:
-        return "Основная сессия 10:50–20:00"
-    elif now.hour == 19 and now.minute == 0:
-        return "Вечерняя сессия 20:00–00:50"
-    elif now.hour < 23 or (now.hour == 23 and now.minute <= 50):
-        return "Вечерняя сессия 00:00–00:50"
+    elif now_moscow.hour == 6 and now_moscow.minute >= 50:
+        session = "Утренняя сессия"
+        times = ("06:50", "09:50")
+    elif now_moscow.hour < 9 or (now_moscow.hour == 9 and now_moscow.minute < 50):
+        session = "Утренняя сессия"
+        times = ("06:50", "09:50")
+    elif now_moscow.hour == 9 and now_moscow.minute >= 50:
+        session = "Основная сессия"
+        times = ("09:50", "19:00")
+    elif now_moscow.hour < 19:
+        session = "Основная сессия"
+        times = ("09:50", "19:00")
+    elif now_moscow.hour == 19 and now_moscow.minute == 0:
+        session = "Вечерняя сессия"
+        times = ("19:00", "23:50")
+    elif now_moscow.hour < 23 or (now_moscow.hour == 23 and now_moscow.minute <= 50):
+        session = "Вечерняя сессия"
+        times = ("19:00", "23:50")
     else:
         return "Биржа закрыта"
+
+    if time_offset != 0:
+        # Корректируем времена на смещение
+        def shift_time(t):
+            h, m = map(int, t.split(':'))
+            h += time_offset
+            if h >= 24:
+                h -= 24
+            return f"{h:02d}:{m:02d}"
+        times = (shift_time(times[0]), shift_time(times[1]))
+
+    return f"{session} ({times[0]}–{times[1]})"
 
 def get_week_number(date):
     return date.isocalendar()[1]
