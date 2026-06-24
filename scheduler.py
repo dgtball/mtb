@@ -8,130 +8,175 @@ from handlers import format_message, format_historical_table, get_portfolio_chan
 from moex_api import get_market_data, get_moex_index_info, get_top_movers, get_historical_shares, calc_period_change
 from config import MY_CHAT_ID, TOP_N
 
+_bot = None
+_http_session = None
+_active_day_message_id = None
 
-# ---------- НОВАЯ ВИЗУАЛИЗАЦИЯ ПОРТФЕЛЯ (SVG) ----------
-def generate_portfolio_image(portfolio_data, daily_change_pct=None) -> io.BytesIO:
-    if not portfolio_data or not portfolio_data["positions"]:
-        logging.warning("Нет позиций для отображения портфеля")
-        return None
+def set_bot(bot: Bot):
+    global _bot
+    _bot = bot
 
-    positions = portfolio_data["positions"]
-    total_amount = portfolio_data["total_amount"]
-    total_yield_pct = portfolio_data["total_yield_pct"]
-    total_cost = portfolio_data["total_cost"]
-    balance = portfolio_data.get("balance", 0.0)
+def set_http_session(session):
+    global _http_session
+    _http_session = session
 
-    # Распределение по типам для кольцевой диаграммы
-    type_values = defaultdict(float)
-    for pos in positions:
-        value = pos["quantity"] * pos["price"]
-        type_values[pos["type_display"]] += value
-
-    total_value = sum(type_values.values())
-    type_percents = {}
-    for t, v in type_values.items():
-        type_percents[t] = (v / total_value * 100) if total_value > 0 else 0
-
-    # Топ‑5 позиций по стоимости
-    sorted_pos = sorted(positions, key=lambda p: p["quantity"] * p["price"], reverse=True)
-    top5 = sorted_pos[:5]
-
-    top5_data = []
-    for pos in top5:
-        ticker = pos['ticker']
-        name = pos['name']
-        display_name = NAME_OVERRIDES.get(name, name)
-        if len(display_name) > 12:
-            display_name = display_name[:10] + '…'
-
-        value = pos['quantity'] * pos['price']
-        value_formatted = f"{value:,.0f}"
-        yield_pct = pos['pos_yield_pct']
-
-        top5_data.append({
-            'display_name': display_name,
-            'ticker': ticker,
-            'value': value,
-            'value_formatted': value_formatted,
-            'yield_pct': yield_pct
-        })
-
-    # Если топ-5 меньше 5, дополним пустыми, чтобы шаблон не сломался (опционально)
-    while len(top5_data) < 5:
-        top5_data.append({
-            'display_name': '—',
-            'value': 0,
-            'value_formatted': '0',
-            'yield_pct': 0
-        })
-
-    # Форматирование итоговых сумм
-    total_amount_f = f"{total_amount:,.2f}"
-    total_cost_f = f"{total_cost:,.2f}"
-    balance_f = f"{balance:,.2f}"
-
-    # Время обновления (московское)
-    from utils import get_moscow_time
-    update_time = get_moscow_time().strftime("%d.%m.%Y %H:%M МСК")
-
-    # Рендеринг SVG
-    svg = template.render(
-        update_time=update_time,
-        total_amount_formatted=total_amount_f,
-        daily_change_pct=daily_change_pct,
-        type_percents=type_percents,
-        top5=top5_data,
-        total_cost_formatted=total_cost_f,
-        total_yield_pct=total_yield_pct,
-        balance_formatted=balance_f
-    )
-
-    # Конвертация в PNG
+async def send_weekly_top():
     try:
-        png_bytes = cairosvg.svg2png(bytestring=svg.encode('utf-8'), output_width=800, output_height=600)
-        return io.BytesIO(png_bytes)
+        now = get_moscow_time()
+        start = now - datetime.timedelta(days=now.weekday())
+        from_date = start
+        from_date_str = start.strftime("%Y-%m-%d")
+        till_date = now
+        till_date_str = now.strftime("%Y-%m-%d")
+        df = await get_historical_shares(_http_session, from_date_str, till_date_str)
+        if df.empty:
+            return
+        changes = calc_period_change(df)
+        shares_all = await get_market_data(_http_session)
+        if not shares_all.empty:
+            mask = (shares_all['LISTLEVEL'] < 3) & (shares_all['SECTYPE'].isin(['1', '2']))
+            allowed_tickers = shares_all[mask]['SECID'].unique()
+            changes = changes[changes['SECID'].isin(allowed_tickers)]
+            names = shares_all[mask][['SECID', 'SHORTNAME']].drop_duplicates('SECID')
+            changes = changes.merge(names, on='SECID', how='left')
+        positive = changes[changes['CHANGE_PCT'] > 0]
+        negative = changes[changes['CHANGE_PCT'] < 0]
+        gainers = positive.nlargest(TOP_N, 'CHANGE_PCT') if not positive.empty else pd.DataFrame()
+        losers = negative.nsmallest(TOP_N, 'CHANGE_PCT') if not negative.empty else pd.DataFrame()
+        if gainers.empty and losers.empty:
+            return
+        text = format_historical_table(gainers, losers, 'week', from_date, till_date)
+        await _bot.send_message(MY_CHAT_ID, text, parse_mode="HTML")
+        logging.info("Еженедельный топ недели отправлен")
     except Exception as e:
-        logging.error(f"Ошибка рендеринга SVG портфеля: {e}")
-        return None
+        logging.error(f"Ошибка отправки еженедельного топа: {e}")
 
-# ---------- ИЗБРАННОЕ (БЕЗ ИЗМЕНЕНИЙ) ----------
-def generate_favorites_image(fav_df) -> io.BytesIO:
-    if fav_df.empty:
-        return None
-    table_data = []
-    for _, row in fav_df.iterrows():
-        name = row.get('SHORTNAME', row['SECID'])
-        secid = row['SECID']
-        display = NAME_OVERRIDES.get(secid, name)
-        if display == name:
-            display = NAME_OVERRIDES.get(name, name)
-        if len(display) > 20:
-            display = display[:17] + "…"
-        price = smart_price(row['LAST']) if isinstance(row['LAST'], (int, float)) else str(row['LAST'])
-        day = f"{row['CHANGEPERCENT']:+.2f}%" if pd.notna(row['CHANGEPERCENT']) else "—"
-        week = f"{row['change_week']:+.2f}%" if pd.notna(row['change_week']) else "—"
-        month = f"{row['change_month']:+.2f}%" if pd.notna(row['change_month']) else "—"
-        table_data.append([display, price, day, week, month])
-    headers = ["Название", "Цена", "День", "Неделя", "Месяц"]
-    import matplotlib.pyplot as plt
-    fig, ax = plt.subplots(figsize=(8, max(3, len(table_data) * 0.4 + 1)))
-    ax.axis('off')
-    table = ax.table(cellText=table_data, colLabels=headers, loc='center', cellLoc='center',
-                     colColours=['#f0f0f0']*5, bbox=[0, 0, 1, 1])
-    table.auto_set_font_size(False)
-    table.set_fontsize(10)
-    table.scale(1, 1.5)
-    for i, row in enumerate(table_data):
-        for j, cell in enumerate(row):
-            if j >= 2:
-                val = row[j]
-                if val != "—" and val.startswith('+'):
-                    table[(i+1, j)].set_facecolor('lightgreen')
-                elif val != "—" and val.startswith('-'):
-                    table[(i+1, j)].set_facecolor('lightcoral')
-    ax.set_title("Избранные акции", fontsize=14, fontweight='bold', pad=20)
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.2)
-    buf.seek(0)
-    plt.close()
-    return buf
+async def send_monthly_top():
+    try:
+        now = get_moscow_time()
+        start = now.replace(day=1)
+        from_date = start
+        from_date_str = start.strftime("%Y-%m-%d")
+        till_date = now
+        till_date_str = now.strftime("%Y-%m-%d")
+        df = await get_historical_shares(_http_session, from_date_str, till_date_str)
+        if df.empty:
+            return
+        changes = calc_period_change(df)
+        shares_all = await get_market_data(_http_session)
+        if not shares_all.empty:
+            mask = (shares_all['LISTLEVEL'] < 3) & (shares_all['SECTYPE'].isin(['1', '2']))
+            allowed_tickers = shares_all[mask]['SECID'].unique()
+            changes = changes[changes['SECID'].isin(allowed_tickers)]
+            names = shares_all[mask][['SECID', 'SHORTNAME']].drop_duplicates('SECID')
+            changes = changes.merge(names, on='SECID', how='left')
+        positive = changes[changes['CHANGE_PCT'] > 0]
+        negative = changes[changes['CHANGE_PCT'] < 0]
+        gainers = positive.nlargest(TOP_N, 'CHANGE_PCT') if not positive.empty else pd.DataFrame()
+        losers = negative.nsmallest(TOP_N, 'CHANGE_PCT') if not negative.empty else pd.DataFrame()
+        if gainers.empty and losers.empty:
+            return
+        text = format_historical_table(gainers, losers, 'month', from_date, till_date)
+        await _bot.send_message(MY_CHAT_ID, text, parse_mode="HTML")
+        logging.info("Ежемесячный топ месяца отправлен")
+    except Exception as e:
+        logging.error(f"Ошибка отправки ежемесячного топа: {e}")
+
+def last_trading_day(today):
+    if today.month == 12:
+        last_day = datetime.date(today.year+1, 1, 1) - datetime.timedelta(days=1)
+    else:
+        last_day = datetime.date(today.year, today.month+1, 1) - datetime.timedelta(days=1)
+    while last_day.weekday() >= 5:
+        last_day -= datetime.timedelta(days=1)
+    return last_day
+
+async def scheduler_loop():
+    global _active_day_message_id
+    last_week_sent_date = None
+    last_month_sent_date = None
+    day_update_interval = 30
+
+    await asyncio.sleep(5)
+
+    while True:
+        try:
+            now = get_moscow_time()
+            today = now.date()
+            weekday = now.weekday()
+            hour = now.hour
+            minute = now.minute
+
+            # Окно 06:50 – 00:50 МСК
+            start_minutes = 6*60 + 50
+            end_minutes = 0*60 + 50 + 24*60
+            current_minutes = hour*60 + minute
+            if current_minutes < start_minutes:
+                current_minutes += 24*60
+            day_window = start_minutes <= current_minutes <= end_minutes
+
+            if day_window:
+                if _active_day_message_id is None:
+                    shares_df = await get_market_data(_http_session)
+                    gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
+                    if not gainers.empty or not losers.empty:
+                        index_info = await get_moex_index_info(_http_session)
+                        session_status = get_session_status(time_offset=1)
+                        update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
+                        portfolio_line = get_portfolio_change_str()
+                        text = format_message(gainers, losers, index_info, update_time, session_status, portfolio_line)
+                        sent_msg = await _bot.send_message(MY_CHAT_ID, text, parse_mode="HTML")
+                        _active_day_message_id = sent_msg.message_id
+                        # Сохраняем снэпшот портфеля
+                        from tinkoff_api import get_portfolio_summary
+                        data = await get_portfolio_summary(_http_session)
+                        if data:
+                            import db
+                            db.set_portfolio_value(data['total_amount'])
+                            today_str = today.isoformat()
+                            if db.get_daily_snapshot(today_str) is None:
+                                db.set_daily_snapshot(today_str, data['total_amount'])
+                    await asyncio.sleep(day_update_interval)
+                    continue
+                else:
+                    shares_df = await get_market_data(_http_session)
+                    gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
+                    if not gainers.empty or not losers.empty:
+                        index_info = await get_moex_index_info(_http_session)
+                        session_status = get_session_status(time_offset=1)
+                        update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
+                        portfolio_line = get_portfolio_change_str()
+                        text = format_message(gainers, losers, index_info, update_time, session_status, portfolio_line)
+                        try:
+                            await _bot.edit_message_text(text, chat_id=MY_CHAT_ID, message_id=_active_day_message_id, parse_mode="HTML")
+                        except Exception as e:
+                            logging.error(f"Ошибка редактирования сообщения дня: {e}")
+                            _active_day_message_id = None
+                    await asyncio.sleep(day_update_interval)
+                    continue
+            else:
+                if _active_day_message_id is not None:
+                    try:
+                        await _bot.delete_message(MY_CHAT_ID, _active_day_message_id)
+                    except Exception:
+                        pass
+                    _active_day_message_id = None
+
+            # Пятница после 23:50
+            if weekday == 4 and hour == 23 and minute >= 50:
+                if last_week_sent_date != today:
+                    await send_weekly_top()
+                    last_week_sent_date = today
+
+            # Последний торговый день месяца после 23:50
+            last_trade_day = last_trading_day(today)
+            if today == last_trade_day and hour == 23 and minute >= 50:
+                if last_month_sent_date != today:
+                    await send_monthly_top()
+                    last_month_sent_date = today
+
+            await asyncio.sleep(5)
+
+        except Exception as e:
+            logging.error(f"Ошибка в scheduler_loop: {e}")
+            await asyncio.sleep(5)
