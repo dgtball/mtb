@@ -220,7 +220,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
             "👋 Привет! Используй кнопки для навигации",
             reply_markup=main_keyboard()
         )
-        await send_top(message, 'day')
     except Exception as e:
         logging.error(f"❌ Ошибка в /start: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка при запуске: {e}")
@@ -228,7 +227,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
 async def handle_buttons_and_commands(message: types.Message, state: FSMContext):
     if message.from_user.id != MY_CHAT_ID:
         await message.answer("⛔ Доступ запрещён.")
-        await _bot.send_message(MY_CHAT_ID, f"⚠️ Попытка доступа от {message.from_user.full_name} (@{message.from_user.username}, id={message.from_user.id})")
+        await _bot.send_message(MY_CHAT_ID, f"⚠️ Попытка доступа от {message.from_user.full_name} (@{message.from_user.username})")
         return
     text = message.text
     logging.info(f"🔄 Обработка сообщения: '{text}'")
@@ -331,7 +330,7 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
         return
 
     # ---------- ПЕРЕИМЕНОВАТЬ ТИКЕР ----------
-    if text == "✏️ Переименовать тикер":
+    if text == "✏️ Переименовать":
         await state.set_state(AddRemoveStates.waiting_for_rename)
         prompt_msg = await message.answer(
             "Введите тикер и новое название через пробел (например, SBER Сбер):"
@@ -341,7 +340,7 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
         return
 
     # ---------- УДАЛИТЬ ПЕРЕИМЕНОВАНИЕ ----------
-    if text == "🗑 Удалить переименование":
+    if text == "🗑 Удалить":
         await state.set_state(AddRemoveStates.waiting_for_unrename)
         prompt_msg = await message.answer(
             "Введите тикер, для которого нужно удалить переименование (например, SBER):"
@@ -351,7 +350,7 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
         return
 
     # ---------- ПОКАЗАТЬ ВСЕ ПЕРЕИМЕНОВАНИЯ ----------
-    if text == "📋 Все переименования":
+    if text == "📋 Список имён":
         from config import NAME_OVERRIDES
         if not NAME_OVERRIDES:
             await message.answer("Переопределений названий пока нет.")

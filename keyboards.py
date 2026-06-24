@@ -12,6 +12,6 @@ def main_keyboard():
     kb.append([
         KeyboardButton(text="✏️ Переименовать"),
         KeyboardButton(text="🗑 Удалить"),
-        KeyboardButton(text="📋 Все изменения")
+        KeyboardButton(text="📋 Список имён")
     ])
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=False)
