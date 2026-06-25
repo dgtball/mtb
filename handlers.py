@@ -195,8 +195,7 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
             if snapshot is not None and snapshot > 0:
                 daily_change = (total_amount - snapshot) / snapshot * 100
             else:
-                daily_change = None
-                db.set_daily_snapshot(today, total_amount)
+                daily_change = None 
 
             img_buf = generate_portfolio_image(data, daily_change_pct=daily_change)
             if img_buf is None:

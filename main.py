@@ -72,6 +72,28 @@ async def run_health_server():
     await site.start()
     logging.info(f"✅ Health‑сервер запущен на порту {PORT}")
     await asyncio.Event().wait()
+    
+    
+   # ---------- ФОНОВОЕ ОБНОВЛЕНИЕ ПОРТФЕЛЯ ----------
+async def portfolio_updater(http_session):
+    """Периодически обновляет текущую стоимость портфеля, но только днём."""
+    import scheduler
+    await asyncio.sleep(10)  # первичная задержка после запуска
+    while True:
+        try:
+            if scheduler.is_portfolio_update_allowed():
+                from tinkoff_api import get_portfolio_summary
+                data = await get_portfolio_summary(http_session)
+                if data:
+                    total = data['total_amount']
+                    db.set_portfolio_value(total)
+                    logging.debug(f"Портфель автообновлён: {total:.2f}")
+                await asyncio.sleep(300)  # 5 минут
+            else:
+                await asyncio.sleep(60)  # ночью проверяем раз в минуту, не проснулись ли
+        except Exception as e:
+            logging.error(f"Ошибка автообновления портфеля: {e}")
+            await asyncio.sleep(60)
 
 async def main():
     db.init_db()
