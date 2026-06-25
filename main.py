@@ -99,25 +99,16 @@ async def api_portfolio(request: Request):
         positions = []
         for pos in data["positions"]:
             ticker = pos["ticker"]
-            # Сектор из резервного словаря (можно дополнить MOEX при наличии)
-            sector_id = ticker_to_sector.get(ticker, "")  # если глобальный словарь загружен
-            if not sector_id:
-                sector_id = TICKER_SECTOR_FALLBACK.get(ticker, "")
-            sector_name = SECTOR_NAMES.get(sector_id, "Прочие")
-
             value = pos["quantity"] * pos["price"]
             positions.append({
                 "ticker": ticker,
                 "name": pos["name"],
                 "value": value,
                 "yield_pct": pos["pos_yield_pct"],
-                "sector": sector_name,
+                "sector": "Прочие",   # временно, пока не решим с секторами
             })
 
-        sectors = {}
-        for p in positions:
-            sec = p["sector"]
-            sectors[sec] = sectors.get(sec, 0) + p["value"]
+        sectors = {"Прочие": sum(p["value"] for p in positions)}
         sector_list = [{"name": k, "value": v} for k, v in sectors.items()]
 
         daily_change_pct = None
@@ -135,7 +126,6 @@ async def api_portfolio(request: Request):
     except Exception as e:
         logging.error(f"API portfolio: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
-
 @app.get("/api/overrides")
 async def api_overrides(request: Request):
     if not check_token(request):

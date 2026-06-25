@@ -6,7 +6,6 @@ VERSION = "3.1.11"
 # ---------- ТОКЕНЫ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
 TINKOFF_TOKEN = os.getenv("TITN")
-MINI_APP_SECRET = os.getenv("MINI_APP_SECRET", "fallback_default")
 MY_CHAT_ID = os.getenv("MY_CHAT_ID")
 if not MY_CHAT_ID:
     raise ValueError("MY_CHAT_ID не задан")
@@ -61,49 +60,7 @@ SECTOR_NAMES = {
     "13": "Прочие",
 }
 
-# ---------- СПРАВОЧНИК СЕКТОРОВ (если MOEX не вернул SECTORID) ----------
-TICKER_SECTOR_FALLBACK = {
-    "SBER": "Финансы",
-    "ASTR": "ИТ",
-    "CHMF": "Металл",
-    "DELI": "Транспорт",
-    "FIXR": "Товары",
-    "FLOT": "Транспорт",
-    "GAZP": "Нефтегаз",
-    "HNFG": "Товары",
-    "LKOH": "Нефтегаз",
-    "MGNT": "Товары",
-    "MTLR": "Металл",
-    "NVTK": "Нефтегаз",
-    "ROSN": "Нефтегаз",
-    "RTKM": "ИТ",
-    "SMLT": "Стройка",
-    "SOFL": "ИТ",
-    "WUSH": "Транспорт",
-    "TATNP": "Нефтегаз",
-    "TRNFP": "Нефтегаз",
-    "MDMG": "Медицина",
-    "T": "Финансы",
-    "VKCO": "ИТ",
-    "YDEX": "ИТ",
-    "SU26233RMFS5": "Облигации",
-    "SU26238RMFS4": "Облигации",
-    "SU26240RMFS0": "Облигации",
-    "SU26245RMFS9": "Облигации",
-    "SU26246RMFS7": "Облигации",
-    "SU26247RMFS5": "Облигации",
-    "SU26248RMFS3": "Облигации",
-    "RU000A106UW3": "Облигации",
-    "LQDT": "Фонд",
-    "TDIV": "Фонд",
-    "TGLD": "Фонд",
-    "VTBR": "Финансы",
-    "X5": "Товары",
-    "TPAY": "Фонд",
-    "SU26254RMFS1": "Облигации",
-    "NLMK": "Металл",
-    "MGKL": "Финансы",
-    "SIBN": "Нефтегаз",
-    "GLRX": "Стройка",
-    "AFLT": "Транспорт",
-}
+MINI_APP_SECRET = os.getenv("MINI_APP_SECRET", "fallback_default")
+
+ticker_to_name = {}
+ticker_to_sector = {}

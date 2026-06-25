@@ -1,7 +1,6 @@
 import logging
 import aiohttp
-from config import TINKOFF_TOKEN, TINKOFF_API_URL, NAME_OVERRIDES, ticker_to_name, SECTOR_NAMES
-from moex_api import ticker_to_sector
+from config import TINKOFF_TOKEN, TINKOFF_API_URL, NAME_OVERRIDES, ticker_to_name
 
 async def tinkoff_api_request(http_session, method: str, endpoint: str, params: dict = None) -> dict:
     if not TINKOFF_TOKEN:
@@ -129,11 +128,6 @@ async def get_portfolio_summary(http_session):
                 else:
                     type_display = "Акции"
 
-            sector_id = ticker_to_sector.get(ticker, "")
-            if ticker.startswith("LKOH"):  # для примера, первый тикер
-                logging.info(f"DEBUG sector for {ticker}: id={sector_id}, name={SECTOR_NAMES.get(sector_id, 'Прочие')}")
-            sector_name = SECTOR_NAMES.get(sector_id, "Прочие")
-
             result["positions"].append({
                 "figi": figi,
                 "ticker": ticker,
@@ -144,8 +138,6 @@ async def get_portfolio_summary(http_session):
                 "price": price,
                 "avg_price": avg_price,
                 "pos_yield_pct": pos_yield_pct,
-                "sector_id": sector_id,
-                "sector_name": sector_name,
             })
 
         return result
