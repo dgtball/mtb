@@ -92,26 +92,21 @@ async def api_portfolio(request: Request):
         raise HTTPException(status_code=403, detail="Forbidden")
     try:
         from tinkoff_api import get_portfolio_summary
-        from moex_api import get_market_data
-        # Получаем актуальные данные рынка и строим словарь секторов
-        market_df = await get_market_data(bot_session)
-        ticker_sector_map = {}
-        if not market_df.empty and 'SECTORID' in market_df.columns and 'SECID' in market_df.columns:
-            for _, row in market_df.iterrows():
-                ticker_sector_map[row['SECID']] = row['SECTORID']
-        logging.info(f"API portfolio: ticker_sector_map size = {len(ticker_sector_map)}")
-        
+        # Используем глобальный словарь секторов, загруженный при старте
+        from moex_api import ticker_to_sector as global_ticker_to_sector
+
         data = await get_portfolio_summary(bot_session)
         if not data:
             return JSONResponse({"error": "Нет данных"}, status_code=404)
+
         positions = []
         for pos in data["positions"]:
             ticker = pos["ticker"]
-            # Используем сектор из свежей карты, если нет — "Прочие"
-            sector_id = ticker_sector_map.get(ticker, "")
+            sector_id = global_ticker_to_sector.get(ticker, "")
             sector_name = SECTOR_NAMES.get(sector_id, "Прочие")
             if ticker == "LKOH":
-                logging.info(f"API portfolio LKOH sector: id={sector_id}, name={sector_name}")
+                logging.info(f"API portfolio LKOH sector from global: id={sector_id}, name={sector_name}")
+
             value = pos["quantity"] * pos["price"]
             positions.append({
                 "ticker": ticker,
@@ -120,16 +115,19 @@ async def api_portfolio(request: Request):
                 "yield_pct": pos["pos_yield_pct"],
                 "sector": sector_name,
             })
+
         sectors = {}
         for p in positions:
             sec = p["sector"]
             sectors[sec] = sectors.get(sec, 0) + p["value"]
         sector_list = [{"name": k, "value": v} for k, v in sectors.items()]
+
         daily_change_pct = None
         today = datetime.date.today().isoformat()
         snapshot = db.get_daily_snapshot(today)
         if snapshot is not None and snapshot > 0:
             daily_change_pct = (data["total_amount"] - snapshot) / snapshot * 100
+
         return JSONResponse({
             "total_amount": data["total_amount"],
             "daily_change_pct": daily_change_pct,
