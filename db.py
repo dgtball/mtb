@@ -12,7 +12,7 @@ def init_db():
     # Таблица состояния портфеля
     c.execute('''CREATE TABLE IF NOT EXISTS portfolio_state
                  (key TEXT PRIMARY KEY, value REAL)''')
-    # Новая таблица секторов
+    # Таблица секторов
     c.execute('''CREATE TABLE IF NOT EXISTS sectors
                  (ticker TEXT PRIMARY KEY, sector_name TEXT)''')
     conn.commit()
@@ -152,9 +152,6 @@ def remove_sector(ticker: str):
     c.execute("DELETE FROM sectors WHERE ticker = ?", (ticker,))
     conn.commit()
     conn.close()
-
-# Остальные функции (portfolio_state, name_overrides) остаются без изменений...
-# (приведены ниже для полноты)
 
 # ---------- СОСТОЯНИЕ ПОРТФЕЛЯ ----------
 def _get_state(key: str) -> float | None:
