@@ -93,6 +93,10 @@ def get_user_id_from_init_data(init_data: str) -> int:
     return 0
 
 # ---------- FASTAPI РОУТЫ ----------
+@app.get("/")
+async def root():
+    return {"status": "ok", "version": VERSION}
+    
 @app.get("/health")
 async def health():
     return {"status": "ok"}
