@@ -3,17 +3,14 @@ import sys
 import logging
 import datetime
 import asyncio
-import hashlib
-import hmac
 import aiohttp
-from urllib.parse import parse_qs
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
-from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION, TINKOFF_TOKEN, SECTOR_NAMES, MINI_APP_SECRET, TICKER_SECTOR_FALLBACK
+from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION, TINKOFF_TOKEN, SECTOR_NAMES, MINI_APP_SECRET
 import db
 from moex_api import load_instrument_names, ticker_to_sector
 from handlers import register_handlers, set_http_session, set_bot
@@ -65,7 +62,6 @@ app.add_middleware(
 
 # ---------- ПРОВЕРКА ТОКЕНА ----------
 def check_token(request: Request) -> bool:
-    """Проверяет секретный токен, переданный в параметре ?token=..."""
     token = request.query_params.get("token", "")
     return token == MINI_APP_SECRET
 
@@ -80,7 +76,6 @@ async def health():
 
 @app.get("/mini-app")
 async def mini_app(request: Request):
-    # Временно без проверки токена для загрузки страницы
     with open("mini_app.html", "r", encoding="utf-8") as f:
         html = f.read()
     html = html.replace("MINI_APP_TOKEN_PLACEHOLDER", MINI_APP_SECRET)
@@ -105,7 +100,7 @@ async def api_portfolio(request: Request):
                 "name": pos["name"],
                 "value": value,
                 "yield_pct": pos["pos_yield_pct"],
-                "sector": "Прочие",   # временно, пока не решим с секторами
+                "sector": "Прочие",
             })
 
         sectors = {"Прочие": sum(p["value"] for p in positions)}
@@ -126,6 +121,7 @@ async def api_portfolio(request: Request):
     except Exception as e:
         logging.error(f"API portfolio: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
+
 @app.get("/api/overrides")
 async def api_overrides(request: Request):
     if not check_token(request):
@@ -154,7 +150,20 @@ async def api_override(request: Request):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
-# ---------- ФОНОВЫЙ ОБНОВИТЕЛЬ ПОРТФЕЛЯ ----------
+# ---------- ВЕБХУК TELEGRAM ----------
+@app.post("/webhook")
+async def telegram_webhook(request: Request):
+    """Принимает обновления Telegram и передаёт их диспетчеру."""
+    try:
+        update = await request.json()
+        telegram_update = types.Update(**update)
+        await dp.feed_update(bot, telegram_update)
+        return JSONResponse({"status": "ok"})
+    except Exception as e:
+        logging.error(f"Webhook error: {e}")
+        return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
+
+# ---------- ФОНОВЫЕ ЗАДАЧИ ----------
 async def portfolio_updater(http_session):
     import scheduler as sched
     await asyncio.sleep(10)
@@ -190,8 +199,10 @@ async def main():
 
     register_handlers(dp)
 
-    await bot.delete_webhook(drop_pending_updates=True)
-    logging.info("✅ Вебхук удалён")
+    # Устанавливаем вебхук на наш публичный URL
+    webhook_url = f"https://mmvbbot3.bothost.tech/webhook"
+    await bot.set_webhook(webhook_url)
+    logging.info(f"✅ Вебхук установлен: {webhook_url}")
 
     try:
         await bot.send_message(MY_CHAT_ID, f"🚀 Бот перезапущен и готов к работе! ver: {VERSION}")
@@ -202,16 +213,11 @@ async def main():
     if TINKOFF_TOKEN:
         asyncio.create_task(portfolio_updater(bot_session))
 
-    # Запускаем FastAPI и поллинг параллельно
+    # Запускаем uvicorn как основной сервер (он же обслуживает вебхук и Mini App)
     config = uvicorn.Config(app, host="0.0.0.0", port=PORT, log_level="warning")
     server = uvicorn.Server(config)
-    loop = asyncio.get_event_loop()
-    loop.create_task(server.serve())
     logging.info(f"✅ FastAPI сервер запущен на порту {PORT}")
-
-    await asyncio.sleep(2)  # даём время uvicorn стартовать
-    logging.info("✅ Запускаем polling...")
-    await dp.start_polling(bot)
+    await server.serve()
 
     await bot_session.close()
     logging.info("✅ HTTP сессия закрыта")
