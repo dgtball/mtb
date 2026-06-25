@@ -92,26 +92,34 @@ async def api_portfolio(request: Request):
         raise HTTPException(status_code=403, detail="Forbidden")
     try:
         from tinkoff_api import get_portfolio_summary
+        from moex_api import get_market_data
+        # Получаем актуальные данные рынка и строим словарь секторов
+        market_df = await get_market_data(bot_session)
+        ticker_sector_map = {}
+        if not market_df.empty and 'SECTORID' in market_df.columns and 'SECID' in market_df.columns:
+            for _, row in market_df.iterrows():
+                ticker_sector_map[row['SECID']] = row['SECTORID']
+        logging.info(f"API portfolio: ticker_sector_map size = {len(ticker_sector_map)}")
+        
         data = await get_portfolio_summary(bot_session)
         if not data:
             return JSONResponse({"error": "Нет данных"}, status_code=404)
         positions = []
         for pos in data["positions"]:
+            ticker = pos["ticker"]
+            # Используем сектор из свежей карты, если нет — "Прочие"
+            sector_id = ticker_sector_map.get(ticker, "")
+            sector_name = SECTOR_NAMES.get(sector_id, "Прочие")
+            if ticker == "LKOH":
+                logging.info(f"API portfolio LKOH sector: id={sector_id}, name={sector_name}")
             value = pos["quantity"] * pos["price"]
             positions.append({
-                "ticker": pos["ticker"],
+                "ticker": ticker,
                 "name": pos["name"],
                 "value": value,
                 "yield_pct": pos["pos_yield_pct"],
-                "sector": pos.get("sector_name", "Прочие"),   # на случай, если ключа нет
+                "sector": sector_name,
             })
-        sectors = {}
-        for p in positions:
-            sec = p.get("sector", "Прочие")   # дополнительная страховка
-            sectors[sec] = sectors.get(sec, 0) + p["value"]
-            # Временный лог для диагностики
-            if len(positions) <= 3:
-                logging.info(f"Position {pos['ticker']}: sector={pos['sector']}")
         sectors = {}
         for p in positions:
             sec = p["sector"]
