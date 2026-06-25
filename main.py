@@ -68,22 +68,22 @@ def verify_telegram_data(init_data: str) -> bool:
     try:
         params = parse_qs(init_data)
         received_hash = params.pop("hash")[0]
+        # Сортируем ключи
         sorted_keys = sorted(params.keys())
-        data_check_string = "\n".join(
-            f"{k}={params[k][0]}" for k in sorted_keys
-        )
-        secret_key = hmac.new(
-            "WebAppData".encode(),
-            API_TOKEN.encode(),
-            hashlib.sha256
-        ).digest()
-        calculated_hash = hmac.new(
-            secret_key,
-            data_check_string.encode(),
-            hashlib.sha256
-        ).hexdigest()
+        data_check_arr = []
+        for key in sorted_keys:
+            value = params[key][0]
+            data_check_arr.append(f"{key}={value}")
+        data_check_string = "\n".join(data_check_arr)
+        # Вычисляем секретный ключ
+        secret_key = hmac.new("WebAppData".encode(), API_TOKEN.encode(), hashlib.sha256).digest()
+        calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+        logging.info(f"Received hash: {received_hash}")
+        logging.info(f"Calculated hash: {calculated_hash}")
+        logging.info(f"Data check string: {data_check_string}")
         return calculated_hash == received_hash
-    except Exception:
+    except Exception as e:
+        logging.error(f"Verification error: {e}")
         return False
 
 def get_user_id_from_init_data(init_data: str) -> int:
