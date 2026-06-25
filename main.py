@@ -63,11 +63,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------- ВРЕМЕННО ОТКЛЮЧАЕМ ПРОВЕРКУ TELEGRAM ----------
+# ---------- ПРОВЕРКА ТОКЕНА (С ВРЕМЕННЫМИ ЛОГАМИ) ----------
 def check_mini_app_token(request: Request) -> bool:
-    """Проверяет секретный токен в заголовке X-Mini-App-Token."""
     token = request.headers.get("X-Mini-App-Token", "")
-    return token == MINI_APP_SECRET
+    logging.info(f"Mini App token received: '{token}'")
+    expected = MINI_APP_SECRET
+    logging.info(f"Mini App token expected: '{expected}'")
+    if token == expected:
+        return True
+    logging.warning("Mini App token mismatch!")
+    return False
 
 # ---------- FASTAPI РОУТЫ ----------
 @app.get("/")
@@ -84,13 +89,15 @@ async def mini_app(request: Request):
         raise HTTPException(status_code=403, detail="Forbidden")
     with open("mini_app.html", "r", encoding="utf-8") as f:
         html = f.read()
-    # Подставляем реальный токен в HTML перед отправкой клиенту
+    # Подставляем реальный токен
     html = html.replace("MINI_APP_TOKEN_PLACEHOLDER", MINI_APP_SECRET)
+    logging.info(f"Token replaced in HTML: {MINI_APP_SECRET in html}")
     return HTMLResponse(content=html)
 
 @app.get("/api/portfolio")
 async def api_portfolio(request: Request):
-    # Временно без проверки
+    if not check_mini_app_token(request):
+        raise HTTPException(status_code=403, detail="Forbidden")
     try:
         from tinkoff_api import get_portfolio_summary
         data = await get_portfolio_summary(bot_session)
@@ -128,7 +135,8 @@ async def api_portfolio(request: Request):
 
 @app.get("/api/overrides")
 async def api_overrides(request: Request):
-    # Временно без проверки
+    if not check_mini_app_token(request):
+        raise HTTPException(status_code=403, detail="Forbidden")
     try:
         from config import NAME_OVERRIDES
         overrides = [{"ticker": k, "name": v} for k, v in NAME_OVERRIDES.items()]
@@ -138,7 +146,8 @@ async def api_overrides(request: Request):
 
 @app.post("/api/override")
 async def api_override(request: Request):
-    # Временно без проверки
+    if not check_mini_app_token(request):
+        raise HTTPException(status_code=403, detail="Forbidden")
     try:
         body = await request.json()
         action = body.get("action")
