@@ -1,4 +1,4 @@
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
 from config import TINKOFF_TOKEN
 
 def main_keyboard():
@@ -7,6 +7,9 @@ def main_keyboard():
     ]
     if TINKOFF_TOKEN:
         kb.append([KeyboardButton(text="💼 Портфель")])
+    kb.append([
+        KeyboardButton(text="🖥 Управление", web_app=WebAppInfo(url="https://mmvbbot3.bothost.tech/mini-app"))
+    ])
     kb.append([
         KeyboardButton(text="✏️ Изменить"),
         KeyboardButton(text="🗑 Удалить имя"),

@@ -4,3 +4,5 @@ pandas
 matplotlib
 plotly
 tabulate
+fastapi
+uvicorn

@@ -5,6 +5,8 @@ import pandas as pd
 import aiohttp
 from config import ticker_to_name
 
+ticker_to_sector = {}
+
 async def load_instrument_names(http_session):
     global ticker_to_name
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -26,6 +28,8 @@ async def load_instrument_names(http_session):
                             if clean_name.startswith('i'):
                                 clean_name = clean_name[1:]
                             ticker_to_name[row['SECID']] = clean_name
+                            if 'SECTORID' in df.columns:
+                                ticker_to_sector[row['SECID']] = row['SECTORID']
     except Exception as e:
         logging.error(f"Ошибка загрузки акций: {e}")
 
@@ -47,6 +51,8 @@ async def load_instrument_names(http_session):
                                 if clean_name.startswith('i'):
                                     clean_name = clean_name[1:]
                                 ticker_to_name[row['SECID']] = clean_name
+                                if 'SECTORID' in df.columns:
+                                    ticker_to_sector[row['SECID']] = row['SECTORID']
         except Exception as e:
             logging.error(f"Ошибка загрузки облигаций {board}: {e}")
 
@@ -67,6 +73,8 @@ async def load_instrument_names(http_session):
                             if clean_name.startswith('i'):
                                 clean_name = clean_name[1:]
                             ticker_to_name[row['SECID']] = clean_name
+                            if 'SECTORID' in df.columns:
+                                ticker_to_sector[row['SECID']] = row['SECTORID']
     except Exception as e:
         logging.error(f"Ошибка загрузки ETF: {e}")
 
@@ -92,7 +100,6 @@ async def get_market_data(http_session):
                 sec_rows = json_data['securities']['data']
                 sec_df = pd.DataFrame(sec_rows, columns=sec_columns)
 
-                # Однократный вывод структуры marketdata
                 if not hasattr(get_market_data, '_logged'):
                     logging.info(f"Структура marketdata (однократно): колонки securities: {sec_columns}")
                     if 'SECTYPE' in sec_columns:
@@ -226,7 +233,6 @@ def get_top_movers(data, top_n=10, exclude_level3=True):
     if data.empty:
         return pd.DataFrame(), pd.DataFrame()
 
-    # Разделяем на положительные и отрицательные
     positive = data[data['CHANGEPERCENT'] > 0].copy()
     negative = data[data['CHANGEPERCENT'] < 0].copy()
     gainers = positive.nlargest(top_n, 'CHANGEPERCENT') if not positive.empty else pd.DataFrame()
