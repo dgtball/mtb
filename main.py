@@ -7,6 +7,7 @@ import aiohttp
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 import uvicorn
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -52,7 +53,45 @@ if not API_TOKEN:
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-app = FastAPI()
+# ---------- LIFESPAN ----------
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global bot_session
+    db.init_db()
+    db.load_name_overrides()
+
+    bot_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
+    set_http_session(bot_session)
+    set_bot(bot)
+    scheduler.set_bot(bot)
+    scheduler.set_http_session(bot_session)
+
+    await load_instrument_names(bot_session)
+    register_handlers(dp)
+
+    webhook_url = f"https://mmvbbot3.bothost.tech/webhook"
+    await bot.set_webhook(webhook_url)
+    logging.info(f"✅ Вебхук установлен: {webhook_url}")
+
+    try:
+        await bot.send_message(MY_CHAT_ID, f"🚀 Бот перезапущен и готов к работе! ver: {VERSION}")
+    except Exception as e:
+        logging.error(f"❌ Не удалось отправить уведомление о запуске: {e}")
+
+    scheduler_task = asyncio.create_task(scheduler.scheduler_loop())
+    if TINKOFF_TOKEN:
+        portfolio_task = asyncio.create_task(portfolio_updater(bot_session))
+
+    yield
+
+    logging.info("Завершение работы...")
+    scheduler_task.cancel()
+    if TINKOFF_TOKEN:
+        portfolio_task.cancel()
+    await bot_session.close()
+    logging.info("✅ HTTP сессия закрыта")
+
+app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -150,10 +189,8 @@ async def api_override(request: Request):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
-# ---------- ВЕБХУК TELEGRAM ----------
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
-    """Принимает обновления Telegram и передаёт их диспетчеру."""
     try:
         update = await request.json()
         telegram_update = types.Update(**update)
@@ -163,7 +200,7 @@ async def telegram_webhook(request: Request):
         logging.error(f"Webhook error: {e}")
         return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
 
-# ---------- ФОНОВЫЕ ЗАДАЧИ ----------
+# ---------- ФОНОВЫЙ ОБНОВИТЕЛЬ ПОРТФЕЛЯ ----------
 async def portfolio_updater(http_session):
     import scheduler as sched
     await asyncio.sleep(10)
@@ -183,44 +220,6 @@ async def portfolio_updater(http_session):
             logging.error(f"Ошибка автообновления портфеля: {e}")
             await asyncio.sleep(60)
 
-# ---------- ГЛАВНАЯ ФУНКЦИЯ ----------
-async def main():
-    global bot_session
-    db.init_db()
-    db.load_name_overrides()
-
-    bot_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
-    set_http_session(bot_session)
-    set_bot(bot)
-    scheduler.set_bot(bot)
-    scheduler.set_http_session(bot_session)
-
-    await load_instrument_names(bot_session)
-
-    register_handlers(dp)
-
-    # Устанавливаем вебхук на наш публичный URL
-    webhook_url = f"https://mmvbbot3.bothost.tech/webhook"
-    await bot.set_webhook(webhook_url)
-    logging.info(f"✅ Вебхук установлен: {webhook_url}")
-
-    try:
-        await bot.send_message(MY_CHAT_ID, f"🚀 Бот перезапущен и готов к работе! ver: {VERSION}")
-    except Exception as e:
-        logging.error(f"❌ Не удалось отправить уведомление о запуске: {e}")
-
-    asyncio.create_task(scheduler.scheduler_loop())
-    if TINKOFF_TOKEN:
-        asyncio.create_task(portfolio_updater(bot_session))
-
-    # Запускаем uvicorn как основной сервер (он же обслуживает вебхук и Mini App)
-    config = uvicorn.Config(app, host="0.0.0.0", port=PORT, log_level="warning")
-    server = uvicorn.Server(config)
-    logging.info(f"✅ FastAPI сервер запущен на порту {PORT}")
-    await server.serve()
-
-    await bot_session.close()
-    logging.info("✅ HTTP сессия закрыта")
-
+# ---------- ЗАПУСК ----------
 if __name__ == "__main__":
-    asyncio.run(main())
+    uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")
