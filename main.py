@@ -67,20 +67,17 @@ app.add_middleware(
 def verify_telegram_data(init_data: str) -> bool:
     try:
         params = parse_qs(init_data)
+        logging.info(f"Init data keys: {list(params.keys())}")
+        if "hash" not in params:
+            logging.error("No 'hash' in init data")
+            return False
         received_hash = params.pop("hash")[0]
-        # Сортируем ключи
         sorted_keys = sorted(params.keys())
-        data_check_arr = []
-        for key in sorted_keys:
-            value = params[key][0]
-            data_check_arr.append(f"{key}={value}")
+        data_check_arr = [f"{k}={params[k][0]}" for k in sorted_keys]
         data_check_string = "\n".join(data_check_arr)
-        # Вычисляем секретный ключ
         secret_key = hmac.new("WebAppData".encode(), API_TOKEN.encode(), hashlib.sha256).digest()
         calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
-        logging.info(f"Received hash: {received_hash}")
-        logging.info(f"Calculated hash: {calculated_hash}")
-        logging.info(f"Data check string: {data_check_string}")
+        logging.info(f"Received hash: {received_hash}, calculated: {calculated_hash}")
         return calculated_hash == received_hash
     except Exception as e:
         logging.error(f"Verification error: {e}")
@@ -101,12 +98,12 @@ async def health():
     return {"status": "ok"}
 
 @app.get("/mini-app")
-@app.get("/mini-app")
 async def mini_app(request: Request):
+    logging.info(f"Full URL: {str(request.url)}")
     init_data = request.query_params.get("tgWebAppData", "")
-    logging.info(f"Received init_data: {init_data[:100]}...")  # первые 100 символов
+    logging.info(f"Init data: {init_data[:200]}")
+    # Временно разрешаем без проверки? Замени на if False: для быстрого теста
     if not verify_telegram_data(init_data):
-        logging.warning("Telegram data verification failed")
         raise HTTPException(status_code=403, detail="Invalid init data")
     user_id = get_user_id_from_init_data(init_data)
     if user_id != MY_CHAT_ID:
