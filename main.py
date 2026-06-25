@@ -64,14 +64,13 @@ app.add_middleware(
 )
 
 # ---------- ПРОВЕРКА ТОКЕНА (С ВРЕМЕННЫМИ ЛОГАМИ) ----------
-def check_mini_app_token(request: Request) -> bool:
-    token = request.headers.get("X-Mini-App-Token", "")
+def check_token(request: Request) -> bool:
+    token = request.query_params.get("token", "")
     expected = MINI_APP_SECRET
-    logging.info(f"Mini App token received: '{token}'")
-    logging.info(f"Mini App token expected: '{expected}'")
+    logging.info(f"Received token: '{token}', expected length: {len(expected)}")
     if token == expected:
         return True
-    logging.warning(f"Mini App token mismatch! Received length: {len(token)}, expected length: {len(expected)}")
+    logging.warning(f"Token mismatch! Received length: {len(token)}")
     return False
 
 # ---------- FASTAPI РОУТЫ ----------
@@ -85,20 +84,17 @@ async def health():
 
 @app.get("/mini-app")
 async def mini_app(request: Request):
-    logging.info(f"Mini App request received, query: {request.query_params}")
-    if not check_mini_app_token(request):
-        raise HTTPException(status_code=403, detail="Forbidden")
+    # Проверка токена не требуется для загрузки самой страницы,
+    # но мы можем оставить для безопасности (опционально)
     with open("mini_app.html", "r", encoding="utf-8") as f:
         html = f.read()
-    # Подставляем реальный токен
     replaced_html = html.replace("MINI_APP_TOKEN_PLACEHOLDER", MINI_APP_SECRET)
-    logging.info(f"Token replacement done. Placeholder found: {'MINI_APP_TOKEN_PLACEHOLDER' in html}")
-    logging.info(f"After replacement, token present: {MINI_APP_SECRET in replaced_html}")
+    logging.info(f"Token replacement done. Token present: {MINI_APP_SECRET in replaced_html}")
     return HTMLResponse(content=replaced_html)
 
 @app.get("/api/portfolio")
 async def api_portfolio(request: Request):
-    if not check_mini_app_token(request):
+    if not check_token(request):
         raise HTTPException(status_code=403, detail="Forbidden")
     try:
         from tinkoff_api import get_portfolio_summary
@@ -137,7 +133,7 @@ async def api_portfolio(request: Request):
 
 @app.get("/api/overrides")
 async def api_overrides(request: Request):
-    if not check_mini_app_token(request):
+    if not check_token(request):
         raise HTTPException(status_code=403, detail="Forbidden")
     try:
         from config import NAME_OVERRIDES
@@ -148,7 +144,7 @@ async def api_overrides(request: Request):
 
 @app.post("/api/override")
 async def api_override(request: Request):
-    if not check_mini_app_token(request):
+    if not check_token(request):
         raise HTTPException(status_code=403, detail="Forbidden")
     try:
         body = await request.json()

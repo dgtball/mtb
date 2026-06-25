@@ -177,26 +177,22 @@
   </div>
 
 <script>
-  const MINI_APP_TOKEN = 'MINI_APP_TOKEN_PLACEHOLDER';
+  // Токен будет подставлен сервером при загрузке страницы
+  const API_TOKEN = 'MINI_APP_TOKEN_PLACEHOLDER';
   let sectorChart;
 
   async function apiCall(endpoint, method = 'GET', body = null) {
-    console.log('API call to', endpoint, 'with token', MINI_APP_TOKEN);
-    const options = {
-        method,
-        headers: {
-            'Content-Type': 'application/json',
-            'X-Mini-App-Token': MINI_APP_TOKEN
-        }
-    };
+    // Добавляем токен как параметр запроса
+    const url = `${endpoint}?token=${encodeURIComponent(API_TOKEN)}`;
+    const options = { method, headers: { 'Content-Type': 'application/json' } };
     if (body) options.body = JSON.stringify(body);
-    const res = await fetch(endpoint, options);
+    const res = await fetch(url, options);
     if (!res.ok) {
-        console.error('Request failed', res.status, await res.text());
-        throw new Error('Request failed');
+      console.error('Request failed', res.status, await res.text());
+      throw new Error('Request failed');
     }
     return res.json();
-}
+  }
 
   async function loadPortfolio() {
     try {
