@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
-from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION, TINKOFF_TOKEN, SECTOR_NAMES
+from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION, TINKOFF_TOKEN, SECTOR_NAMES, MINI_APP_SECRET
 import db
 from moex_api import load_instrument_names, ticker_to_sector
 from handlers import register_handlers, set_http_session, set_bot
@@ -64,12 +64,10 @@ app.add_middleware(
 )
 
 # ---------- ВРЕМЕННО ОТКЛЮЧАЕМ ПРОВЕРКУ TELEGRAM ----------
-# Позже, когда Bothost начнёт передавать параметры, включим обратно
-def verify_telegram_data(init_data: str) -> bool:
-    return True  # пускаем всех
-
-def get_user_id_from_init_data(init_data: str) -> int:
-    return MY_CHAT_ID  # возвращаем владельца
+def check_mini_app_token(request: Request) -> bool:
+    """Проверяет секретный токен в заголовке X-Mini-App-Token."""
+    token = request.headers.get("X-Mini-App-Token", "")
+    return token == MINI_APP_SECRET
 
 # ---------- FASTAPI РОУТЫ ----------
 @app.get("/")
@@ -82,10 +80,12 @@ async def health():
 
 @app.get("/mini-app")
 async def mini_app(request: Request):
-    logging.info(f"Full URL: {str(request.url)}")
-    # Временно без проверки
+    if not check_mini_app_token(request):
+        raise HTTPException(status_code=403, detail="Forbidden")
     with open("mini_app.html", "r", encoding="utf-8") as f:
         html = f.read()
+    # Подставляем реальный токен в HTML перед отправкой клиенту
+    html = html.replace("MINI_APP_TOKEN_PLACEHOLDER", MINI_APP_SECRET)
     return HTMLResponse(content=html)
 
 @app.get("/api/portfolio")

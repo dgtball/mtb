@@ -1,11 +1,12 @@
 import os
 
 # ---------- ВЕРСИЯ ----------
-VERSION = "3.1.2"
+VERSION = "3.1.3"
 
 # ---------- ТОКЕНЫ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
 TINKOFF_TOKEN = os.getenv("TITN")
+MINI_APP_SECRET = os.getenv("MINI_APP_SECRET", "fallback_default")
 MY_CHAT_ID = os.getenv("MY_CHAT_ID")
 if not MY_CHAT_ID:
     raise ValueError("MY_CHAT_ID не задан")
