@@ -113,11 +113,18 @@ def build_table_universal(df, title, headers, data_columns):
         for col in data_columns:
             val = row.get(col, "")
             if col == 'SHORTNAME':
-                # Применяем переопределение: сначала ищем по тикеру, потом по исходному названию
                 original = str(val)
-                display = NAME_OVERRIDES.get(secid, original)  # по тикеру
-                if display == original:                         # если не нашли, попробуем по названию
-                    display = NAME_OVERRIDES.get(original, original)
+                # Автоматическая очистка названия (убираем ' ао', ' ап', начальную 'i')
+                clean_val = original
+                if clean_val.endswith(' ао') or clean_val.endswith(' ап'):
+                    clean_val = clean_val[:-3]  # убираем последние 3 символа (пробел + 2 буквы)
+                if clean_val.startswith('i') and len(clean_val) > 1 and clean_val[1].isalpha():
+                    # убираем начальную 'i', только если за ней идёт буква (кириллица или латиница)
+                    clean_val = clean_val[1:]
+                # Применяем переопределение: сначала ищем по тикеру, потом по очищенному названию
+                display = NAME_OVERRIDES.get(secid, clean_val)
+                if display == clean_val:
+                    display = NAME_OVERRIDES.get(clean_val, clean_val)
                 if len(display) > 25:
                     display = display[:22] + "…"
                 val = display
