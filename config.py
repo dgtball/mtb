@@ -1,11 +1,12 @@
 import os
 
 # ---------- ВЕРСИЯ ----------
-VERSION = "3.1.11"
+VERSION = "3.1.12"
 
 # ---------- ТОКЕНЫ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
 TINKOFF_TOKEN = os.getenv("TITN")
+MINI_APP_SECRET = os.getenv("MINI_APP_SECRET", "fallback_default")
 MY_CHAT_ID = os.getenv("MY_CHAT_ID")
 if not MY_CHAT_ID:
     raise ValueError("MY_CHAT_ID не задан")
@@ -42,6 +43,7 @@ NO_TRADING_WEEKENDS_2026 = [
 
 # Глобальный словарь имён инструментов из MOEX (загружается в runtime)
 ticker_to_name = {}
+ticker_to_sector = {}
 
 # ---------- СПРАВОЧНИК СЕКТОРОВ MOEX ----------
 SECTOR_NAMES = {
@@ -59,8 +61,3 @@ SECTOR_NAMES = {
     "12": "Здравоохранение",
     "13": "Прочие",
 }
-
-MINI_APP_SECRET = os.getenv("MINI_APP_SECRET", "fallback_default")
-
-ticker_to_name = {}
-ticker_to_sector = {}
