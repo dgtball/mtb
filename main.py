@@ -1,6 +1,7 @@
 import os
 import sys
 import logging
+from logging.handlers import TimedRotatingFileHandler
 import asyncio
 import aiohttp
 from aiohttp import web
@@ -12,7 +13,33 @@ from moex_api import load_instrument_names
 from handlers import register_handlers, set_http_session, set_bot
 import scheduler
 
-logging.basicConfig(level=logging.INFO)
+# Убедимся, что папка logs существует
+log_dir = os.path.join(os.getenv('DATA_DIR', '/app/data'), 'logs')
+os.makedirs(log_dir, exist_ok=True)
+
+# Основной файл (INFO и выше)
+file_handler = TimedRotatingFileHandler(
+    os.path.join(log_dir, 'bot.log'),
+    when='midnight',
+    interval=1,
+    backupCount=7,  # хранить последние 7 дней
+    encoding='utf-8'
+)
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+
+# Консольный вывод (только WARNING и выше, чтобы не захламлять stdout)
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.WARNING)
+console_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+
+# Настройка корневого логгера
+logging.basicConfig(
+    level=logging.INFO,
+    handlers=[file_handler, console_handler]
+)
+
+# Отключаем лишние логгеры
 logging.getLogger('aiogram.event').setLevel(logging.WARNING)
 logging.getLogger('aiohttp.access').setLevel(logging.WARNING)
 logging.getLogger('aiohttp.client').setLevel(logging.WARNING)
