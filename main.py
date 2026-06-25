@@ -63,15 +63,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------- ПРОВЕРКА ТОКЕНА (С ВРЕМЕННЫМИ ЛОГАМИ) ----------
+# ---------- ПРОВЕРКА ТОКЕНА ----------
 def check_token(request: Request) -> bool:
+    """Проверяет секретный токен, переданный в параметре ?token=..."""
     token = request.query_params.get("token", "")
-    expected = MINI_APP_SECRET
-    logging.info(f"Received token: '{token}', expected length: {len(expected)}")
-    if token == expected:
-        return True
-    logging.warning(f"Token mismatch! Received length: {len(token)}")
-    return False
+    return token == MINI_APP_SECRET
 
 # ---------- FASTAPI РОУТЫ ----------
 @app.get("/")
@@ -84,13 +80,14 @@ async def health():
 
 @app.get("/mini-app")
 async def mini_app(request: Request):
-    # Проверка токена не требуется для загрузки самой страницы,
-    # но мы можем оставить для безопасности (опционально)
+    # Защищаем страницу токеном (как и API)
+    if not check_token(request):
+        raise HTTPException(status_code=403, detail="Forbidden")
     with open("mini_app.html", "r", encoding="utf-8") as f:
         html = f.read()
-    replaced_html = html.replace("MINI_APP_TOKEN_PLACEHOLDER", MINI_APP_SECRET)
-    logging.info(f"Token replacement done. Token present: {MINI_APP_SECRET in replaced_html}")
-    return HTMLResponse(content=replaced_html)
+    # Подставляем реальный токен для JavaScript
+    html = html.replace("MINI_APP_TOKEN_PLACEHOLDER", MINI_APP_SECRET)
+    return HTMLResponse(content=html)
 
 @app.get("/api/portfolio")
 async def api_portfolio(request: Request):
