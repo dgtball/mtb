@@ -163,12 +163,7 @@ async def scheduler_loop():
                     continue
             else:
                 portfolio_update_allowed = False
-                if _active_day_message_id is not None:
-                    try:
-                        await _bot.delete_message(MY_CHAT_ID, _active_day_message_id)
-                    except Exception:
-                        pass
-                    _active_day_message_id = None
+                _active_day_message_id is not None: # сбрасываем, чтобы утром отправить новый топ, но старый не трогаем
 
             # Пятница после 23:50
             if weekday == 4 and hour == 23 and minute >= 50:

@@ -12,6 +12,9 @@ _bot = None
 _http_session = None
 _active_day_message_id = None
 
+# Новый флаг: разрешено ли автообновление портфеля (только днём)
+portfolio_update_allowed = False
+
 def set_bot(bot: Bot):
     global _bot
     _bot = bot
@@ -19,6 +22,10 @@ def set_bot(bot: Bot):
 def set_http_session(session):
     global _http_session
     _http_session = session
+
+def is_portfolio_update_allowed():
+    global portfolio_update_allowed
+    return portfolio_update_allowed
 
 async def send_weekly_top():
     try:
@@ -92,7 +99,7 @@ def last_trading_day(today):
     return last_day
 
 async def scheduler_loop():
-    global _active_day_message_id
+    global _active_day_message_id, portfolio_update_allowed
     last_week_sent_date = None
     last_month_sent_date = None
     day_update_interval = 30
@@ -107,6 +114,14 @@ async def scheduler_loop():
             hour = now.hour
             minute = now.minute
 
+            # Вечерний снэпшот портфеля (после 23:50)
+            if hour == 23 and minute >= 50:
+                tomorrow = today + datetime.timedelta(days=1)
+                current = db.get_portfolio_value()
+                if current is not None:
+                    db.set_daily_snapshot(tomorrow.isoformat(), current)
+                    logging.info(f"Снэпшот портфеля сохранён на {tomorrow.isoformat()}: {current:.2f}")
+
             # Окно 06:50 – 00:50 МСК
             start_minutes = 6*60 + 50
             end_minutes = 0*60 + 50 + 24*60
@@ -116,6 +131,7 @@ async def scheduler_loop():
             day_window = start_minutes <= current_minutes <= end_minutes
 
             if day_window:
+                portfolio_update_allowed = True
                 if _active_day_message_id is None:
                     shares_df = await get_market_data(_http_session)
                     gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
@@ -127,15 +143,6 @@ async def scheduler_loop():
                         text = format_message(gainers, losers, index_info, update_time, session_status, portfolio_line)
                         sent_msg = await _bot.send_message(MY_CHAT_ID, text, parse_mode="HTML")
                         _active_day_message_id = sent_msg.message_id
-                        # Сохраняем снэпшот портфеля
-                        from tinkoff_api import get_portfolio_summary
-                        data = await get_portfolio_summary(_http_session)
-                        if data:
-                            import db
-                            db.set_portfolio_value(data['total_amount'])
-                            today_str = today.isoformat()
-                            if db.get_daily_snapshot(today_str) is None:
-                                db.set_daily_snapshot(today_str, data['total_amount'])
                     await asyncio.sleep(day_update_interval)
                     continue
                 else:
@@ -155,6 +162,7 @@ async def scheduler_loop():
                     await asyncio.sleep(day_update_interval)
                     continue
             else:
+                portfolio_update_allowed = False
                 if _active_day_message_id is not None:
                     try:
                         await _bot.delete_message(MY_CHAT_ID, _active_day_message_id)

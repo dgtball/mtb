@@ -23,7 +23,9 @@ async def load_instrument_names(http_session):
                         for _, row in df.iterrows():
                             raw_name = row['SHORTNAME']
                             clean_name = raw_name.replace(' ао', '').replace(' ап', '')
-                            ticker_to_name[row['SECID']] = clean_name   
+                            if clean_name.startswith('i'):
+                                clean_name = clean_name[1:]
+                            ticker_to_name[row['SECID']] = clean_name
     except Exception as e:
         logging.error(f"Ошибка загрузки акций: {e}")
 
@@ -42,7 +44,9 @@ async def load_instrument_names(http_session):
                             for _, row in df.iterrows():
                                 raw_name = row['SHORTNAME']
                                 clean_name = raw_name.replace(' ао', '').replace(' ап', '')
-                                ticker_to_name[row['SECID']] = clean_name   
+                                if clean_name.startswith('i'):
+                                    clean_name = clean_name[1:]
+                                ticker_to_name[row['SECID']] = clean_name
         except Exception as e:
             logging.error(f"Ошибка загрузки облигаций {board}: {e}")
 
@@ -60,7 +64,9 @@ async def load_instrument_names(http_session):
                         for _, row in df.iterrows():
                             raw_name = row['SHORTNAME']
                             clean_name = raw_name.replace(' ао', '').replace(' ап', '')
-                            ticker_to_name[row['SECID']] = clean_name   
+                            if clean_name.startswith('i'):
+                                clean_name = clean_name[1:]
+                            ticker_to_name[row['SECID']] = clean_name
     except Exception as e:
         logging.error(f"Ошибка загрузки ETF: {e}")
 
