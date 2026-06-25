@@ -103,8 +103,12 @@ async def api_portfolio(request: Request):
                 "name": pos["name"],
                 "value": value,
                 "yield_pct": pos["pos_yield_pct"],
-                "sector": pos["sector_name"],
+                "sector": pos.get("sector_name", "Прочие"),   # на случай, если ключа нет
             })
+        sectors = {}
+        for p in positions:
+            sec = p.get("sector", "Прочие")   # дополнительная страховка
+            sectors[sec] = sectors.get(sec, 0) + p["value"]
             # Временный лог для диагностики
             if len(positions) <= 3:
                 logging.info(f"Position {pos['ticker']}: sector={pos['sector']}")
