@@ -134,44 +134,6 @@ async def get_historical_close(http_session, ticker, target_date):
     ticker_data = ticker_data.sort_values('TRADEDATE')
     return ticker_data.iloc[-1]['CLOSE']
 
-async def get_historical_prices_batch(http_session, tickers, target_dates):
-    """
-    Загружает исторические цены закрытия для списка тикеров на указанные даты.
-    target_dates – список дат (datetime.date), для которых нужна цена.
-    Возвращает словарь: {(ticker, date): price}
-    """
-    if not tickers or not target_dates:
-        return {}
-
-    min_date = min(target_dates) - datetime.timedelta(days=10)
-    max_date = max(target_dates) + datetime.timedelta(days=1)
-
-    from_str = min_date.strftime("%Y-%m-%d")
-    till_str = max_date.strftime("%Y-%m-%d")
-
-    df = await get_historical_shares(http_session, from_str, till_str)
-    if df.empty:
-        return {}
-
-    df = df[df['SECID'].isin(tickers)].copy()
-    if df.empty:
-        return {}
-
-    df['TRADEDATE'] = pd.to_datetime(df['TRADEDATE'])
-    df = df.sort_values(['SECID', 'TRADEDATE'])
-
-    result = {}
-    for ticker in tickers:
-        ticker_data = df[df['SECID'] == ticker]
-        if ticker_data.empty:
-            continue
-        for target in target_dates:
-            mask = ticker_data['TRADEDATE'] <= pd.Timestamp(target)
-            if mask.any():
-                close_price = ticker_data[mask].iloc[-1]['CLOSE']
-                result[(ticker, target)] = float(close_price)
-    return result
-
 async def get_moex_index_info(http_session):
     url = "https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX.json?iss.meta=off"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}

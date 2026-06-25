@@ -15,11 +15,10 @@ from utils import (
 import db
 from moex_api import (
     get_market_data, get_historical_shares, get_historical_close,
-    get_moex_index_info, get_top_movers, calc_period_change,
-    get_historical_prices_batch
+    get_moex_index_info, get_top_movers, calc_period_change
 )
 from tinkoff_api import get_portfolio_summary
-from visualization import generate_portfolio_image, generate_favorites_image
+from visualization import generate_portfolio_image
 from keyboards import main_keyboard
 
 # ---------- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ----------
@@ -36,8 +35,6 @@ def set_bot(bot_instance):
 
 # ---------- FSM ----------
 class AddRemoveStates(StatesGroup):
-    waiting_for_add = State()
-    waiting_for_remove = State()
     waiting_for_rename = State()
     waiting_for_unrename = State()
 
@@ -53,7 +50,6 @@ async def safe_delete_message(chat_id: int, message_id: int):
 
 # ---------- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ПОРТФЕЛЯ ----------
 def get_portfolio_change_str():
-    """Возвращает строку с изменением портфеля за день или пустую строку."""
     today = datetime.date.today().isoformat()
     snapshot = db.get_daily_snapshot(today)
     current = db.get_portfolio_value()
@@ -95,61 +91,6 @@ def format_historical_table(gainers, losers, period, from_date_dt, till_date_dt)
     if not losers.empty:
         text += build_table_universal(losers, "📉 Падение", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
     return text
-
-# ---------- ПОЛУЧЕНИЕ ДАННЫХ ИЗБРАННОГО ----------
-async def get_favorites_data(chat_id: int):
-    favs = db.get_favorites(chat_id)
-    if not favs:
-        return None, "⭐ У вас пока нет избранных акций.\n\nДобавьте их через кнопку ✅ Добавить тикер."
-    shares_df = await get_market_data(_http_session)
-    if shares_df.empty:
-        if is_weekend():
-            return None, "📊 Сессия выходного дня. Избранное обновится в рабочие дни."
-        else:
-            return None, "📊 Биржа закрыта. Попробуйте позже."
-    fav_df = shares_df[shares_df['SECID'].isin(favs)].copy()
-    if fav_df.empty:
-        return None, "По вашему списку нет актуальных данных."
-    if 'CHANGEPERCENT' not in fav_df.columns:
-        if 'OPEN' in fav_df.columns and 'LAST' in fav_df.columns:
-            fav_df['CHANGEPERCENT'] = ((fav_df['LAST'] - fav_df['OPEN']) / fav_df['OPEN']) * 100
-        else:
-            return None, "Недостаточно данных для расчёта изменений."
-    if 'SHORTNAME' not in fav_df.columns:
-        fav_df['SHORTNAME'] = fav_df['SECID']
-
-    now = get_moscow_time()
-    monday = now - datetime.timedelta(days=now.weekday())
-    week_reference = (monday - datetime.timedelta(days=1)).date()
-    first_of_month = now.replace(day=1)
-    month_reference = (first_of_month - datetime.timedelta(days=1)).date()
-
-    tickers = fav_df['SECID'].tolist()
-    target_dates = [week_reference, month_reference]
-    prices = await get_historical_prices_batch(_http_session, tickers, target_dates)
-
-    week_changes = []
-    month_changes = []
-    for _, row in fav_df.iterrows():
-        ticker = row['SECID']
-        current_price = row['LAST']
-        week_price = prices.get((ticker, week_reference))
-        month_price = prices.get((ticker, month_reference))
-        if week_price is not None and week_price > 0:
-            week_change = ((current_price - week_price) / week_price) * 100
-        else:
-            week_change = None
-        if month_price is not None and month_price > 0:
-            month_change = ((current_price - month_price) / month_price) * 100
-        else:
-            month_change = None
-        week_changes.append(week_change)
-        month_changes.append(month_change)
-
-    fav_df['change_week'] = week_changes
-    fav_df['change_month'] = month_changes
-    fav_df = fav_df.sort_values('CHANGEPERCENT', ascending=False)
-    return fav_df, None
 
 # ---------- ОТПРАВКА ТОПА (РАЗОВАЯ) ----------
 async def send_top(message: types.Message, period: str = 'day'):
@@ -212,7 +153,7 @@ async def send_top(message: types.Message, period: str = 'day'):
 async def cmd_start(message: types.Message, state: FSMContext):
     if message.from_user.id != MY_CHAT_ID:
         await message.answer("⛔ Доступ запрещён.")
-        await _bot.send_message(MY_CHAT_ID, f"⚠️ Попытка доступа от {message.from_user.full_name} (@{message.from_user.username}, id={message.from_user.id})")
+        await _bot.send_message(MY_CHAT_ID, f"⚠️ Попытка доступа от {message.from_user.full_name} (@{message.from_user.username})")
         return
     await state.clear()
     try:
@@ -247,7 +188,6 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
                 await message.answer("❌ Не удалось получить данные портфеля.")
                 await safe_delete_message(message.chat.id, message.message_id)
                 return
-
             total_amount = data['total_amount']
             db.set_portfolio_value(total_amount)
             today = datetime.date.today().isoformat()
@@ -289,52 +229,7 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
         await safe_delete_message(message.chat.id, message.message_id)
         return
 
-    # ---------- ИЗБРАННЫЕ ----------
-    if text == "⭐ Избранные":
-        try:
-            loading_msg = await message.answer("⏳ Загружаю избранное...")
-            fav_df, error = await get_favorites_data(message.chat.id)
-            if error:
-                await loading_msg.delete()
-                await message.answer(error)
-                await safe_delete_message(message.chat.id, message.message_id)
-                return
-            img_buf = generate_favorites_image(fav_df)
-            if img_buf is None:
-                await loading_msg.delete()
-                await message.answer("Нет данных для отображения.")
-                await safe_delete_message(message.chat.id, message.message_id)
-                return
-            from aiogram.types import BufferedInputFile
-            await message.answer_photo(
-                photo=BufferedInputFile(img_buf.getvalue(), filename="favorites.png")
-            )
-            await loading_msg.delete()
-            await safe_delete_message(message.chat.id, message.message_id)
-        except Exception as e:
-            await loading_msg.delete()
-            logging.error(f"❌ Ошибка в favorites: {e}", exc_info=True)
-            await message.answer(f"❌ Ошибка при загрузке избранного: {e}")
-            await safe_delete_message(message.chat.id, message.message_id)
-        return
-
-    # ---------- ДОБАВИТЬ ТИКЕР ----------
-    if text == "✅ Добавить тикер":
-        await state.set_state(AddRemoveStates.waiting_for_add)
-        prompt_msg = await message.answer("Введите тикер для добавления (например, SBER или SBER, GAZP):")
-        await state.update_data(prompt_msg_id=prompt_msg.message_id)
-        await safe_delete_message(message.chat.id, message.message_id)
-        return
-
-    # ---------- УДАЛИТЬ ТИКЕР ----------
-    if text == "❌ Удалить тикер":
-        await state.set_state(AddRemoveStates.waiting_for_remove)
-        prompt_msg = await message.answer("Введите тикер для удаления (например, SBER или SBER, GAZP):")
-        await state.update_data(prompt_msg_id=prompt_msg.message_id)
-        await safe_delete_message(message.chat.id, message.message_id)
-        return
-
-    # ---------- ПЕРЕИМЕНОВАТЬ ТИКЕР ----------
+    # ---------- ПЕРЕИМЕНОВАТЬ ----------
     if text == "✏️ Изменить":
         await state.set_state(AddRemoveStates.waiting_for_rename)
         prompt_msg = await message.answer(
@@ -345,7 +240,7 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
         return
 
     # ---------- УДАЛИТЬ ПЕРЕИМЕНОВАНИЕ ----------
-    if text == "🗑 Удалить":
+    if text == "🗑 Удалить имя":
         await state.set_state(AddRemoveStates.waiting_for_unrename)
         prompt_msg = await message.answer(
             "Введите тикер, для которого нужно удалить переименование (например, SBER):"
@@ -393,42 +288,6 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
         ticker = message.text.strip().upper()
         db.remove_name_override(ticker)
         await message.answer(f"✅ Переименование для {ticker} удалено (если было)")
-        await state.clear()
-        return
-
-    if current_state == AddRemoveStates.waiting_for_add.state:
-        data = await state.get_data()
-        prompt_msg_id = data.get('prompt_msg_id')
-        if prompt_msg_id:
-            await safe_delete_message(message.chat.id, prompt_msg_id)
-        await safe_delete_message(message.chat.id, message.message_id)
-        raw = message.text.strip()
-        tickers = [t.strip().upper() for t in raw.split(',') if t.strip()]
-        results = []
-        for ticker in tickers:
-            if db.add_favorite(message.chat.id, ticker):
-                results.append(f"✅ {ticker} добавлен")
-            else:
-                results.append(f"ℹ️ {ticker} уже есть")
-        await message.answer("\n".join(results) if results else "Ничего не сделано.")
-        await state.clear()
-        return
-
-    if current_state == AddRemoveStates.waiting_for_remove.state:
-        data = await state.get_data()
-        prompt_msg_id = data.get('prompt_msg_id')
-        if prompt_msg_id:
-            await safe_delete_message(message.chat.id, prompt_msg_id)
-        await safe_delete_message(message.chat.id, message.message_id)
-        raw = message.text.strip()
-        tickers = [t.strip().upper() for t in raw.split(',') if t.strip()]
-        results = []
-        for ticker in tickers:
-            if db.remove_favorite(message.chat.id, ticker):
-                results.append(f"✅ {ticker} удалён")
-            else:
-                results.append(f"ℹ️ {ticker} не найден")
-        await message.answer("\n".join(results) if results else "Ничего не сделано.")
         await state.clear()
         return
 
