@@ -63,40 +63,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------- ПРОВЕРКА ПОДПИСИ TELEGRAM ----------
+# ---------- ВРЕМЕННО ОТКЛЮЧАЕМ ПРОВЕРКУ TELEGRAM ----------
+# Позже, когда Bothost начнёт передавать параметры, включим обратно
 def verify_telegram_data(init_data: str) -> bool:
-    try:
-        params = parse_qs(init_data)
-        logging.info(f"Init data keys: {list(params.keys())}")
-        if "hash" not in params:
-            logging.error("No 'hash' in init data")
-            return False
-        received_hash = params.pop("hash")[0]
-        sorted_keys = sorted(params.keys())
-        data_check_arr = [f"{k}={params[k][0]}" for k in sorted_keys]
-        data_check_string = "\n".join(data_check_arr)
-        secret_key = hmac.new("WebAppData".encode(), API_TOKEN.encode(), hashlib.sha256).digest()
-        calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
-        logging.info(f"Received hash: {received_hash}, calculated: {calculated_hash}")
-        return calculated_hash == received_hash
-    except Exception as e:
-        logging.error(f"Verification error: {e}")
-        return False
+    return True  # пускаем всех
 
 def get_user_id_from_init_data(init_data: str) -> int:
-    params = parse_qs(init_data)
-    user = params.get("user")
-    if user:
-        import json
-        user_data = json.loads(user[0])
-        return user_data.get("id")
-    return 0
+    return MY_CHAT_ID  # возвращаем владельца
 
 # ---------- FASTAPI РОУТЫ ----------
 @app.get("/")
 async def root():
     return {"status": "ok", "version": VERSION}
-    
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -104,26 +83,14 @@ async def health():
 @app.get("/mini-app")
 async def mini_app(request: Request):
     logging.info(f"Full URL: {str(request.url)}")
-    init_data = request.query_params.get("tgWebAppData", "")
-    logging.info(f"Init data: {init_data[:200]}")
-    # Временно разрешаем без проверки? Замени на if False: для быстрого теста
-    if not verify_telegram_data(init_data):
-        raise HTTPException(status_code=403, detail="Invalid init data")
-    user_id = get_user_id_from_init_data(init_data)
-    if user_id != MY_CHAT_ID:
-        raise HTTPException(status_code=403, detail="Access denied")
+    # Временно без проверки
     with open("mini_app.html", "r", encoding="utf-8") as f:
         html = f.read()
     return HTMLResponse(content=html)
 
 @app.get("/api/portfolio")
 async def api_portfolio(request: Request):
-    init_data = request.query_params.get("tgWebAppData", "")
-    if not verify_telegram_data(init_data):
-        raise HTTPException(status_code=403, detail="Invalid init data")
-    user_id = get_user_id_from_init_data(init_data)
-    if user_id != MY_CHAT_ID:
-        raise HTTPException(status_code=403, detail="Access denied")
+    # Временно без проверки
     try:
         from tinkoff_api import get_portfolio_summary
         data = await get_portfolio_summary(bot_session)
@@ -161,12 +128,7 @@ async def api_portfolio(request: Request):
 
 @app.get("/api/overrides")
 async def api_overrides(request: Request):
-    init_data = request.query_params.get("tgWebAppData", "")
-    if not verify_telegram_data(init_data):
-        raise HTTPException(status_code=403, detail="Invalid init data")
-    user_id = get_user_id_from_init_data(init_data)
-    if user_id != MY_CHAT_ID:
-        raise HTTPException(status_code=403, detail="Access denied")
+    # Временно без проверки
     try:
         from config import NAME_OVERRIDES
         overrides = [{"ticker": k, "name": v} for k, v in NAME_OVERRIDES.items()]
@@ -176,12 +138,7 @@ async def api_overrides(request: Request):
 
 @app.post("/api/override")
 async def api_override(request: Request):
-    init_data = request.query_params.get("tgWebAppData", "")
-    if not verify_telegram_data(init_data):
-        raise HTTPException(status_code=403, detail="Invalid init data")
-    user_id = get_user_id_from_init_data(init_data)
-    if user_id != MY_CHAT_ID:
-        raise HTTPException(status_code=403, detail="Access denied")
+    # Временно без проверки
     try:
         body = await request.json()
         action = body.get("action")
@@ -250,6 +207,7 @@ async def main():
     loop.create_task(server.serve())
     logging.info(f"✅ FastAPI сервер запущен на порту {PORT}")
 
+    await asyncio.sleep(2)  # даём время uvicorn стартовать
     logging.info("✅ Запускаем polling...")
     await dp.start_polling(bot)
 
