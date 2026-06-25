@@ -101,9 +101,12 @@ async def health():
     return {"status": "ok"}
 
 @app.get("/mini-app")
+@app.get("/mini-app")
 async def mini_app(request: Request):
     init_data = request.query_params.get("tgWebAppData", "")
+    logging.info(f"Received init_data: {init_data[:100]}...")  # первые 100 символов
     if not verify_telegram_data(init_data):
+        logging.warning("Telegram data verification failed")
         raise HTTPException(status_code=403, detail="Invalid init data")
     user_id = get_user_id_from_init_data(init_data)
     if user_id != MY_CHAT_ID:
