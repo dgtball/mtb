@@ -163,7 +163,7 @@ async def scheduler_loop():
                     continue
             else:
                 portfolio_update_allowed = False
-                _active_day_message_id = None: # сбрасываем, чтобы утром отправить новый топ, но старый не трогаем
+                _active_day_message_id = None # сбрасываем, чтобы утром отправить новый топ, но старый не трогаем
 
             # Пятница после 23:50
             if weekday == 4 and hour == 23 and minute >= 50:
