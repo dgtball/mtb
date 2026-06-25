@@ -66,12 +66,12 @@ app.add_middleware(
 # ---------- ПРОВЕРКА ТОКЕНА (С ВРЕМЕННЫМИ ЛОГАМИ) ----------
 def check_mini_app_token(request: Request) -> bool:
     token = request.headers.get("X-Mini-App-Token", "")
-    logging.info(f"Mini App token received: '{token}'")
     expected = MINI_APP_SECRET
+    logging.info(f"Mini App token received: '{token}'")
     logging.info(f"Mini App token expected: '{expected}'")
     if token == expected:
         return True
-    logging.warning("Mini App token mismatch!")
+    logging.warning(f"Mini App token mismatch! Received length: {len(token)}, expected length: {len(expected)}")
     return False
 
 # ---------- FASTAPI РОУТЫ ----------
@@ -85,14 +85,16 @@ async def health():
 
 @app.get("/mini-app")
 async def mini_app(request: Request):
+    logging.info(f"Mini App request received, query: {request.query_params}")
     if not check_mini_app_token(request):
         raise HTTPException(status_code=403, detail="Forbidden")
     with open("mini_app.html", "r", encoding="utf-8") as f:
         html = f.read()
     # Подставляем реальный токен
-    html = html.replace("MINI_APP_TOKEN_PLACEHOLDER", MINI_APP_SECRET)
-    logging.info(f"Token replaced in HTML: {MINI_APP_SECRET in html}")
-    return HTMLResponse(content=html)
+    replaced_html = html.replace("MINI_APP_TOKEN_PLACEHOLDER", MINI_APP_SECRET)
+    logging.info(f"Token replacement done. Placeholder found: {'MINI_APP_TOKEN_PLACEHOLDER' in html}")
+    logging.info(f"After replacement, token present: {MINI_APP_SECRET in replaced_html}")
+    return HTMLResponse(content=replaced_html)
 
 @app.get("/api/portfolio")
 async def api_portfolio(request: Request):

@@ -181,13 +181,22 @@
   let sectorChart;
 
   async function apiCall(endpoint, method = 'GET', body = null) {
-    const url = `${endpoint}?tgWebAppData=${encodeURIComponent(initData)}`;
-    const options = { method, headers: { 'Content-Type': 'application/json' } };
+    console.log('API call to', endpoint, 'with token', MINI_APP_TOKEN);
+    const options = {
+        method,
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Mini-App-Token': MINI_APP_TOKEN
+        }
+    };
     if (body) options.body = JSON.stringify(body);
-    const res = await fetch(url, options);
-    if (!res.ok) throw new Error('Request failed');
+    const res = await fetch(endpoint, options);
+    if (!res.ok) {
+        console.error('Request failed', res.status, await res.text());
+        throw new Error('Request failed');
+    }
     return res.json();
-  }
+}
 
   async function loadPortfolio() {
     try {
