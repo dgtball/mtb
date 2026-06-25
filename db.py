@@ -2,12 +2,10 @@ import sqlite3
 import logging
 from config import DB_PATH, NAME_OVERRIDES
 
-# ---------- ИНИЦИАЛИЗАЦИЯ И МИГРАЦИЯ ----------
+# ---------- ИНИЦИАЛИЗАЦИЯ ----------
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    # Удаляем старую таблицу избранного (если была)
-    c.execute("DROP TABLE IF EXISTS favorites")
     # Таблица переопределений названий
     c.execute('''CREATE TABLE IF NOT EXISTS name_overrides
                  (ticker TEXT PRIMARY KEY, display_name TEXT)''')
@@ -19,38 +17,53 @@ def init_db():
     logging.info(f"✅ База данных инициализирована: {DB_PATH}")
     seed_overrides()
 
+# ---------- НАЧАЛЬНЫЕ ПЕРЕОПРЕДЕЛЕНИЯ НАЗВАНИЙ ----------
 def seed_overrides():
-    """Однократно добавляет стартовые переопределения, удаляя устаревшие."""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-
-    # Удаляем старые записи, которые могли вызвать конфликт
-    c.execute("DELETE FROM name_overrides WHERE ticker IN ('iКаршеринг', 'Каршеринг', 'Делимобиль')")
-    c.execute("DELETE FROM name_overrides WHERE ticker = 'DELI' AND display_name != 'Делимобиль'")
     initial = [
-        # Тикеры акций
         ("WUSH", "ВУШ"),
         ("DELI", "Делимобиль"),
+        ("HEAD", "Хэдхантер"),
         ("X5", "X5"),
-        ("ENPG", "ЭН+"),
+        ("FLOT", "Совкомфлот"),
+        ("SNGSP", "Сургутнефтегаз-п"),
+        ("SNGS", "Сургутнефтегаз"),
+        ("MSNG", "МосЭнерго"),
+        ("PLZL", "Полюс"),
+        ("ENPG", "ЭН+ГРУП"),
+        ("PIKK", "ПИК"),
+        ("PRMD", "Промомед"),
+        ("RENI", "Ренессанс"),
+        ("LEAS", "Европлан"),
         ("MDMG", "Мать и Дитя"),
+        ("NVTK", "Новатэк"),
+        ("NLMK", "НЛМК"),
+        ("AFLT", "Аэрофлот"),
+        ("HNFG", "Хэндерсон"),
+        ("SMLT", "Самолет"),
+        ("MGKL", "МГКЛ"),
+        ("GLRX", "Глоракс"),
         ("TRNFP", "Транснефть-п"),
+        ("YDEX", "Яндекс"),
         ("T", "Т-Технологии"),
+        ("GAZP", "Газпром"),
         ("SIBN", "Газпромнефть"),
+        ("ASTR", "Астра"),
+        ("SOFL", "Софтлайн"),
         ("VKCO", "ВК"),
-        ("TATNP", "Татнефть п"),
+        ("MGNT", "Магнит"),
+        ("SBER", "Сбер"),
+        ("TATNP", "Татнефть"),
         ("TATN", "Татнефть"),
         ("CHMF", "Северсталь"),
-        ("ETLN", "Эталон"),
-        ("RNFT", "Руснефть"),
+        ("ROSN", "Роснефть"),
+        ("LKOH", "Лукойл"),
         ("RTKM", "Ростелеком"),
-        ("MSRS", "РСетиМСК"),
-        ("MRKV", "РСетиВолга"),
-        ("MRKC", "РСетиЦентр"),
-        ("MRKU", "РСетиУрал"),
-        ("GEMC", "ЕМЦ"),
-        ("AFKS", "АФК Система"),
-        # Облигации (по желанию)
+        ("POSI", "Позитив"),
+        ("TRMK", "ТМК"),
+        ("ABIO", "АРТГЕН"),
+        ("OGKB", "ОГК-2"),
+        ("TGKA", "ТГК-1"),
+        ("SVAV", "Соллерс"),
         ("SU26247RMFS5", "ОФЗ 26247"),
         ("SU26248RMFS3", "ОФЗ 26248"),
         ("SU26246RMFS7", "ОФЗ 26246"),
@@ -59,27 +72,25 @@ def seed_overrides():
         ("SU26245RMFS9", "ОФЗ 26245"),
         ("SU26240RMFS0", "ОФЗ 26240"),
         ("SU26238RMFS4", "ОФЗ 26238"),
-        ("RU000A106UW3", "Дели P3"),
-        # Фонды
-        ("LQDT", "ВИМ Ликвидность"),
-        ("TGLD@", "TGLD"),
+        ("RU000A106UW3", "ОФЗ 26225"),
+        ("LQDT", "Ликвидность"),
+        ("TGLD@", "Золото"),
     ]
-
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM name_overrides")
     if c.fetchone()[0] == 0:
         c.executemany("INSERT OR IGNORE INTO name_overrides (ticker, display_name) VALUES (?, ?)", initial)
         conn.commit()
         logging.info("✅ Начальные переопределения названий добавлены в БД")
     else:
-        # Если таблица не пуста, всё равно добавляем отсутствующие ключи
         for ticker, display_name in initial:
             c.execute("INSERT OR IGNORE INTO name_overrides (ticker, display_name) VALUES (?, ?)", (ticker, display_name))
         conn.commit()
         logging.info("✅ Новые переопределения добавлены в БД")
-
     conn.close()
 
-# ---------- НОВЫЕ ФУНКЦИИ СОСТОЯНИЯ ПОРТФЕЛЯ ----------
+# ---------- СОСТОЯНИЕ ПОРТФЕЛЯ ----------
 def _get_state(key: str) -> float | None:
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()

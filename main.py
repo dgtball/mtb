@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
-from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION, TINKOFF_TOKEN, SECTOR_NAMES, MINI_APP_SECRET
+from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION, TINKOFF_TOKEN, SECTOR_NAMES, MINI_APP_SECRET, TICKER_SECTOR_FALLBACK
 import db
 from moex_api import load_instrument_names, ticker_to_sector
 from handlers import register_handlers, set_http_session, set_bot
@@ -99,8 +99,12 @@ async def api_portfolio(request: Request):
         positions = []
         for pos in data["positions"]:
             ticker = pos["ticker"]
-            # Сектор теперь берётся из БД (таблица sectors)
-            sector_name = db.get_sector(ticker)
+            # Сектор из резервного словаря (можно дополнить MOEX при наличии)
+            sector_id = ticker_to_sector.get(ticker, "")  # если глобальный словарь загружен
+            if not sector_id:
+                sector_id = TICKER_SECTOR_FALLBACK.get(ticker, "")
+            sector_name = SECTOR_NAMES.get(sector_id, "Прочие")
+
             value = pos["quantity"] * pos["price"]
             positions.append({
                 "ticker": ticker,
