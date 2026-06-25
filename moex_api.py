@@ -79,6 +79,7 @@ async def load_instrument_names(http_session):
         logging.error(f"Ошибка загрузки ETF: {e}")
 
     logging.info(f"✅ Загружено {len(ticker_to_name)} наименований")
+    ogging.info(f"✅ Загружено {len(ticker_to_sector)} секторов")
 
 async def get_market_data(http_session):
     url = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=marketdata,securities"

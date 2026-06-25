@@ -130,6 +130,8 @@ async def get_portfolio_summary(http_session):
                     type_display = "Акции"
 
             sector_id = ticker_to_sector.get(ticker, "")
+            if ticker.startswith("LKOH"):  # для примера, первый тикер
+                logging.info(f"DEBUG sector for {ticker}: id={sector_id}, name={SECTOR_NAMES.get(sector_id, 'Прочие')}")
             sector_name = SECTOR_NAMES.get(sector_id, "Прочие")
 
             result["positions"].append({

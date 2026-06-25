@@ -108,6 +108,9 @@ async def api_portfolio(request: Request):
                 "yield_pct": pos["pos_yield_pct"],
                 "sector": pos["sector_name"],
             })
+            # Временный лог для диагностики
+            if len(positions) <= 3:
+                logging.info(f"Position {pos['ticker']}: sector={pos['sector']}")
         sectors = {}
         for p in positions:
             sec = p["sector"]
