@@ -21,7 +21,9 @@ async def load_instrument_names(http_session):
                     df = pd.DataFrame(data_rows, columns=columns)
                     if 'SECID' in df.columns and 'SHORTNAME' in df.columns:
                         for _, row in df.iterrows():
-                            ticker_to_name[row['SECID']] = row['SHORTNAME']
+                            raw_name = row['SHORTNAME']
+                            clean_name = raw_name.replace(' ао', '').replace(' ап', '')
+                            ticker_to_name[row['SECID']] = clean_name   
     except Exception as e:
         logging.error(f"Ошибка загрузки акций: {e}")
 
@@ -38,7 +40,9 @@ async def load_instrument_names(http_session):
                         df = pd.DataFrame(data_rows, columns=columns)
                         if 'SECID' in df.columns and 'SHORTNAME' in df.columns:
                             for _, row in df.iterrows():
-                                ticker_to_name[row['SECID']] = row['SHORTNAME']
+                            raw_name = row['SHORTNAME']
+                            clean_name = raw_name.replace(' ао', '').replace(' ап', '')
+                            ticker_to_name[row['SECID']] = clean_name   
         except Exception as e:
             logging.error(f"Ошибка загрузки облигаций {board}: {e}")
 
@@ -54,7 +58,9 @@ async def load_instrument_names(http_session):
                     df = pd.DataFrame(data_rows, columns=columns)
                     if 'SECID' in df.columns and 'SHORTNAME' in df.columns:
                         for _, row in df.iterrows():
-                            ticker_to_name[row['SECID']] = row['SHORTNAME']
+                            raw_name = row['SHORTNAME']
+                            clean_name = raw_name.replace(' ао', '').replace(' ап', '')
+                            ticker_to_name[row['SECID']] = clean_name   
     except Exception as e:
         logging.error(f"Ошибка загрузки ETF: {e}")
 
