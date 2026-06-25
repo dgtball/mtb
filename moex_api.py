@@ -108,7 +108,7 @@ async def get_market_data(http_session):
                         logging.info(f"Примеры SECTYPE: {sample}")
                     get_market_data._logged = True
 
-                available_cols = ['SECID', 'SHORTNAME', 'LISTLEVEL']
+                available_cols = ['SECID', 'SHORTNAME', 'LISTLEVEL', 'SECTORID']
                 if 'SECTYPE' in sec_columns:
                     available_cols.append('SECTYPE')
                 if 'BOARDID' in sec_columns:

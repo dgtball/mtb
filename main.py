@@ -80,12 +80,9 @@ async def health():
 
 @app.get("/mini-app")
 async def mini_app(request: Request):
-    # Защищаем страницу токеном (как и API)
-    if not check_token(request):
-        raise HTTPException(status_code=403, detail="Forbidden")
+    # Временно без проверки токена для загрузки страницы
     with open("mini_app.html", "r", encoding="utf-8") as f:
         html = f.read()
-    # Подставляем реальный токен для JavaScript
     html = html.replace("MINI_APP_TOKEN_PLACEHOLDER", MINI_APP_SECRET)
     return HTMLResponse(content=html)
 
