@@ -92,9 +92,6 @@ async def api_portfolio(request: Request):
         raise HTTPException(status_code=403, detail="Forbidden")
     try:
         from tinkoff_api import get_portfolio_summary
-        # Используем глобальный словарь секторов, загруженный при старте
-        from moex_api import ticker_to_sector as global_ticker_to_sector
-
         data = await get_portfolio_summary(bot_session)
         if not data:
             return JSONResponse({"error": "Нет данных"}, status_code=404)
@@ -102,11 +99,8 @@ async def api_portfolio(request: Request):
         positions = []
         for pos in data["positions"]:
             ticker = pos["ticker"]
-            sector_id = global_ticker_to_sector.get(ticker, "")
-            sector_name = SECTOR_NAMES.get(sector_id, "Прочие")
-            if ticker == "LKOH":
-                logging.info(f"API portfolio LKOH sector from global: id={sector_id}, name={sector_name}")
-
+            # Сектор теперь берётся из БД (таблица sectors)
+            sector_name = db.get_sector(ticker)
             value = pos["quantity"] * pos["price"]
             positions.append({
                 "ticker": ticker,
