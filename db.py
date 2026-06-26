@@ -128,6 +128,10 @@ def insert_operation(op):
 def get_personal_dividends():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    # Покажем первые 5 типов, чтобы понять, что в базе
+    c.execute("SELECT DISTINCT type FROM operations LIMIT 5")
+    sample_types = [r[0] for r in c.fetchall()]
+    logging.info(f"Примеры типов операций в БД: {sample_types}")
     c.execute("SELECT COUNT(*) FROM operations WHERE type IN ('OPERATION_TYPE_DIVIDEND', 'OPERATION_TYPE_COUPON') AND currency = 'RUB'")
     count = c.fetchone()[0]
     logging.info(f"get_personal_dividends: найдено {count} выплат в БД")

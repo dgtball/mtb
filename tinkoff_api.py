@@ -149,7 +149,6 @@ async def get_portfolio_summary(http_session):
         return None
 
 async def sync_operations(http_session, from_date=None):
-    """Синхронизирует операции из T-Invest API в БД. Возвращает количество новых операций."""
     logging.info("sync_operations started")
     try:
         accounts = await get_accounts(http_session)
@@ -179,8 +178,12 @@ async def sync_operations(http_session, from_date=None):
         operations = data.get("operations", [])
         logging.info(f"sync_operations: получено {len(operations)} операций от API")
 
+        # Диагностика: собираем уникальные типы операций
+        unique_types = set()
         new_count = 0
         for op in operations:
+            op_type = op.get("type", "")
+            unique_types.add(op_type)
             ticker = op.get("ticker")
             if not ticker:
                 figi = op.get("figi")
@@ -194,7 +197,7 @@ async def sync_operations(http_session, from_date=None):
             db.insert_operation({
                 "id": op.get("id"),
                 "date": op.get("date"),
-                "type": op.get("type"),
+                "type": op_type,
                 "ticker": ticker,
                 "figi": op.get("figi"),
                 "instrument_type": op.get("instrumentType"),
@@ -206,38 +209,9 @@ async def sync_operations(http_session, from_date=None):
             })
             new_count += 1
 
+        logging.info(f"sync_operations: уникальные типы операций: {unique_types}")
         logging.info(f"sync_operations finished: добавлено {new_count} новых записей")
         return new_count
     except Exception as e:
         logging.error(f"Ошибка в sync_operations: {e}", exc_info=True)
         return 0
-
-async def get_portfolio_snapshot(http_session, target_date: datetime.date) -> float | None:
-    """
-    Возвращает стоимость портфеля на конец указанного дня (по цене закрытия).
-    Использует GetOperations с фильтром по дате.
-    Если данных нет, возвращает None.
-    """
-    try:
-        accounts = await get_accounts(http_session)
-        if not accounts:
-            return None
-        account_id = accounts[0].get("id")
-        if not account_id:
-            return None
-
-        from_date = target_date
-        to_date = target_date + datetime.timedelta(days=1)
-        params = {
-            "accountId": account_id,
-            "from": from_date.isoformat(),
-            "to": to_date.isoformat(),
-            "state": "OPERATION_STATE_EXECUTED",
-            "figi": "",
-        }
-        data = await tinkoff_api_request(http_session, "POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetOperations", params=params)
-        operations = data.get("operations", [])
-        return None
-    except Exception as e:
-        logging.error(f"Ошибка получения исторического снэпшота: {e}")
-        return None
