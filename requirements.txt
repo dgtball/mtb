@@ -1,8 +1,6 @@
 aiogram
 aiohttp
 pandas
-matplotlib
-plotly
 tabulate
 fastapi
 uvicorn

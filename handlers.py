@@ -18,7 +18,7 @@ from moex_api import (
 )
 from keyboards import main_keyboard
 
-# ---------- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЫЕ ----------
+# ---------- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ----------
 _http_session = None
 _bot = None
 
