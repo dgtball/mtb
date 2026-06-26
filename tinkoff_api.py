@@ -181,7 +181,7 @@ async def sync_operations(http_session, from_date=None):
 
         unique_types = set()
         new_count = 0
-        for i, op in enumerate(operations):
+        for op in operations:
             op_type = op.get("type", "")
             unique_types.add(op_type)
             ticker = op.get("ticker")
@@ -191,12 +191,9 @@ async def sync_operations(http_session, from_date=None):
                     ticker = figi_to_ticker.get(figi)
             op["ticker"] = ticker
 
-            if op.get("currency", "RUB") != "RUB":
+            # Исправлено: приводим валюту к верхнему регистру
+            if op.get("currency", "RUB").upper() != "RUB":
                 continue
-
-            # Диагностика первых 3 операций
-            if i < 3:
-                logging.info(f"Попытка вставить операцию {i}: id={op.get('id')}, type={op_type}, ticker={ticker}, payment={op.get('payment')}")
 
             db.insert_operation({
                 "id": op.get("id"),
@@ -207,7 +204,7 @@ async def sync_operations(http_session, from_date=None):
                 "instrument_type": op.get("instrumentType"),
                 "quantity": op.get("quantity"),
                 "payment": float(op.get("payment", {}).get("units", 0)) if op.get("payment") else 0,
-                "currency": op.get("currency", "RUB"),
+                "currency": op.get("currency", "RUB").upper(),
                 "commission": float(op.get("commission", {}).get("units", 0)) if op.get("commission") else 0,
                 "name": op.get("name"),
             })
