@@ -176,7 +176,10 @@ async def sync_operations(http_session, from_date=None):
         }
         data = await tinkoff_api_request(http_session, "POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetOperations", params=params)
         operations = data.get("operations", [])
-        logging.info(f"sync_operations: получено {len(operations)} операций от API")
+        if operations:
+            first = operations[0]
+            logging.info(f"Первая операция: type={first.get('type')}, ticker={first.get('ticker')}, payment={first.get('payment')}")
+            logging.info(f"sync_operations: получено {len(operations)} операций от API")
 
         # Диагностика: собираем уникальные типы операций
         unique_types = set()
