@@ -239,6 +239,60 @@ def get_top_movers(data, top_n=10, exclude_level3=True):
     losers = negative.nsmallest(top_n, 'CHANGEPERCENT') if not negative.empty else pd.DataFrame()
     return gainers, losers
 
+async def get_dividend_history(http_session, tickers):
+    """
+    Получает историю дивидендов (для акций) и купонов (для облигаций) из MOEX ISS.
+    Возвращает список словарей: [{"ticker": ..., "date": ..., "amount": ...}, ...]
+    """
+    result = []
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
+    # Для каждого тикера загружаем дивиденды
+    for ticker in tickers:
+        # Сначала пробуем акции (dividends)
+        url = f"https://iss.moex.com/iss/securities/{ticker}/dividends.json?iss.meta=off"
+        try:
+            async with http_session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    json_data = await resp.json()
+                    if 'dividends' in json_data:
+                        cols = json_data['dividends']['columns']
+                        data_rows = json_data['dividends']['data']
+                        if 'registryclosingdate' in cols and 'dividendvalue' in cols:
+                            date_idx = cols.index('registryclosingdate')
+                            val_idx = cols.index('dividendvalue')
+                            for row in data_rows:
+                                result.append({
+                                    "ticker": ticker,
+                                    "date": row[date_idx],
+                                    "amount": float(row[val_idx]),
+                                })
+        except Exception as e:
+            logging.error(f"Ошибка загрузки дивидендов для {ticker}: {e}")
+
+        # Затем пробуем облигации (coupons)
+        url = f"https://iss.moex.com/iss/securities/{ticker}/coupons.json?iss.meta=off"
+        try:
+            async with http_session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    json_data = await resp.json()
+                    if 'coupons' in json_data:
+                        cols = json_data['coupons']['columns']
+                        data_rows = json_data['coupons']['data']
+                        if 'coupondate' in cols and 'couponvalue' in cols:
+                            date_idx = cols.index('coupondate')
+                            val_idx = cols.index('couponvalue')
+                            for row in data_rows:
+                                result.append({
+                                    "ticker": ticker,
+                                    "date": row[date_idx],
+                                    "amount": float(row[val_idx]),
+                                })
+        except Exception as e:
+            logging.error(f"Ошибка загрузки купонов для {ticker}: {e}")
+
+    return result
+    
 def calc_period_change(df):
     if df.empty:
         return pd.DataFrame()

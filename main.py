@@ -200,6 +200,54 @@ async def api_override(request: Request):
         return JSONResponse({"status": "ok"})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+        
+@app.get("/api/dividends")
+async def api_dividends(request: Request):
+    if not check_token(request):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        from tinkoff_api import get_portfolio_summary
+        from moex_api import get_dividend_history
+        data = await get_portfolio_summary(bot_session)
+        if not data:
+            return JSONResponse({"error": "Нет данных"}, status_code=404)
+
+        # Собираем уникальные тикеры акций и облигаций (исключаем фонды)
+        tickers = list(set(
+            p["ticker"] for p in data["positions"]
+            if p["type_display"] in ("Акции", "Облигации")
+        ))
+
+        # Получаем историю дивидендов/купонов
+        dividends = await get_dividend_history(bot_session, tickers)
+
+        # Группируем по годам и тикерам
+        yearly = {}
+        for div in dividends:
+            year = div["date"][:4]
+            ticker = div["ticker"]
+            if year not in yearly:
+                yearly[year] = {}
+            if ticker not in yearly[year]:
+                yearly[year][ticker] = 0.0
+            yearly[year][ticker] += div["amount"]
+
+        # Преобразуем в массив для графика
+        years = sorted(yearly.keys())
+        datasets = []
+        for ticker in sorted(set(t for y in yearly.values() for t in y.keys())):
+            datasets.append({
+                "label": ticker,
+                "data": [yearly[y].get(ticker, 0) for y in years]
+            })
+
+        return JSONResponse({
+            "years": years,
+            "datasets": datasets,
+        })
+    except Exception as e:
+        logging.error(f"API dividends: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 # ---------- ФОНОВЫЙ ОБНОВИТЕЛЬ ПОРТФЕЛЯ ----------
 async def portfolio_updater(http_session):
