@@ -2,7 +2,8 @@ import logging
 import datetime
 import aiohttp
 from config import TINKOFF_TOKEN, TINKOFF_API_URL, NAME_OVERRIDES, ticker_to_name
-from moex_api import figi_to_ticker  # понадобится для сопоставления FIGI
+from moex_api import figi_to_ticker
+import db
 
 async def tinkoff_api_request(http_session, method: str, endpoint: str, params: dict = None) -> dict:
     if not TINKOFF_TOKEN:
@@ -175,15 +176,13 @@ async def sync_operations(http_session, from_date=None):
 
     new_count = 0
     for op in operations:
-        # Сопоставляем figi -> ticker, если ticker не задан
         ticker = op.get("ticker")
         if not ticker:
             figi = op.get("figi")
             if figi:
-                ticker = figi_to_ticker.get(figi)  # глобальный словарь из moex_api
+                ticker = figi_to_ticker.get(figi)
         op["ticker"] = ticker
 
-        # Пропускаем валютные операции (не RUB)
         if op.get("currency", "RUB") != "RUB":
             continue
 
@@ -204,3 +203,33 @@ async def sync_operations(http_session, from_date=None):
 
     logging.info(f"Синхронизация операций: добавлено {new_count} новых записей")
     return new_count
+
+async def get_portfolio_snapshot(http_session, target_date: datetime.date) -> float | None:
+    """
+    Возвращает стоимость портфеля на конец указанного дня (по цене закрытия).
+    Использует GetOperations с фильтром по дате.
+    Если данных нет, возвращает None.
+    """
+    try:
+        accounts = await get_accounts(http_session)
+        if not accounts:
+            return None
+        account_id = accounts[0].get("id")
+        if not account_id:
+            return None
+
+        from_date = target_date
+        to_date = target_date + datetime.timedelta(days=1)
+        params = {
+            "accountId": account_id,
+            "from": from_date.isoformat(),
+            "to": to_date.isoformat(),
+            "state": "OPERATION_STATE_EXECUTED",
+            "figi": "",
+        }
+        data = await tinkoff_api_request(http_session, "POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetOperations", params=params)
+        operations = data.get("operations", [])
+        return None
+    except Exception as e:
+        logging.error(f"Ошибка получения исторического снэпшота: {e}")
+        return None
