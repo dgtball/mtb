@@ -6,16 +6,12 @@ from config import DB_PATH, NAME_OVERRIDES
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    # Таблица переопределений названий
     c.execute('''CREATE TABLE IF NOT EXISTS name_overrides
                  (ticker TEXT PRIMARY KEY, display_name TEXT)''')
-    # Таблица состояния портфеля
     c.execute('''CREATE TABLE IF NOT EXISTS portfolio_state
                  (key TEXT PRIMARY KEY, value REAL)''')
-    # Таблица секторов
     c.execute('''CREATE TABLE IF NOT EXISTS sectors
                  (ticker TEXT PRIMARY KEY, sector_name TEXT)''')
-    # Таблица операций (дивиденды, купоны, сделки и т.д.)
     c.execute('''CREATE TABLE IF NOT EXISTS operations
                  (id TEXT PRIMARY KEY,
                   date TEXT NOT NULL,
@@ -28,7 +24,6 @@ def init_db():
                   currency TEXT,
                   commission REAL,
                   name TEXT)''')
-    # Индексы для ускорения
     c.execute('CREATE INDEX IF NOT EXISTS idx_operations_date ON operations(date)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_operations_type ON operations(type)')
     conn.commit()
@@ -37,9 +32,11 @@ def init_db():
     seed_overrides()
     seed_sectors()
 
-# ---------- НАЧАЛЬНЫЕ ПЕРЕОПРЕДЕЛЕНИЯ НАЗВАНИЙ ----------
+# ---------- НАЧАЛЬНЫЕ ПЕРЕОПРЕДЕЛЕНИЯ ----------
 def seed_overrides():
     initial = [
+        ("WUSH", "ВУШ"),
+        ("DELI", "Делимобиль"),
         # ... (ваш текущий список)
     ]
     conn = sqlite3.connect(DB_PATH)
@@ -56,19 +53,63 @@ def seed_overrides():
         logging.info("✅ Новые переопределения добавлены в БД")
     conn.close()
 
-# ---------- НАЧАЛЬНЫЕ СЕКТОРА ----------
+# ---------- СЕКТОРА ----------
 def seed_sectors():
     initial_sectors = {
-        # ... (ваш текущий словарь)
+        "SBER": "Финансы",
+        "ASTR": "ИТ",
+        "CHMF": "Металл",
+        "DELI": "Транспорт",
+        "FIXR": "Товары",
+        "FLOT": "Транспорт",
+        "GAZP": "Нефтегаз",
+        "HNFG": "Товары",
+        "LKOH": "Нефтегаз",
+        "MGNT": "Товары",
+        "MTLR": "Металл",
+        "NVTK": "Нефтегаз",
+        "ROSN": "Нефтегаз",
+        "RTKM": "ИТ",
+        "SMLT": "Стройка",
+        "SOFL": "ИТ",
+        "WUSH": "Транспорт",
+        "TATNP": "Нефтегаз",
+        "TRNFP": "Нефтегаз",
+        "MDMG": "Медицина",
+        "T": "Финансы",
+        "VKCO": "ИТ",
+        "YDEX": "ИТ",
+        "SU26233RMFS5": "Облигации",
+        "SU26238RMFS4": "Облигации",
+        "SU26240RMFS0": "Облигации",
+        "SU26245RMFS9": "Облигации",
+        "SU26246RMFS7": "Облигации",
+        "SU26247RMFS5": "Облигации",
+        "SU26248RMFS3": "Облигации",
+        "RU000A106UW3": "Облигации",
+        "LQDT": "Фонд",
+        "TDIV": "Фонд",
+        "TGLD": "Фонд",
+        "TGLD@": "Фонд",
+        "VTBR": "Финансы",
+        "X5": "Товары",
+        "TPAY": "Фонд",
+        "SU26254RMFS1": "Облигации",
+        "NLMK": "Металл",
+        "MGKL": "Финансы",
+        "SIBN": "Нефтегаз",
+        "GLRX": "Стройка",
+        "AFLT": "Транспорт",
     }
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("DELETE FROM sectors")
+    inserted = 0
     for ticker, sector in initial_sectors.items():
         c.execute("INSERT OR REPLACE INTO sectors (ticker, sector_name) VALUES (?, ?)", (ticker, sector))
+        inserted += 1
     conn.commit()
     conn.close()
-    logging.info(f"✅ Сектора обновлены ({len(initial_sectors)} шт.)")
+    logging.info(f"✅ Сектора обновлены ({inserted} шт.)")
 
 # ---------- ОПЕРАЦИИ ----------
 def insert_operation(op):
@@ -156,7 +197,7 @@ def remove_name_override(ticker: str):
     conn.close()
     load_name_overrides()
 
-# ---------- СЕКТОРА ----------
+# ---------- СЕКТОРА (дополнительные функции) ----------
 def get_sector(ticker: str) -> str:
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
