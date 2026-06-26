@@ -40,6 +40,7 @@ def seed_overrides():
 
 # ---------- НАЧАЛЬНЫЕ СЕКТОРА ----------
 def seed_sectors():
+    """Заполняет таблицу секторов актуальными данными при каждом запуске."""
     initial_sectors = {
         "SBER": "Финансы",
         "ASTR": "ИТ",
@@ -74,8 +75,8 @@ def seed_sectors():
         "RU000A106UW3": "Облигации",
         "LQDT": "Фонд",
         "TDIV": "Фонд",
-        "TGLD@": "Фонд",
         "TGLD": "Фонд",
+        "TGLD@": "Фонд",   # ← тикер с @ тоже добавлен
         "VTBR": "Финансы",
         "X5": "Товары",
         "TPAY": "Фонд",
@@ -88,13 +89,13 @@ def seed_sectors():
     }
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM sectors")
-    if c.fetchone()[0] == 0:
-        for ticker, sector in initial_sectors.items():
-            c.execute("INSERT OR IGNORE INTO sectors (ticker, sector_name) VALUES (?, ?)", (ticker, sector))
-        conn.commit()
-        logging.info(f"✅ Начальные сектора добавлены в БД ({len(initial_sectors)} шт.)")
+    # Полностью очищаем таблицу и вставляем всё заново
+    c.execute("DELETE FROM sectors")
+    for ticker, sector in initial_sectors.items():
+        c.execute("INSERT OR REPLACE INTO sectors (ticker, sector_name) VALUES (?, ?)", (ticker, sector))
+    conn.commit()
     conn.close()
+    logging.info(f"✅ Сектора обновлены ({len(initial_sectors)} шт.)")
 
 # ---------- РАБОТА С СЕКТОРАМИ ----------
 def get_sector(ticker: str) -> str:

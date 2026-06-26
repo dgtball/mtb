@@ -98,6 +98,10 @@ async def api_portfolio(request: Request):
         if not data:
             return JSONResponse({"error": "Нет данных"}, status_code=404)
 
+        logging.info("API portfolio: позиции из портфеля:")
+        for pos in data["positions"]:
+            logging.info(f"  {pos['ticker']} -> сектор из БД: {db.get_sector(pos['ticker'])}")
+
         market_df = await get_market_data(bot_session)
         ticker_change = {}
         if not market_df.empty and 'SECID' in market_df.columns and 'CHANGEPERCENT' in market_df.columns:
