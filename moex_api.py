@@ -247,17 +247,20 @@ async def get_dividend_history(http_session, tickers):
     result = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-    # Для каждого тикера загружаем дивиденды
     for ticker in tickers:
-        # Сначала пробуем акции (dividends)
-        url = f"https://iss.moex.com/iss/securities/{ticker}/dividends.json?iss.meta=off"
+        logging.info(f"Загрузка дивидендов/купонов для {ticker}")
+
+        # Акции – дивиденды
+        url_div = f"https://iss.moex.com/iss/securities/{ticker}/dividends.json?iss.meta=off&board=TQBR"
         try:
-            async with http_session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            async with http_session.get(url_div, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                logging.info(f"Дивиденды {ticker} статус: {resp.status}")
                 if resp.status == 200:
                     json_data = await resp.json()
                     if 'dividends' in json_data:
                         cols = json_data['dividends']['columns']
                         data_rows = json_data['dividends']['data']
+                        logging.info(f"Дивиденды {ticker}: {len(data_rows)} записей, columns={cols}")
                         if 'registryclosingdate' in cols and 'dividendvalue' in cols:
                             date_idx = cols.index('registryclosingdate')
                             val_idx = cols.index('dividendvalue')
@@ -270,15 +273,17 @@ async def get_dividend_history(http_session, tickers):
         except Exception as e:
             logging.error(f"Ошибка загрузки дивидендов для {ticker}: {e}")
 
-        # Затем пробуем облигации (coupons)
-        url = f"https://iss.moex.com/iss/securities/{ticker}/coupons.json?iss.meta=off"
+        # Облигации – купоны
+        url_coupon = f"https://iss.moex.com/iss/securities/{ticker}/coupons.json?iss.meta=off&board=TQOB"
         try:
-            async with http_session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            async with http_session.get(url_coupon, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                logging.info(f"Купоны {ticker} статус: {resp.status}")
                 if resp.status == 200:
                     json_data = await resp.json()
                     if 'coupons' in json_data:
                         cols = json_data['coupons']['columns']
                         data_rows = json_data['coupons']['data']
+                        logging.info(f"Купоны {ticker}: {len(data_rows)} записей, columns={cols}")
                         if 'coupondate' in cols and 'couponvalue' in cols:
                             date_idx = cols.index('coupondate')
                             val_idx = cols.index('couponvalue')
@@ -291,6 +296,7 @@ async def get_dividend_history(http_session, tickers):
         except Exception as e:
             logging.error(f"Ошибка загрузки купонов для {ticker}: {e}")
 
+    logging.info(f"Всего загружено дивидендов/купонов: {len(result)}")
     return result
     
 def calc_period_change(df):
