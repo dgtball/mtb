@@ -7,9 +7,8 @@ import aiohttp
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
 import uvicorn
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION, TINKOFF_TOKEN, SECTOR_NAMES, MINI_APP_SECRET
 import db
@@ -17,7 +16,10 @@ from moex_api import load_instrument_names, ticker_to_sector
 from handlers import register_handlers, set_http_session, set_bot
 import scheduler
 
-# ---------- ЛОГИРОВАНИЕ ----------
+os.environ['TZ'] = 'Europe/Moscow'
+time.tzset()  # перезагружаем настройки времени с учётом TZ
+
+# ---------- ЛОГИРОВАНИЕ С UTC+3 ----------
 from logging.handlers import TimedRotatingFileHandler
 
 log_dir = os.path.join(os.getenv('DATA_DIR', '/app/data'), 'logs')
@@ -53,45 +55,7 @@ if not API_TOKEN:
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# ---------- LIFESPAN ----------
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global bot_session
-    db.init_db()
-    db.load_name_overrides()
-
-    bot_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
-    set_http_session(bot_session)
-    set_bot(bot)
-    scheduler.set_bot(bot)
-    scheduler.set_http_session(bot_session)
-
-    await load_instrument_names(bot_session)
-    register_handlers(dp)
-
-    webhook_url = f"https://mmvbbot3.bothost.tech/webhook"
-    await bot.set_webhook(webhook_url)
-    logging.info(f"✅ Вебхук установлен: {webhook_url}")
-
-    try:
-        await bot.send_message(MY_CHAT_ID, f"🚀 Бот перезапущен и готов к работе! ver: {VERSION}")
-    except Exception as e:
-        logging.error(f"❌ Не удалось отправить уведомление о запуске: {e}")
-
-    scheduler_task = asyncio.create_task(scheduler.scheduler_loop())
-    if TINKOFF_TOKEN:
-        portfolio_task = asyncio.create_task(portfolio_updater(bot_session))
-
-    yield
-
-    logging.info("Завершение работы...")
-    scheduler_task.cancel()
-    if TINKOFF_TOKEN:
-        portfolio_task.cancel()
-    await bot_session.close()
-    logging.info("✅ HTTP сессия закрыта")
-
-app = FastAPI(lifespan=lifespan)
+app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -133,7 +97,6 @@ async def api_portfolio(request: Request):
         if not data:
             return JSONResponse({"error": "Нет данных"}, status_code=404)
 
-        # Рыночные данные для дневных изменений
         market_df = await get_market_data(bot_session)
         ticker_change = {}
         if not market_df.empty and 'SECID' in market_df.columns and 'CHANGEPERCENT' in market_df.columns:
@@ -142,7 +105,7 @@ async def api_portfolio(request: Request):
 
         total_amount = data["total_amount"]
         positions = []
-        portfolio_equities = []  # для лидеров из портфеля
+        portfolio_equities = []
 
         for pos in data["positions"]:
             ticker = pos["ticker"]
@@ -150,19 +113,24 @@ async def api_portfolio(request: Request):
             value = pos["quantity"] * pos["price"]
             share = (value / total_amount * 100) if total_amount > 0 else 0
 
+            avg_price = pos["avg_price"]
+            if isinstance(avg_price, (int, float)):
+                avg_formatted = f"{avg_price:,.2f}".replace(',', ' ')
+            else:
+                avg_formatted = smart_price(avg_price)
+
             positions.append({
                 "ticker": ticker,
                 "name": pos["name"],
                 "price_formatted": smart_price(pos["price"]),
-                "avg_price_formatted": smart_price(pos["avg_price"]),
+                "avg_price_formatted": avg_formatted,
                 "value": value,
                 "yield_pct": pos["pos_yield_pct"],
                 "sector": sector_name,
                 "share": round(share, 1),
             })
 
-            # Собираем акции для лидеров
-            if pos["type_display"] == "Акции":
+            if sector_name not in ("Облигации", "Фонд", "Прочие"):
                 change = ticker_change.get(ticker)
                 if change is not None:
                     portfolio_equities.append({
@@ -171,14 +139,12 @@ async def api_portfolio(request: Request):
                         "change_pct": change,
                     })
 
-        # Сектора
         sectors = {}
         for p in positions:
             sec = p["sector"]
             sectors[sec] = sectors.get(sec, 0) + p["value"]
         sector_list = [{"name": k, "value": v} for k, v in sectors.items()]
 
-        # Лидеры роста/падения из портфеля
         portfolio_equities.sort(key=lambda x: x["change_pct"], reverse=True)
         portfolio_gainers = portfolio_equities[:5]
         portfolio_losers = portfolio_equities[-5:][::-1] if len(portfolio_equities) >= 5 else portfolio_equities[::-1]
@@ -229,17 +195,6 @@ async def api_override(request: Request):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
-@app.post("/webhook")
-async def telegram_webhook(request: Request):
-    try:
-        update = await request.json()
-        telegram_update = types.Update(**update)
-        await dp.feed_update(bot, telegram_update)
-        return JSONResponse({"status": "ok"})
-    except Exception as e:
-        logging.error(f"Webhook error: {e}")
-        return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
-
 # ---------- ФОНОВЫЙ ОБНОВИТЕЛЬ ПОРТФЕЛЯ ----------
 async def portfolio_updater(http_session):
     import scheduler as sched
@@ -260,6 +215,47 @@ async def portfolio_updater(http_session):
             logging.error(f"Ошибка автообновления портфеля: {e}")
             await asyncio.sleep(60)
 
-# ---------- ЗАПУСК ----------
+# ---------- ГЛАВНАЯ ФУНКЦИЯ ----------
+async def main():
+    global bot_session
+    db.init_db()
+    db.load_name_overrides()
+
+    bot_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
+    set_http_session(bot_session)
+    set_bot(bot)
+    scheduler.set_bot(bot)
+    scheduler.set_http_session(bot_session)
+
+    await load_instrument_names(bot_session)
+
+    register_handlers(dp)
+
+    await bot.delete_webhook(drop_pending_updates=True)
+    logging.info("✅ Вебхук удалён")
+
+    try:
+        await bot.send_message(MY_CHAT_ID, f"🚀 Бот перезапущен и готов к работе! ver: {VERSION}")
+    except Exception as e:
+        logging.error(f"❌ Не удалось отправить уведомление о запуске: {e}")
+
+    asyncio.create_task(scheduler.scheduler_loop())
+    if TINKOFF_TOKEN:
+        asyncio.create_task(portfolio_updater(bot_session))
+
+    config = uvicorn.Config(app, host="0.0.0.0", port=PORT, log_level="warning", lifespan="off")
+    server = uvicorn.Server(config)
+    loop = asyncio.get_event_loop()
+    loop.create_task(server.serve())
+    logging.info(f"✅ FastAPI сервер запущен на порту {PORT}")
+
+    await asyncio.sleep(2)
+    logging.info("✅ Запускаем polling...")
+    await dp.start_polling(bot)
+
+    # Закрываем сессию после остановки поллинга
+    await bot_session.close()
+    logging.info("✅ HTTP сессия закрыта")
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")
+    asyncio.run(main())
