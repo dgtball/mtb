@@ -141,6 +141,7 @@ async def api_portfolio(request: Request):
             positions.append({
                 "ticker": ticker,
                 "name": pos["name"],
+                "price": pos["price"],
                 "value": value,
                 "yield_pct": pos["pos_yield_pct"],
                 "sector": sector_name,

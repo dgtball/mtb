@@ -296,7 +296,325 @@
         tr.appendChild(tdActions);
         tbody.appendChild(tr);
       });
+    } catch(e) {<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Управление портфелем</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #121212;
+      --surface: #1e1e1e;
+      --text: #e0e0e0;
+      --text-secondary: #9e9e9e;
+      --accent: #2196F3;
+      --positive: #4caf50;
+      --negative: #f44336;
+      --border: #333;
+    }
+    body {
+      margin: 0;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 16px;
+    }
+    .tab {
+      flex: 1;
+      text-align: center;
+      padding: 12px;
+      cursor: pointer;
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+    .tab.active {
+      color: var(--accent);
+      border-bottom: 2px solid var(--accent);
+    }
+    .tab-content {
+      display: none;
+    }
+    .tab-content.active {
+      display: block;
+    }
+    .summary {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .summary-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .label {
+      color: var(--text-secondary);
+      font-size: 12px;
+    }
+    .value {
+      font-size: 24px;
+      font-weight: bold;
+    }
+    .change {
+      font-size: 16px;
+    }
+    .positive { color: var(--positive); }
+    .negative { color: var(--negative); }
+    .chart-container {
+      width: 100%;
+      max-width: 100%;
+      margin: 0 0 16px 0;
+      height: 250px;
+    }
+    .top-positions {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 16px;
+    }
+    th, td {
+      padding: 8px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    th {
+      color: var(--text-secondary);
+      font-size: 11px;
+    }
+    .actions button {
+      background: var(--negative);
+      border: none;
+      color: white;
+      padding: 4px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .add-form {
+      display: flex;
+      gap: 8px;
+      margin-top: 16px;
+      background: var(--surface);
+      padding: 12px;
+      border-radius: 12px;
+    }
+    .add-form input {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px;
+      border-radius: 6px;
+    }
+    .add-form button {
+      background: var(--accent);
+      border: none;
+      color: white;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .sector-details {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .sector-details.hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('portfolio')">Портфель</div>
+    <div class="tab" onclick="switchTab('overrides')">Переименования</div>
+  </div>
+
+  <div id="portfolio" class="tab-content active">
+    <div class="summary">
+      <div class="summary-row">
+        <span class="label">Стоимость портфеля</span>
+        <span class="value" id="totalAmount">—</span>
+      </div>
+      <div class="summary-row">
+        <span class="label">Изменение за день</span>
+        <span class="change" id="dailyChange">—</span>
+      </div>
+    </div>
+    <div class="chart-container">
+      <canvas id="sectorChart"></canvas>
+    </div>
+    <div id="sectorDetails" class="sector-details hidden"></div>
+    <div class="top-positions">
+      <h3>📈 Лидеры роста</h3>
+      <table id="gainersTable"><thead><tr><th>Название</th><th>Цена</th><th>Изм.</th></tr></thead><tbody></tbody></table>
+      <h3>📉 Лидеры падения</h3>
+      <table id="losersTable"><thead><tr><th>Название</th><th>Цена</th><th>Изм.</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <div id="overrides" class="tab-content">
+    <div class="add-form">
+      <input type="text" id="newTicker" placeholder="Тикер">
+      <input type="text" id="newName" placeholder="Новое название">
+      <button onclick="addOverride()">Добавить</button>
+    </div>
+    <table>
+      <thead><tr><th>Тикер</th><th>Название</th><th></th></tr></thead>
+      <tbody id="overridesTable"></tbody>
+    </table>
+  </div>
+
+<script>
+  const API_TOKEN = 'MINI_APP_TOKEN_PLACEHOLDER';
+  let sectorChart;
+  let allPositions = []; // сохраним позиции для детализации секторов
+
+  async function apiCall(endpoint, method = 'GET', body = null) {
+    const url = `${endpoint}?token=${encodeURIComponent(API_TOKEN)}`;
+    const options = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body) options.body = JSON.stringify(body);
+    const res = await fetch(url, options);
+    if (!res.ok) {
+      console.error('Request failed', res.status, await res.text());
+      throw new Error('Request failed');
+    }
+    return res.json();
+  }
+
+  async function loadPortfolio() {
+    try {
+      const data = await apiCall('/api/portfolio');
+      document.getElementById('totalAmount').textContent = data.total_amount.toLocaleString() + ' ₽';
+      const change = data.daily_change_pct;
+      const changeEl = document.getElementById('dailyChange');
+      if (change !== null && change !== undefined) {
+        changeEl.textContent = (change >= 0 ? '+' : '') + change.toFixed(2) + '%';
+        changeEl.className = 'change ' + (change >= 0 ? 'positive' : 'negative');
+      } else {
+        changeEl.textContent = '—';
+        changeEl.className = 'change';
+      }
+
+      allPositions = data.positions || [];
+
+      // Столбчатая диаграмма секторов (с долями в подписях)
+      if (data.sectors.length > 0) {
+        const totalValue = data.sectors.reduce((sum, s) => sum + s.value, 0);
+        const labels = data.sectors.map(s => {
+          const pct = totalValue > 0 ? ((s.value / totalValue) * 100).toFixed(1) : '0.0';
+          return `${s.name} (${pct}%)`;
+        });
+        const values = data.sectors.map(s => s.value);
+
+        const ctx = document.getElementById('sectorChart').getContext('2d');
+        if (sectorChart) sectorChart.destroy();
+        sectorChart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: labels,
+            datasets: [{
+              data: values,
+              backgroundColor: '#2196F3',
+              borderRadius: 4,
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false },
+            },
+            scales: {
+              x: {
+                ticks: { color: '#9e9e9e' },
+                grid: { display: false }
+              },
+              y: {
+                ticks: { 
+                  color: '#9e9e9e',
+                  callback: value => value.toLocaleString() + ' ₽'
+                },
+                grid: { color: '#333' }
+              }
+            },
+            onClick: (event, elements, chart) => {
+              if (elements.length > 0) {
+                const index = elements[0].index;
+                const rawLabel = chart.data.labels[index];
+                // Извлекаем чистое название сектора (без доли)
+                const sectorName = rawLabel.replace(/\s*\([\d.]+%\)\s*/, '');
+                showSectorDetails(sectorName);
+              }
+            }
+          }
+        });
+      }
+
+      // Топы роста/падения из позиций портфеля
+      if (allPositions.length > 0) {
+        const sorted = [...allPositions].sort((a, b) => b.yield_pct - a.yield_pct);
+        const topGainers = sorted.slice(0, 5);
+        const topLosers = sorted.slice(-5).reverse();
+
+        const gainersTable = document.getElementById('gainersTable').getElementsByTagName('tbody')[0];
+        const losersTable = document.getElementById('losersTable').getElementsByTagName('tbody')[0];
+        gainersTable.innerHTML = '';
+        losersTable.innerHTML = '';
+
+        topGainers.forEach(p => {
+          const row = gainersTable.insertRow();
+          const sign = p.yield_pct >= 0 ? '+' : '';
+          row.innerHTML = `<td>${p.name}</td><td>${p.price.toFixed(2)}</td><td style="color:#4caf50">${sign}${p.yield_pct.toFixed(2)}%</td>`;
+        });
+
+        topLosers.forEach(p => {
+          const row = losersTable.insertRow();
+          const sign = p.yield_pct >= 0 ? '+' : '';
+          row.innerHTML = `<td>${p.name}</td><td>${p.price.toFixed(2)}</td><td style="color:#f44336">${sign}${p.yield_pct.toFixed(2)}%</td>`;
+        });
+      }
+
     } catch(e) {
+      console.error(e);
+    }
+  }
+
+  function showSectorDetails(sectorName) {
+    const filtered = allPositions.filter(p => p.sector === sectorName);
+    const container = document.getElementById('sectorDetails');
+    if (filtered.length === 0) {
+      container.classList.add('hidden');
+      return;
+    }
+    let html = `<h3>${sectorName}</h3><table><thead><tr><th>Название</th><th>Цена</th><th>Доходность</th></tr></thead><tbody>`;
+    filtered.forEach(p => {
+      const sign = p.yield_pct >= 0 ? '+' : '';
+      html += `<tr><td>${p.name}</td><td>${p.price.toFixed(2)}</td><td style="color:${p.yield_pct >= 0 ? '#4caf50' : '#f44336'}">${sign}${p.yield_pct.toFixed(2)}%</td></tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+    container.classList.remove('hidden');
+  }
+
+  // ... остальные функции (loadOverrides, addOverride, removeOverride, switchTab) без изменений ...
+</script>
+</body>
+</html>
       console.error(e);
     }
   }
