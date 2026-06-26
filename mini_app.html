@@ -351,6 +351,11 @@
       document.getElementById('lastSync').textContent = status.last_sync ? new Date(status.last_sync).toLocaleString() : 'никогда';
 
       const data = await apiCall('/api/my-dividends');
+      if (data.error) {
+        console.error('API error:', data.error);
+        return;
+      }
+
       const ctx = document.getElementById('dividendChart').getContext('2d');
       if (dividendChart) dividendChart.destroy();
       
