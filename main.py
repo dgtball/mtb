@@ -200,47 +200,24 @@ async def api_override(request: Request):
         return JSONResponse({"status": "ok"})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
-        
-@app.get("/api/dividends")
-async def api_dividends(request: Request):
+
+# ---------- НОВЫЕ ЭНДПОИНТЫ ДЛЯ ПЕРСОНАЛЬНЫХ ВЫПЛАТ ----------
+@app.get("/api/my-dividends")
+async def api_my_dividends(request: Request):
     if not check_token(request):
         raise HTTPException(status_code=403, detail="Forbidden")
     try:
-        from tinkoff_api import get_portfolio_summary
-        from moex_api import get_dividend_history
-        data = await get_portfolio_summary(bot_session)
-        if not data:
-            return JSONResponse({"error": "Нет данных"}, status_code=404)
-
-        # Собираем уникальные тикеры акций и облигаций (исключаем фонды)
-        tickers = list(set(
-            p["ticker"] for p in data["positions"]
-            if p["type_display"] in ("Акции", "Облигации")
-        ))
-        
-        logging.info(f"Тикеры для дивидендов: {tickers}")
-
-        # Получаем историю дивидендов/купонов
-        dividends = await get_dividend_history(bot_session, tickers)
-        
-        logging.info(f"Загружено {len(dividends)} записей дивидендов/купонов")
-        if dividends:
-            logging.info(f"Пример первых 3: {dividends[:3]}")
-        else:
-            logging.warning("Дивиденды/купоны не загружены ни для одного тикера")
-
-        # Группируем по годам и тикерам
+        dividends = db.get_personal_dividends()
         yearly = {}
-        for div in dividends:
-            year = div["date"][:4]
-            ticker = div["ticker"]
+        for d in dividends:
+            year = d["date"][:4]
+            ticker = d["ticker"]
             if year not in yearly:
                 yearly[year] = {}
             if ticker not in yearly[year]:
                 yearly[year][ticker] = 0.0
-            yearly[year][ticker] += div["amount"]
+            yearly[year][ticker] += d["amount"]
 
-        # Преобразуем в массив для графика
         years = sorted(yearly.keys())
         datasets = []
         for ticker in sorted(set(t for y in yearly.values() for t in y.keys())):
@@ -249,13 +226,28 @@ async def api_dividends(request: Request):
                 "data": [yearly[y].get(ticker, 0) for y in years]
             })
 
-        return JSONResponse({
-            "years": years,
-            "datasets": datasets,
-        })
+        return JSONResponse({"years": years, "datasets": datasets})
     except Exception as e:
-        logging.error(f"API dividends: {e}")
+        logging.error(f"API my-dividends: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post("/api/sync")
+async def api_sync(request: Request):
+    if not check_token(request):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        from tinkoff_api import sync_operations
+        new_count = await sync_operations(bot_session)
+        return JSONResponse({"status": "ok", "new_operations": new_count})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get("/api/sync-status")
+async def api_sync_status(request: Request):
+    if not check_token(request):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    last_date = db.get_last_operation_date()
+    return JSONResponse({"last_sync": last_date})
 
 # ---------- ФОНОВЫЙ ОБНОВИТЕЛЬ ПОРТФЕЛЯ ----------
 async def portfolio_updater(http_session):
@@ -295,7 +287,6 @@ async def main():
     await bot.delete_webhook(drop_pending_updates=True)
     logging.info("✅ Вебхук удалён")
 
-    # Восстановление вчерашнего снэпшота, если сегодняшнего нет
     today_str = datetime.date.today().isoformat()
     if db.get_daily_snapshot(today_str) is None and TINKOFF_TOKEN:
         yesterday = datetime.date.today() - datetime.timedelta(days=1)
@@ -321,6 +312,11 @@ async def main():
         await bot.send_message(MY_CHAT_ID, f"🚀 Бот перезапущен и готов к работе! ver: {VERSION}")
     except Exception as e:
         logging.error(f"❌ Не удалось отправить уведомление о запуске: {e}")
+
+    # Первая синхронизация операций
+    if TINKOFF_TOKEN:
+        from tinkoff_api import sync_operations
+        asyncio.create_task(sync_operations(bot_session))
 
     asyncio.create_task(scheduler.scheduler_loop())
     if TINKOFF_TOKEN:

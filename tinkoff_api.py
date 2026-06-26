@@ -2,6 +2,7 @@ import logging
 import datetime
 import aiohttp
 from config import TINKOFF_TOKEN, TINKOFF_API_URL, NAME_OVERRIDES, ticker_to_name
+from moex_api import figi_to_ticker  # понадобится для сопоставления FIGI
 
 async def tinkoff_api_request(http_session, method: str, endpoint: str, params: dict = None) -> dict:
     if not TINKOFF_TOKEN:
@@ -146,44 +147,60 @@ async def get_portfolio_summary(http_session):
         logging.error(f"Ошибка портфеля: {e}")
         return None
 
-async def get_portfolio_snapshot(http_session, target_date: datetime.date) -> float | None:
-    """
-    Возвращает стоимость портфеля на конец указанного дня (по цене закрытия).
-    Использует GetOperations с фильтром по дате.
-    Если данных нет, возвращает None.
-    """
-    try:
-        accounts = await get_accounts(http_session)
-        if not accounts:
-            return None
-        account_id = accounts[0].get("id")
-        if not account_id:
-            return None
+async def sync_operations(http_session, from_date=None):
+    """Синхронизирует операции из T-Invest API в БД. Возвращает количество новых операций."""
+    accounts = await get_accounts(http_session)
+    if not accounts:
+        return 0
+    account_id = accounts[0].get("id")
+    if not account_id:
+        return 0
 
-        # Запрашиваем портфель на конец дня target_date
-        from_date = target_date
-        to_date = target_date + datetime.timedelta(days=1)
-        params = {
-            "accountId": account_id,
-            "from": from_date.isoformat(),
-            "to": to_date.isoformat(),
-            "state": "OPERATION_STATE_EXECUTED",
-            "figi": "",
-        }
-        data = await tinkoff_api_request(http_session, "POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetOperations", params=params)
-        operations = data.get("operations", [])
+    if from_date is None:
+        last_date = db.get_last_operation_date()
+        if last_date:
+            from_date = datetime.datetime.fromisoformat(last_date) + datetime.timedelta(seconds=1)
+        else:
+            from_date = datetime.datetime.now() - datetime.timedelta(days=365*5)
 
-        # Собираем позиции на основе последних операций перед закрытием (упрощённо)
-        # Так как API не даёт прямой исторический портфель, используем текущий портфель
-        # с корректировкой по истории сделок за день. Но для восстановления снэпшота
-        # проще сразу взять totalAmountPortfolio, если запросить портфель на дату
-        # через GetPortfolio за вчера. Однако GetPortfolio не поддерживает дату.
-        # Поэтому используем обходной путь: запросим позиции сейчас и вычтем изменения,
-        # произошедшие за target_date..сегодня. Но это сложно.
-        # Более надёжный способ: использовать GetOperations для получения суммы портфеля
-        # на конец дня, но API Т-Инвестиций не предоставляет такую возможность напрямую.
-        # Поэтому в качестве fallback возвращаем None, чтобы вызвался текущий снэпшот.
-        return None
-    except Exception as e:
-        logging.error(f"Ошибка получения исторического снэпшота: {e}")
-        return None
+    to_date = datetime.datetime.now()
+    params = {
+        "accountId": account_id,
+        "from": from_date.strftime("%Y-%m-%dT%H:%M:%S+03:00"),
+        "to": to_date.strftime("%Y-%m-%dT%H:%M:%S+03:00"),
+        "state": "OPERATION_STATE_EXECUTED"
+    }
+    data = await tinkoff_api_request(http_session, "POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetOperations", params=params)
+    operations = data.get("operations", [])
+
+    new_count = 0
+    for op in operations:
+        # Сопоставляем figi -> ticker, если ticker не задан
+        ticker = op.get("ticker")
+        if not ticker:
+            figi = op.get("figi")
+            if figi:
+                ticker = figi_to_ticker.get(figi)  # глобальный словарь из moex_api
+        op["ticker"] = ticker
+
+        # Пропускаем валютные операции (не RUB)
+        if op.get("currency", "RUB") != "RUB":
+            continue
+
+        db.insert_operation({
+            "id": op.get("id"),
+            "date": op.get("date"),
+            "type": op.get("type"),
+            "ticker": ticker,
+            "figi": op.get("figi"),
+            "instrument_type": op.get("instrumentType"),
+            "quantity": op.get("quantity"),
+            "payment": float(op.get("payment", {}).get("units", 0)) if op.get("payment") else 0,
+            "currency": op.get("currency", "RUB"),
+            "commission": float(op.get("commission", {}).get("units", 0)) if op.get("commission") else 0,
+            "name": op.get("name"),
+        })
+        new_count += 1
+
+    logging.info(f"Синхронизация операций: добавлено {new_count} новых записей")
+    return new_count

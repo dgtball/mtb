@@ -178,6 +178,12 @@ async def scheduler_loop():
             else:
                 portfolio_update_allowed = False
                 _active_day_message_id = None # сбрасываем, чтобы утром отправить новый топ, но старый не трогаем
+                
+            # Ежедневная синхронизация операций в 10:00
+            if hour == 10 and minute == 0:
+                if TINKOFF_TOKEN:
+                    from tinkoff_api import sync_operations
+                    asyncio.create_task(sync_operations(_http_session)
 
             # Пятница после 23:50
             if weekday == 4 and hour == 23 and minute >= 50:

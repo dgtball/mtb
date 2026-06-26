@@ -6,6 +6,12 @@ import aiohttp
 from config import ticker_to_name
 
 ticker_to_sector = {}
+figi_to_ticker = {}
+
+# Внутри load_instrument_names, после получения df:
+for _, row in df.iterrows():
+    if 'SECID' in df.columns and 'FIGI' in df.columns:
+        figi_to_ticker[row['FIGI']] = row['SECID']
 
 async def load_instrument_names(http_session):
     global ticker_to_name

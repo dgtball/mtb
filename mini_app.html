@@ -140,6 +140,25 @@
     .sector-details.hidden {
       display: none;
     }
+    .sync-status {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      font-size: 12px;
+    }
+    .sync-status button {
+      background: var(--accent);
+      border: none;
+      color: white;
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+    }
   </style>
 </head>
 <body>
@@ -147,7 +166,7 @@
   <div class="tabs">
     <div class="tab active" onclick="switchTab('portfolio')">Портфель</div>
     <div class="tab" onclick="switchTab('overrides')">Переименования</div>
-    <div class="tab" onclick="switchTab('dividends')">Дивиденды</div>
+    <div class="tab" onclick="switchTab('dividends')">Мои выплаты</div>
   </div>
 
   <div id="portfolio" class="tab-content active">
@@ -186,6 +205,10 @@
   </div>
 
   <div id="dividends" class="tab-content">
+    <div class="sync-status">
+      <span>Последняя синхронизация: <span id="lastSync">—</span></span>
+      <button onclick="syncOperations()">Синхронизировать</button>
+    </div>
     <div class="chart-container" style="height:400px">
       <canvas id="dividendChart"></canvas>
     </div>
@@ -322,9 +345,12 @@
     }
   }
 
-  async function loadDividends() {
+  async function loadMyDividends() {
     try {
-      const data = await apiCall('/api/dividends');
+      const status = await apiCall('/api/sync-status');
+      document.getElementById('lastSync').textContent = status.last_sync ? new Date(status.last_sync).toLocaleString() : 'никогда';
+
+      const data = await apiCall('/api/my-dividends');
       const ctx = document.getElementById('dividendChart').getContext('2d');
       if (dividendChart) dividendChart.destroy();
       
@@ -379,6 +405,15 @@
       });
     } catch(e) {
       console.error(e);
+    }
+  }
+
+  async function syncOperations() {
+    try {
+      await apiCall('/api/sync', 'POST');
+      loadMyDividends();
+    } catch(e) {
+      alert('Ошибка синхронизации');
     }
   }
 
@@ -459,11 +494,12 @@
   function switchTab(tab) {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    document.querySelector(`.tab:nth-child(${tab === 'portfolio' ? 1 : (tab === 'overrides' ? 2 : 3)})`).classList.add('active');
+    const tabIndex = { portfolio: 1, overrides: 2, dividends: 3 };
+    document.querySelector(`.tab:nth-child(${tabIndex[tab]})`).classList.add('active');
     document.getElementById(tab).classList.add('active');
     if (tab === 'portfolio') loadPortfolio();
     else if (tab === 'overrides') loadOverrides();
-    else if (tab === 'dividends') loadDividends();
+    else if (tab === 'dividends') loadMyDividends();
   }
 
   window.onload = () => loadPortfolio();
