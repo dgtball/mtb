@@ -118,11 +118,8 @@ async def api_portfolio(request: Request):
             value = pos["quantity"] * pos["price"]
             share = (value / total_amount * 100) if total_amount > 0 else 0
 
-            avg_price = pos["avg_price"]
-            if isinstance(avg_price, (int, float)):
-                avg_formatted = f"{avg_price:,.2f}".replace(',', ' ')
-            else:
-                avg_formatted = smart_price(avg_price)
+            # Средняя цена через smart_price
+            avg_formatted = smart_price(pos["avg_price"])
 
             positions.append({
                 "ticker": ticker,
@@ -135,7 +132,8 @@ async def api_portfolio(request: Request):
                 "share": round(share, 1),
             })
 
-            if sector_name not in ("Облигации", "Фонд", "Прочие"):
+            # Собираем акции для лидеров: не Прочие, не Фонд, не Облигации
+            if sector_name and sector_name not in ("Прочие", "Фонд", "Облигации"):
                 change = ticker_change.get(ticker)
                 if change is not None:
                     portfolio_equities.append({
@@ -143,6 +141,8 @@ async def api_portfolio(request: Request):
                         "price_formatted": smart_price(pos["price"]),
                         "change_pct": change,
                     })
+
+        logging.info(f"Собрано {len(portfolio_equities)} акций для лидеров")
 
         sectors = {}
         for p in positions:
