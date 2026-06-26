@@ -17,11 +17,11 @@ from moex_api import load_instrument_names, ticker_to_sector
 from handlers import register_handlers, set_http_session, set_bot
 import scheduler
 
-os.environ['TZ'] = 'Europe/Moscow'
-time.tzset()  # перезагружаем настройки времени с учётом TZ
-
-# ---------- ЛОГИРОВАНИЕ С UTC+3 ----------
+# ---------- ЛОГИРОВАНИЕ ----------
 from logging.handlers import TimedRotatingFileHandler
+
+os.environ['TZ'] = 'Europe/Moscow'
+time.tzset()
 
 log_dir = os.path.join(os.getenv('DATA_DIR', '/app/data'), 'logs')
 os.makedirs(log_dir, exist_ok=True)
@@ -66,7 +66,6 @@ app.add_middleware(
 
 # ---------- ПРОВЕРКА ТОКЕНА ----------
 def check_token(request: Request) -> bool:
-    """Проверяет секретный токен в заголовке X-Mini-App-Token."""
     token = request.headers.get("X-Mini-App-Token", "")
     return token == MINI_APP_SECRET
 
@@ -99,11 +98,7 @@ async def api_portfolio(request: Request):
         if not data:
             return JSONResponse({"error": "Нет данных"}, status_code=404)
 
-        # Рыночные данные для расчёта дневных изменений
         market_df = await get_market_data(bot_session)
-        logging.info(f"market_df columns: {list(market_df.columns)}")
-
-        # Построим словарь с изменениями, вычисленными самостоятельно
         ticker_change = {}
         if not market_df.empty and 'SECID' in market_df.columns and 'LAST' in market_df.columns and 'OPEN' in market_df.columns:
             for _, row in market_df.iterrows():
@@ -113,9 +108,6 @@ async def api_portfolio(request: Request):
                 if isinstance(last, (int, float)) and isinstance(open_price, (int, float)) and open_price != 0:
                     change = ((last - open_price) / open_price) * 100
                     ticker_change[secid] = change
-            logging.info(f"Дневные изменения рассчитаны для {len(ticker_change)} тикеров")
-        else:
-            logging.warning("Не удалось рассчитать дневные изменения – не хватает данных")
 
         total_amount = data["total_amount"]
         positions = []
@@ -140,9 +132,7 @@ async def api_portfolio(request: Request):
                 "share": round(share, 1),
             })
 
-            # Собираем акции (не Прочие, не Фонд, не Облигации)
             if sector_name and sector_name not in ("Прочие", "Фонд", "Облигации"):
-                # Используем рассчитанное дневное изменение, если есть, иначе общую доходность
                 change = ticker_change.get(ticker)
                 pct = change if change is not None else pos["pos_yield_pct"]
                 portfolio_equities.append({
@@ -151,7 +141,6 @@ async def api_portfolio(request: Request):
                     "change_pct": pct,
                 })
 
-        # Разделяем на рост и падение
         gainers_list = [p for p in portfolio_equities if p["change_pct"] > 0]
         losers_list = [p for p in portfolio_equities if p["change_pct"] < 0]
         gainers_list.sort(key=lambda x: x["change_pct"], reverse=True)
@@ -245,11 +234,32 @@ async def main():
     scheduler.set_http_session(bot_session)
 
     await load_instrument_names(bot_session)
-
     register_handlers(dp)
 
     await bot.delete_webhook(drop_pending_updates=True)
     logging.info("✅ Вебхук удалён")
+
+    # Восстановление вчерашнего снэпшота, если сегодняшнего нет
+    today_str = datetime.date.today().isoformat()
+    if db.get_daily_snapshot(today_str) is None and TINKOFF_TOKEN:
+        yesterday = datetime.date.today() - datetime.timedelta(days=1)
+        try:
+            from tinkoff_api import get_portfolio_snapshot
+            total = await get_portfolio_snapshot(bot_session, yesterday)
+            if total is not None:
+                db.set_daily_snapshot(today_str, total)
+                db.set_portfolio_value(total)
+                logging.info(f"Снэпшот портфеля на {today_str} восстановлен по закрытию {yesterday}: {total:.2f}")
+            else:
+                from tinkoff_api import get_portfolio_summary
+                data = await get_portfolio_summary(bot_session)
+                if data:
+                    total = data['total_amount']
+                    db.set_daily_snapshot(today_str, total)
+                    db.set_portfolio_value(total)
+                    logging.info(f"Снэпшот портфеля создан по текущей стоимости: {total:.2f}")
+        except Exception as e:
+            logging.error(f"Ошибка восстановления снэпшота: {e}")
 
     try:
         await bot.send_message(MY_CHAT_ID, f"🚀 Бот перезапущен и готов к работе! ver: {VERSION}")
@@ -270,7 +280,6 @@ async def main():
     logging.info("✅ Запускаем polling...")
     await dp.start_polling(bot)
 
-    # Закрываем сессию после остановки поллинга
     await bot_session.close()
     logging.info("✅ HTTP сессия закрыта")
 
