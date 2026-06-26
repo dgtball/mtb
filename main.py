@@ -113,9 +113,15 @@ async def api_portfolio(request: Request):
         positions = []
         portfolio_equities = []
 
+        # Диагностика
+        sample_logged = False
+
         for pos in data["positions"]:
             ticker = pos["ticker"]
             sector_name = db.get_sector(ticker)
+            if not sample_logged:
+                logging.info(f"DB sector for {ticker}: {sector_name!r}")
+                sample_logged = True   # только для первой позиции, чтобы не спамить
             value = pos["quantity"] * pos["price"]
             share = (value / total_amount * 100) if total_amount > 0 else 0
 
