@@ -239,39 +239,10 @@ async def main():
     await bot.delete_webhook(drop_pending_updates=True)
     logging.info("✅ Вебхук удалён")
 
-    today_str = datetime.date.today().isoformat()
-    if db.get_daily_snapshot(today_str) is None and TINKOFF_TOKEN:
-        yesterday = datetime.date.today() - datetime.timedelta(days=1)
-        try:
-            from tinkoff_api import get_portfolio_snapshot
-            total = await get_portfolio_snapshot(bot_session, yesterday)
-            if total is not None:
-                db.set_daily_snapshot(today_str, total)
-                db.set_portfolio_value(total)
-                logging.info(f"Снэпшот портфеля на {today_str} восстановлен по закрытию {yesterday}: {total:.2f}")
-            else:
-                from tinkoff_api import get_portfolio_summary
-                data = await get_portfolio_summary(bot_session)
-                if data:
-                    total = data['total_amount']
-                    db.set_daily_snapshot(today_str, total)
-                    db.set_portfolio_value(total)
-                    logging.info(f"Снэпшот портфеля создан по текущей стоимости: {total:.2f}")
-        except Exception as e:
-            logging.error(f"Ошибка восстановления снэпшота: {e}")
-
     try:
         await bot.send_message(MY_CHAT_ID, f"🚀 Бот перезапущен и готов к работе! ver: {VERSION}")
     except Exception as e:
         logging.error(f"❌ Не удалось отправить уведомление о запуске: {e}")
-
-    # Первая синхронизация операций
-    if TINKOFF_TOKEN:
-        try:
-            from tinkoff_api import sync_operations
-            asyncio.create_task(sync_operations(bot_session))
-        except Exception as e:
-            logging.error(f"Ошибка запуска первой синхронизации: {e}")
 
     asyncio.create_task(scheduler.scheduler_loop())
     if TINKOFF_TOKEN:
