@@ -98,16 +98,23 @@ async def api_portfolio(request: Request):
         if not data:
             return JSONResponse({"error": "Нет данных"}, status_code=404)
 
-        # Получаем рыночные данные для дневных изменений
+        # Рыночные данные для расчёта дневных изменений
         market_df = await get_market_data(bot_session)
         logging.info(f"market_df columns: {list(market_df.columns)}")
+
+        # Построим словарь с изменениями, вычисленными самостоятельно
         ticker_change = {}
-        if not market_df.empty and 'SECID' in market_df.columns and 'CHANGEPERCENT' in market_df.columns:
+        if not market_df.empty and 'SECID' in market_df.columns and 'LAST' in market_df.columns and 'OPEN' in market_df.columns:
             for _, row in market_df.iterrows():
-                ticker_change[row['SECID']] = row['CHANGEPERCENT']
-            logging.info(f"Дневные изменения загружены для {len(ticker_change)} тикеров")
+                secid = row['SECID']
+                last = row['LAST']
+                open_price = row['OPEN']
+                if isinstance(last, (int, float)) and isinstance(open_price, (int, float)) and open_price != 0:
+                    change = ((last - open_price) / open_price) * 100
+                    ticker_change[secid] = change
+            logging.info(f"Дневные изменения рассчитаны для {len(ticker_change)} тикеров")
         else:
-            logging.warning("CHANGEPERCENT не найден в market data – используем общую доходность")
+            logging.warning("Не удалось рассчитать дневные изменения – не хватает данных")
 
         total_amount = data["total_amount"]
         positions = []
@@ -134,8 +141,8 @@ async def api_portfolio(request: Request):
 
             # Собираем акции (не Прочие, не Фонд, не Облигации)
             if sector_name and sector_name not in ("Прочие", "Фонд", "Облигации"):
-                # Пытаемся получить дневное изменение, если нет – общую доходность
-                change = ticker_change.get(ticker) if ticker_change else None
+                # Используем рассчитанное дневное изменение, если есть, иначе общую доходность
+                change = ticker_change.get(ticker)
                 pct = change if change is not None else pos["pos_yield_pct"]
                 portfolio_equities.append({
                     "name": pos["name"],
@@ -143,11 +150,11 @@ async def api_portfolio(request: Request):
                     "change_pct": pct,
                 })
 
-        # Разделяем на рост и падение (только по знаку)
+        # Разделяем на рост и падение
         gainers_list = [p for p in portfolio_equities if p["change_pct"] > 0]
         losers_list = [p for p in portfolio_equities if p["change_pct"] < 0]
         gainers_list.sort(key=lambda x: x["change_pct"], reverse=True)
-        losers_list.sort(key=lambda x: x["change_pct"])  # от меньшего к большему
+        losers_list.sort(key=lambda x: x["change_pct"])
 
         portfolio_gainers = gainers_list[:5]
         portfolio_losers = losers_list[:5]
