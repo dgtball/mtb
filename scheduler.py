@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import logging
+import db
 import pandas as pd
 from aiogram import Bot
 from utils import get_moscow_time, get_local_time, get_session_status
