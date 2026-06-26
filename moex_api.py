@@ -254,22 +254,31 @@ async def get_dividend_history(http_session, tickers):
         url_div = f"https://iss.moex.com/iss/securities/{ticker}/dividends.json?iss.meta=off&board=TQBR"
         try:
             async with http_session.get(url_div, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                logging.info(f"Дивиденды {ticker} статус: {resp.status}")
                 if resp.status == 200:
                     json_data = await resp.json()
                     if 'dividends' in json_data:
                         cols = json_data['dividends']['columns']
                         data_rows = json_data['dividends']['data']
                         logging.info(f"Дивиденды {ticker}: {len(data_rows)} записей, columns={cols}")
-                        if 'registryclosingdate' in cols and 'dividendvalue' in cols:
-                            date_idx = cols.index('registryclosingdate')
-                            val_idx = cols.index('dividendvalue')
+                        # Ищем правильные индексы
+                        date_idx = None
+                        val_idx = None
+                        for idx, col in enumerate(cols):
+                            if col in ('registryclosedate', 'registryclosingdate'):
+                                date_idx = idx
+                            elif col in ('value', 'dividendvalue'):
+                                val_idx = idx
+                        if date_idx is not None and val_idx is not None:
                             for row in data_rows:
-                                result.append({
-                                    "ticker": ticker,
-                                    "date": row[date_idx],
-                                    "amount": float(row[val_idx]),
-                                })
+                                try:
+                                    amount = float(row[val_idx])
+                                    result.append({
+                                        "ticker": ticker,
+                                        "date": row[date_idx],
+                                        "amount": amount,
+                                    })
+                                except (ValueError, TypeError):
+                                    pass
         except Exception as e:
             logging.error(f"Ошибка загрузки дивидендов для {ticker}: {e}")
 
@@ -277,22 +286,31 @@ async def get_dividend_history(http_session, tickers):
         url_coupon = f"https://iss.moex.com/iss/securities/{ticker}/coupons.json?iss.meta=off&board=TQOB"
         try:
             async with http_session.get(url_coupon, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                logging.info(f"Купоны {ticker} статус: {resp.status}")
                 if resp.status == 200:
                     json_data = await resp.json()
                     if 'coupons' in json_data:
                         cols = json_data['coupons']['columns']
                         data_rows = json_data['coupons']['data']
                         logging.info(f"Купоны {ticker}: {len(data_rows)} записей, columns={cols}")
-                        if 'coupondate' in cols and 'couponvalue' in cols:
-                            date_idx = cols.index('coupondate')
-                            val_idx = cols.index('couponvalue')
+                        # Ищем правильные индексы
+                        date_idx = None
+                        val_idx = None
+                        for idx, col in enumerate(cols):
+                            if col in ('coupondate', 'registryclosedate', 'registryclosingdate'):
+                                date_idx = idx
+                            elif col in ('value', 'couponvalue'):
+                                val_idx = idx
+                        if date_idx is not None and val_idx is not None:
                             for row in data_rows:
-                                result.append({
-                                    "ticker": ticker,
-                                    "date": row[date_idx],
-                                    "amount": float(row[val_idx]),
-                                })
+                                try:
+                                    amount = float(row[val_idx])
+                                    result.append({
+                                        "ticker": ticker,
+                                        "date": row[date_idx],
+                                        "amount": amount,
+                                    })
+                                except (ValueError, TypeError):
+                                    pass
         except Exception as e:
             logging.error(f"Ошибка загрузки купонов для {ticker}: {e}")
 
