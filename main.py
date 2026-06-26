@@ -66,7 +66,8 @@ app.add_middleware(
 
 # ---------- ПРОВЕРКА ТОКЕНА ----------
 def check_token(request: Request) -> bool:
-    token = request.query_params.get("token", "")
+    """Проверяет секретный токен в заголовке X-Mini-App-Token."""
+    token = request.headers.get("X-Mini-App-Token", "")
     return token == MINI_APP_SECRET
 
 # ---------- FASTAPI РОУТЫ ----------

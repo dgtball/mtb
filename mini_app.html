@@ -192,11 +192,16 @@
   let sectorChart;
   let allPositions = [];
 
-  async function apiCall(endpoint, method = 'GET', body = null) {
-    const url = `${endpoint}?token=${encodeURIComponent(API_TOKEN)}`;
-    const options = { method, headers: { 'Content-Type': 'application/json' } };
+async function apiCall(endpoint, method = 'GET', body = null) {
+    const options = {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Mini-App-Token': API_TOKEN   // ← токен в заголовке
+      }
+    };
     if (body) options.body = JSON.stringify(body);
-    const res = await fetch(url, options);
+    const res = await fetch(endpoint, options);
     if (!res.ok) {
       console.error('Request failed', res.status, await res.text());
       throw new Error('Request failed');
