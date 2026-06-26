@@ -113,15 +113,9 @@ async def api_portfolio(request: Request):
         positions = []
         portfolio_equities = []
 
-        # Диагностика
-        sample_logged = False
-
         for pos in data["positions"]:
             ticker = pos["ticker"]
             sector_name = db.get_sector(ticker)
-            if not sample_logged:
-                logging.info(f"DB sector for {ticker}: {sector_name!r}")
-                sample_logged = True   # только для первой позиции, чтобы не спамить
             value = pos["quantity"] * pos["price"]
             share = (value / total_amount * 100) if total_amount > 0 else 0
 
@@ -207,64 +201,6 @@ async def api_override(request: Request):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
-# ---------- НОВЫЕ ЭНДПОИНТЫ ДЛЯ ПЕРСОНАЛЬНЫХ ВЫПЛАТ ----------
-@app.get("/api/my-dividends")
-async def api_my_dividends(request: Request):
-    if not check_token(request):
-        raise HTTPException(status_code=403, detail="Forbidden")
-    try:
-        dividends = db.get_personal_dividends()
-        yearly = {}
-        for d in dividends:
-            year = d["date"][:4]
-            ticker = d["ticker"]
-            if year not in yearly:
-                yearly[year] = {}
-            if ticker not in yearly[year]:
-                yearly[year][ticker] = 0.0
-            yearly[year][ticker] += d["amount"]
-
-        years = sorted(yearly.keys())
-        datasets = []
-        for ticker in sorted(set(t for y in yearly.values() for t in y.keys())):
-            datasets.append({
-                "label": ticker,
-                "data": [yearly[y].get(ticker, 0) for y in years]
-            })
-
-        return JSONResponse({"years": years, "datasets": datasets})
-    except Exception as e:
-        logging.error(f"API my-dividends: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-@app.get("/api/last-dividends")
-async def api_last_dividends(request: Request):
-    if not check_token(request):
-        raise HTTPException(status_code=403, detail="Forbidden")
-    try:
-        rows = db.get_last_dividends(10)
-        return JSONResponse(rows)
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-@app.post("/api/sync")
-async def api_sync(request: Request):
-    if not check_token(request):
-        raise HTTPException(status_code=403, detail="Forbidden")
-    try:
-        from tinkoff_api import sync_operations
-        new_count = await sync_operations(bot_session)
-        return JSONResponse({"status": "ok", "new_operations": new_count})
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-@app.get("/api/sync-status")
-async def api_sync_status(request: Request):
-    if not check_token(request):
-        raise HTTPException(status_code=403, detail="Forbidden")
-    last_date = db.get_last_operation_date()
-    return JSONResponse({"last_sync": last_date})
-
 # ---------- ФОНОВЫЙ ОБНОВИТЕЛЬ ПОРТФЕЛЯ ----------
 async def portfolio_updater(http_session):
     import scheduler as sched
@@ -331,12 +267,11 @@ async def main():
 
     # Первая синхронизация операций
     if TINKOFF_TOKEN:
-        logging.info("Запуск первой синхронизации операций...")
         try:
             from tinkoff_api import sync_operations
             asyncio.create_task(sync_operations(bot_session))
         except Exception as e:
-            logging.error(f"Ошибка запуска первой синхронизации: {e}", exc_info=True)
+            logging.error(f"Ошибка запуска первой синхронизации: {e}")
 
     asyncio.create_task(scheduler.scheduler_loop())
     if TINKOFF_TOKEN:

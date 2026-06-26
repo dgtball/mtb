@@ -140,25 +140,6 @@
     .sector-details.hidden {
       display: none;
     }
-    .sync-status {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      background: var(--surface);
-      border-radius: 12px;
-      padding: 12px 16px;
-      margin-bottom: 16px;
-      font-size: 12px;
-    }
-    .sync-status button {
-      background: var(--accent);
-      border: none;
-      color: white;
-      padding: 6px 14px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 12px;
-    }
   </style>
 </head>
 <body>
@@ -205,20 +186,12 @@
   </div>
 
   <div id="dividends" class="tab-content">
-    <div class="sync-status">
-      <span>Последняя синхронизация: <span id="lastSync">—</span></span>
-      <button onclick="syncOperations()">Синхронизировать</button>
-    </div>
-    <h3>Последние выплаты</h3>
-    <table id="lastDividendsTable">
-      <thead><tr><th>Дата</th><th>Тикер</th><th>Сумма</th></tr></thead>
-      <tbody></tbody>
-    </table>
+    <p style="color: #e0e0e0; text-align: center; padding-top: 40px;">Раздел временно отключён для диагностики</p>
   </div>
 
 <script>
   const API_TOKEN = 'MINI_APP_TOKEN_PLACEHOLDER';
-  let sectorChart, dividendChart;
+  let sectorChart;
   let allPositions = [];
 
   async function apiCall(endpoint, method = 'GET', body = null) {
@@ -347,36 +320,6 @@
     }
   }
 
-    async function loadMyDividends() {
-    try {
-      const status = await apiCall('/api/sync-status');
-      document.getElementById('lastSync').textContent = status.last_sync ? new Date(status.last_sync).toLocaleString() : 'никогда';
-
-      const data = await apiCall('/api/last-dividends');
-      const tbody = document.getElementById('lastDividendsTable').getElementsByTagName('tbody')[0];
-      tbody.innerHTML = '';
-      if (data && data.length > 0) {
-        data.forEach(d => {
-          const row = tbody.insertRow();
-          row.innerHTML = `<td>${new Date(d.date).toLocaleDateString()}</td><td>${d.ticker}</td><td>${d.amount.toLocaleString()} ₽</td>`;
-        });
-      } else {
-        tbody.innerHTML = '<tr><td colspan="3">Нет данных о выплатах</td></tr>';
-      }
-    } catch(e) {
-      console.error(e);
-    }
-  }
-
-  async function syncOperations() {
-    try {
-      await apiCall('/api/sync', 'POST');
-      loadMyDividends();
-    } catch(e) {
-      alert('Ошибка синхронизации');
-    }
-  }
-
   function showSectorDetails(sectorName) {
     const filtered = allPositions.filter(p => p.sector === sectorName);
     const container = document.getElementById('sectorDetails');
@@ -459,7 +402,7 @@
     document.getElementById(tab).classList.add('active');
     if (tab === 'portfolio') loadPortfolio();
     else if (tab === 'overrides') loadOverrides();
-    else if (tab === 'dividends') loadMyDividends();
+    // для dividends ничего не делаем
   }
 
   window.onload = () => loadPortfolio();
