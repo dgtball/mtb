@@ -237,6 +237,16 @@ async def api_my_dividends(request: Request):
         logging.error(f"API my-dividends: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
+@app.get("/api/last-dividends")
+async def api_last_dividends(request: Request):
+    if not check_token(request):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        rows = db.get_last_dividends(10)
+        return JSONResponse(rows)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 @app.post("/api/sync")
 async def api_sync(request: Request):
     if not check_token(request):

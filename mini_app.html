@@ -209,9 +209,11 @@
       <span>Последняя синхронизация: <span id="lastSync">—</span></span>
       <button onclick="syncOperations()">Синхронизировать</button>
     </div>
-    <div class="chart-container" style="height:400px">
-      <canvas id="dividendChart"></canvas>
-    </div>
+    <h3>Последние выплаты</h3>
+    <table id="lastDividendsTable">
+      <thead><tr><th>Дата</th><th>Тикер</th><th>Сумма</th></tr></thead>
+      <tbody></tbody>
+    </table>
   </div>
 
 <script>
@@ -345,69 +347,22 @@
     }
   }
 
-  async function loadMyDividends() {
+    async function loadMyDividends() {
     try {
       const status = await apiCall('/api/sync-status');
       document.getElementById('lastSync').textContent = status.last_sync ? new Date(status.last_sync).toLocaleString() : 'никогда';
 
-      const data = await apiCall('/api/my-dividends');
-      if (data.error) {
-        console.error('API error:', data.error);
-        return;
+      const data = await apiCall('/api/last-dividends');
+      const tbody = document.getElementById('lastDividendsTable').getElementsByTagName('tbody')[0];
+      tbody.innerHTML = '';
+      if (data && data.length > 0) {
+        data.forEach(d => {
+          const row = tbody.insertRow();
+          row.innerHTML = `<td>${new Date(d.date).toLocaleDateString()}</td><td>${d.ticker}</td><td>${d.amount.toLocaleString()} ₽</td>`;
+        });
+      } else {
+        tbody.innerHTML = '<tr><td colspan="3">Нет данных о выплатах</td></tr>';
       }
-
-      const ctx = document.getElementById('dividendChart').getContext('2d');
-      if (dividendChart) dividendChart.destroy();
-      
-      if (!data.years || data.years.length === 0) {
-        return;
-      }
-
-      const colors = ['#2196F3','#FF9800','#4CAF50','#F44336','#9C27B0','#00BCD4','#FFEB3B','#795548','#607D8B','#E91E63',
-                      '#3F51B5','#009688','#8BC34A','#CDDC39','#FFC107','#FF5722','#9E9E9E','#000000','#FFFFFF','#FF00FF'];
-
-      dividendChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: data.years,
-          datasets: data.datasets.map((ds, i) => ({
-            label: ds.label,
-            data: ds.data,
-            backgroundColor: colors[i % colors.length],
-            borderRadius: 4,
-          }))
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: {
-              position: 'bottom',
-              labels: { color: '#e0e0e0', font: { size: 10 } }
-            },
-            tooltip: {
-              callbacks: {
-                label: ctx => `${ctx.dataset.label}: ${ctx.raw.toLocaleString()} ₽`
-              }
-            }
-          },
-          scales: {
-            x: {
-              stacked: true,
-              ticks: { color: '#9e9e9e' },
-              grid: { display: false }
-            },
-            y: {
-              stacked: true,
-              ticks: { 
-                color: '#9e9e9e',
-                callback: value => value.toLocaleString() + ' ₽'
-              },
-              grid: { color: '#333' }
-            }
-          }
-        }
-      });
     } catch(e) {
       console.error(e);
     }

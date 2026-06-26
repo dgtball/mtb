@@ -136,6 +136,14 @@ def get_personal_dividends():
     rows = c.fetchall()
     conn.close()
     return [{"date": r[0], "ticker": r[1], "amount": r[2]} for r in rows]
+    
+def get_last_dividends(limit=10):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT date, ticker, payment FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date DESC LIMIT ?", (limit,))
+    rows = c.fetchall()
+    conn.close()
+    return [{"date": r[0], "ticker": r[1], "amount": r[2]} for r in rows]
 
 def get_last_operation_date():
     conn = sqlite3.connect(DB_PATH)
