@@ -127,6 +127,8 @@ async def api_portfolio(request: Request):
 
             # Средняя цена через smart_price
             avg_formatted = smart_price(pos["avg_price"])
+            if ticker == "ASTR":
+                logging.info(f"ASTR avg_price raw: {pos['avg_price']}, type: {type(pos['avg_price'])}")
 
             positions.append({
                 "ticker": ticker,
