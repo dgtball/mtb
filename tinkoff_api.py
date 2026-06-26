@@ -149,6 +149,7 @@ async def get_portfolio_summary(http_session):
         return None
 
 async def sync_operations(http_session, from_date=None):
+    """Синхронизирует операции из T-Invest API в БД. Возвращает количество новых операций."""
     logging.info("sync_operations started")
     try:
         accounts = await get_accounts(http_session)
@@ -176,15 +177,11 @@ async def sync_operations(http_session, from_date=None):
         }
         data = await tinkoff_api_request(http_session, "POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetOperations", params=params)
         operations = data.get("operations", [])
-        if operations:
-            first = operations[0]
-            logging.info(f"Первая операция: type={first.get('type')}, ticker={first.get('ticker')}, payment={first.get('payment')}")
-            logging.info(f"sync_operations: получено {len(operations)} операций от API")
+        logging.info(f"sync_operations: получено {len(operations)} операций от API")
 
-        # Диагностика: собираем уникальные типы операций
         unique_types = set()
         new_count = 0
-        for op in operations:
+        for i, op in enumerate(operations):
             op_type = op.get("type", "")
             unique_types.add(op_type)
             ticker = op.get("ticker")
@@ -196,6 +193,10 @@ async def sync_operations(http_session, from_date=None):
 
             if op.get("currency", "RUB") != "RUB":
                 continue
+
+            # Диагностика первых 3 операций
+            if i < 3:
+                logging.info(f"Попытка вставить операцию {i}: id={op.get('id')}, type={op_type}, ticker={ticker}, payment={op.get('payment')}")
 
             db.insert_operation({
                 "id": op.get("id"),
