@@ -8,11 +8,6 @@ from config import ticker_to_name
 ticker_to_sector = {}
 figi_to_ticker = {}
 
-# Внутри load_instrument_names, после получения df:
-for _, row in df.iterrows():
-    if 'SECID' in df.columns and 'FIGI' in df.columns:
-        figi_to_ticker[row['FIGI']] = row['SECID']
-
 async def load_instrument_names(http_session):
     global ticker_to_name
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -36,6 +31,8 @@ async def load_instrument_names(http_session):
                             ticker_to_name[row['SECID']] = clean_name
                             if 'SECTORID' in df.columns:
                                 ticker_to_sector[row['SECID']] = row['SECTORID']
+                            if 'FIGI' in df.columns:
+                                figi_to_ticker[row['FIGI']] = row['SECID']
     except Exception as e:
         logging.error(f"Ошибка загрузки акций: {e}")
 
@@ -59,6 +56,8 @@ async def load_instrument_names(http_session):
                                 ticker_to_name[row['SECID']] = clean_name
                                 if 'SECTORID' in df.columns:
                                     ticker_to_sector[row['SECID']] = row['SECTORID']
+                                if 'FIGI' in df.columns:
+                                    figi_to_ticker[row['FIGI']] = row['SECID']
         except Exception as e:
             logging.error(f"Ошибка загрузки облигаций {board}: {e}")
 
@@ -81,10 +80,12 @@ async def load_instrument_names(http_session):
                             ticker_to_name[row['SECID']] = clean_name
                             if 'SECTORID' in df.columns:
                                 ticker_to_sector[row['SECID']] = row['SECTORID']
+                            if 'FIGI' in df.columns:
+                                figi_to_ticker[row['FIGI']] = row['SECID']
     except Exception as e:
         logging.error(f"Ошибка загрузки ETF: {e}")
 
-    logging.info(f"✅ Загружено {len(ticker_to_name)} наименований и {len(ticker_to_sector)} секторов")
+    logging.info(f"✅ Загружено {len(ticker_to_name)} наименований, {len(ticker_to_sector)} секторов, {len(figi_to_ticker)} FIGI")
 
 async def get_market_data(http_session):
     url = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=marketdata,securities"
@@ -245,84 +246,6 @@ def get_top_movers(data, top_n=10, exclude_level3=True):
     losers = negative.nsmallest(top_n, 'CHANGEPERCENT') if not negative.empty else pd.DataFrame()
     return gainers, losers
 
-async def get_dividend_history(http_session, tickers):
-    """
-    Получает историю дивидендов (для акций) и купонов (для облигаций) из MOEX ISS.
-    Возвращает список словарей: [{"ticker": ..., "date": ..., "amount": ...}, ...]
-    """
-    result = []
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-
-    for ticker in tickers:
-        logging.info(f"Загрузка дивидендов/купонов для {ticker}")
-
-        # Акции – дивиденды
-        url_div = f"https://iss.moex.com/iss/securities/{ticker}/dividends.json?iss.meta=off&board=TQBR"
-        try:
-            async with http_session.get(url_div, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status == 200:
-                    json_data = await resp.json()
-                    if 'dividends' in json_data:
-                        cols = json_data['dividends']['columns']
-                        data_rows = json_data['dividends']['data']
-                        logging.info(f"Дивиденды {ticker}: {len(data_rows)} записей, columns={cols}")
-                        # Ищем правильные индексы
-                        date_idx = None
-                        val_idx = None
-                        for idx, col in enumerate(cols):
-                            if col in ('registryclosedate', 'registryclosingdate'):
-                                date_idx = idx
-                            elif col in ('value', 'dividendvalue'):
-                                val_idx = idx
-                        if date_idx is not None and val_idx is not None:
-                            for row in data_rows:
-                                try:
-                                    amount = float(row[val_idx])
-                                    result.append({
-                                        "ticker": ticker,
-                                        "date": row[date_idx],
-                                        "amount": amount,
-                                    })
-                                except (ValueError, TypeError):
-                                    pass
-        except Exception as e:
-            logging.error(f"Ошибка загрузки дивидендов для {ticker}: {e}")
-
-        # Облигации – купоны
-        url_coupon = f"https://iss.moex.com/iss/securities/{ticker}/coupons.json?iss.meta=off&board=TQOB"
-        try:
-            async with http_session.get(url_coupon, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status == 200:
-                    json_data = await resp.json()
-                    if 'coupons' in json_data:
-                        cols = json_data['coupons']['columns']
-                        data_rows = json_data['coupons']['data']
-                        logging.info(f"Купоны {ticker}: {len(data_rows)} записей, columns={cols}")
-                        # Ищем правильные индексы
-                        date_idx = None
-                        val_idx = None
-                        for idx, col in enumerate(cols):
-                            if col in ('coupondate', 'registryclosedate', 'registryclosingdate'):
-                                date_idx = idx
-                            elif col in ('value', 'couponvalue'):
-                                val_idx = idx
-                        if date_idx is not None and val_idx is not None:
-                            for row in data_rows:
-                                try:
-                                    amount = float(row[val_idx])
-                                    result.append({
-                                        "ticker": ticker,
-                                        "date": row[date_idx],
-                                        "amount": amount,
-                                    })
-                                except (ValueError, TypeError):
-                                    pass
-        except Exception as e:
-            logging.error(f"Ошибка загрузки купонов для {ticker}: {e}")
-
-    logging.info(f"Всего загружено дивидендов/купонов: {len(result)}")
-    return result
-    
 def calc_period_change(df):
     if df.empty:
         return pd.DataFrame()
