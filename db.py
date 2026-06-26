@@ -128,6 +128,9 @@ def insert_operation(op):
 def get_personal_dividends():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM operations WHERE type IN ('OPERATION_TYPE_DIVIDEND', 'OPERATION_TYPE_COUPON') AND currency = 'RUB'")
+    count = c.fetchone()[0]
+    logging.info(f"get_personal_dividends: найдено {count} выплат в БД")
     c.execute("SELECT date, ticker, payment FROM operations WHERE type IN ('OPERATION_TYPE_DIVIDEND', 'OPERATION_TYPE_COUPON') AND currency = 'RUB' ORDER BY date")
     rows = c.fetchall()
     conn.close()
