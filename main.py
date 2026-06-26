@@ -98,22 +98,16 @@ async def api_portfolio(request: Request):
         if not data:
             return JSONResponse({"error": "Нет данных"}, status_code=404)
 
-        logging.info("API portfolio: позиции из портфеля:")
-        for pos in data["positions"]:
-            logging.info(f"  {pos['ticker']} -> сектор из БД: {db.get_sector(pos['ticker'])}")
-
+        # Получаем рыночные данные для дневных изменений
         market_df = await get_market_data(bot_session)
+        logging.info(f"market_df columns: {list(market_df.columns)}")
         ticker_change = {}
         if not market_df.empty and 'SECID' in market_df.columns and 'CHANGEPERCENT' in market_df.columns:
             for _, row in market_df.iterrows():
                 ticker_change[row['SECID']] = row['CHANGEPERCENT']
-        logging.info(f"ticker_change keys count: {len(ticker_change)}")
-        # проверим первые 10 тикеров
-        sample = list(ticker_change.keys())[:10]
-        logging.info(f"ticker_change sample: {sample}")
-        # тикеры портфеля для сравнения
-        portfolio_tickers = [p["ticker"] for p in data["positions"]]
-        logging.info(f"portfolio tickers: {portfolio_tickers}")
+            logging.info(f"Дневные изменения загружены для {len(ticker_change)} тикеров")
+        else:
+            logging.warning("CHANGEPERCENT не найден в market data – используем общую доходность")
 
         total_amount = data["total_amount"]
         positions = []
@@ -125,10 +119,7 @@ async def api_portfolio(request: Request):
             value = pos["quantity"] * pos["price"]
             share = (value / total_amount * 100) if total_amount > 0 else 0
 
-            # Средняя цена через smart_price
             avg_formatted = smart_price(pos["avg_price"])
-            if ticker == "ASTR":
-                logging.info(f"ASTR avg_price raw: {pos['avg_price']}, type: {type(pos['avg_price'])}")
 
             positions.append({
                 "ticker": ticker,
@@ -141,25 +132,31 @@ async def api_portfolio(request: Request):
                 "share": round(share, 1),
             })
 
-            # Собираем акции для лидеров: не Прочие, не Фонд, не Облигации
+            # Собираем акции (не Прочие, не Фонд, не Облигации)
             if sector_name and sector_name not in ("Прочие", "Фонд", "Облигации"):
+                # Пытаемся получить дневное изменение, если нет – общую доходность
+                change = ticker_change.get(ticker) if ticker_change else None
+                pct = change if change is not None else pos["pos_yield_pct"]
                 portfolio_equities.append({
                     "name": pos["name"],
                     "price_formatted": smart_price(pos["price"]),
-                    "change_pct": pos["pos_yield_pct"],   # общая доходность
+                    "change_pct": pct,
                 })
 
-        logging.info(f"Собрано {len(portfolio_equities)} акций для лидеров")
+        # Разделяем на рост и падение (только по знаку)
+        gainers_list = [p for p in portfolio_equities if p["change_pct"] > 0]
+        losers_list = [p for p in portfolio_equities if p["change_pct"] < 0]
+        gainers_list.sort(key=lambda x: x["change_pct"], reverse=True)
+        losers_list.sort(key=lambda x: x["change_pct"])  # от меньшего к большему
+
+        portfolio_gainers = gainers_list[:5]
+        portfolio_losers = losers_list[:5]
 
         sectors = {}
         for p in positions:
             sec = p["sector"]
             sectors[sec] = sectors.get(sec, 0) + p["value"]
         sector_list = [{"name": k, "value": v} for k, v in sectors.items()]
-
-        portfolio_equities.sort(key=lambda x: x["change_pct"], reverse=True)
-        portfolio_gainers = portfolio_equities[:5]
-        portfolio_losers = portfolio_equities[-5:][::-1] if len(portfolio_equities) >= 5 else portfolio_equities[::-1]
 
         daily_change_pct = None
         today = datetime.date.today().isoformat()
