@@ -22,6 +22,7 @@ async def load_instrument_names(http_session):
                     columns = json_data['securities']['columns']
                     data_rows = json_data['securities']['data']
                     df = pd.DataFrame(data_rows, columns=columns)
+                    logging.info(f"Колонки для доски: {list(df.columns)}")
                     if 'SECID' in df.columns and 'SHORTNAME' in df.columns:
                         for _, row in df.iterrows():
                             raw_name = row['SHORTNAME']
@@ -47,6 +48,7 @@ async def load_instrument_names(http_session):
                         columns = json_data['securities']['columns']
                         data_rows = json_data['securities']['data']
                         df = pd.DataFrame(data_rows, columns=columns)
+                        logging.info(f"Колонки для доски: {list(df.columns)}")
                         if 'SECID' in df.columns and 'SHORTNAME' in df.columns:
                             for _, row in df.iterrows():
                                 raw_name = row['SHORTNAME']
@@ -71,6 +73,7 @@ async def load_instrument_names(http_session):
                     columns = json_data['securities']['columns']
                     data_rows = json_data['securities']['data']
                     df = pd.DataFrame(data_rows, columns=columns)
+                    logging.info(f"Колонки для доски: {list(df.columns)}")
                     if 'SECID' in df.columns and 'SHORTNAME' in df.columns:
                         for _, row in df.iterrows():
                             raw_name = row['SHORTNAME']

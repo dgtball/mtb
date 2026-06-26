@@ -173,6 +173,9 @@ async def sync_operations(http_session, from_date=None):
     }
     data = await tinkoff_api_request(http_session, "POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetOperations", params=params)
     operations = data.get("operations", [])
+    logging.info(f"Получено {len(operations)} операций от API")
+        if operations:
+            logging.info(f"Пример первой операции: {operations[0]}")
 
     new_count = 0
     for op in operations:
