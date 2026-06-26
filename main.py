@@ -217,9 +217,17 @@ async def api_dividends(request: Request):
             p["ticker"] for p in data["positions"]
             if p["type_display"] in ("Акции", "Облигации")
         ))
+        
+        logging.info(f"Тикеры для дивидендов: {tickers}")
 
         # Получаем историю дивидендов/купонов
         dividends = await get_dividend_history(bot_session, tickers)
+        
+        logging.info(f"Загружено {len(dividends)} записей дивидендов/купонов")
+        if dividends:
+            logging.info(f"Пример первых 3: {dividends[:3]}")
+        else:
+            logging.warning("Дивиденды/купоны не загружены ни для одного тикера")
 
         # Группируем по годам и тикерам
         yearly = {}

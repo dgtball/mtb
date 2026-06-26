@@ -189,7 +189,6 @@
     <div class="chart-container" style="height:400px">
       <canvas id="dividendChart"></canvas>
     </div>
-    <div id="dividendDetails" class="sector-details hidden"></div>
   </div>
 
 <script>
@@ -330,7 +329,6 @@
       if (dividendChart) dividendChart.destroy();
       
       if (!data.years || data.years.length === 0) {
-        document.getElementById('dividendDetails').classList.add('hidden');
         return;
       }
 
@@ -384,7 +382,79 @@
     }
   }
 
-  // ... остальные функции (showSectorDetails, loadOverrides, addOverride, removeOverride, switchTab) без изменений ...
+  function showSectorDetails(sectorName) {
+    const filtered = allPositions.filter(p => p.sector === sectorName);
+    const container = document.getElementById('sectorDetails');
+    if (filtered.length === 0) {
+      container.classList.add('hidden');
+      return;
+    }
+    let html = `<h3>${sectorName}</h3><table><thead><tr><th>Название</th><th>Средняя</th><th>Доходность</th><th>Доля</th></tr></thead><tbody>`;
+    filtered.forEach(p => {
+      const sign = p.yield_pct >= 0 ? '+' : '';
+      html += `<tr>
+        <td>${p.name}</td>
+        <td>${p.avg_price_formatted}</td>
+        <td style="color:${p.yield_pct >= 0 ? '#4caf50' : '#f44336'}">${sign}${p.yield_pct.toFixed(2)}%</td>
+        <td>${p.share}%</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+    container.classList.remove('hidden');
+  }
+
+  async function loadOverrides() {
+    try {
+      const data = await apiCall('/api/overrides');
+      const tbody = document.getElementById('overridesTable');
+      while (tbody.firstChild) {
+        tbody.removeChild(tbody.firstChild);
+      }
+      data.forEach(o => {
+        const tr = document.createElement('tr');
+        const tdTicker = document.createElement('td');
+        tdTicker.textContent = o.ticker;
+        tr.appendChild(tdTicker);
+        const tdName = document.createElement('td');
+        tdName.textContent = o.name;
+        tr.appendChild(tdName);
+        const tdActions = document.createElement('td');
+        tdActions.className = 'actions';
+        const btn = document.createElement('button');
+        btn.textContent = 'Удалить';
+        btn.addEventListener('click', () => removeOverride(o.ticker));
+        tdActions.appendChild(btn);
+        tr.appendChild(tdActions);
+        tbody.appendChild(tr);
+      });
+    } catch(e) {
+      console.error(e);
+    }
+  }
+
+  async function addOverride() {
+    const ticker = document.getElementById('newTicker').value.trim();
+    const name = document.getElementById('newName').value.trim();
+    if (!ticker || !name) return;
+    try {
+      await apiCall('/api/override', 'POST', { action: 'add', ticker, display_name: name });
+      document.getElementById('newTicker').value = '';
+      document.getElementById('newName').value = '';
+      loadOverrides();
+    } catch(e) {
+      alert('Ошибка');
+    }
+  }
+
+  async function removeOverride(ticker) {
+    try {
+      await apiCall('/api/override', 'POST', { action: 'remove', ticker });
+      loadOverrides();
+    } catch(e) {
+      alert('Ошибка');
+    }
+  }
 
   function switchTab(tab) {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
