@@ -101,7 +101,10 @@ async def get_portfolio_summary(http_session):
             figi = pos.get("figi")
             ticker = pos.get("ticker") or figi
             raw_name = ticker_to_name.get(ticker, ticker)
-            name = NAME_OVERRIDES.get(raw_name, raw_name)
+            # Сначала ищем переопределение по тикеру, потом по названию
+            name = NAME_OVERRIDES.get(ticker)
+            if name is None:
+                name = NAME_OVERRIDES.get(raw_name, raw_name)
 
             quantity = float(pos.get("quantity", {}).get("units", 0))
             price = float(pos.get("currentPrice", {}).get("units", 0))

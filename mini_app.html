@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Управление портфелем</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
   <style>
     :root {
       --bg: #121212;
@@ -74,7 +75,7 @@
       width: 100%;
       max-width: 100%;
       margin: 0 0 16px 0;
-      height: 250px;
+      height: 280px;
     }
     .top-positions {
       background: var(--surface);
@@ -214,14 +215,11 @@
 
       allPositions = data.positions || [];
 
-      // Столбчатая диаграмма секторов (с долями в подписях)
       if (data.sectors.length > 0) {
         const totalValue = data.sectors.reduce((sum, s) => sum + s.value, 0);
-        const labels = data.sectors.map(s => {
-          const pct = totalValue > 0 ? ((s.value / totalValue) * 100).toFixed(1) : '0.0';
-          return `${s.name} (${pct}%)`;
-        });
+        const labels = data.sectors.map(s => s.name);
         const values = data.sectors.map(s => s.value);
+        const percentages = data.sectors.map(s => totalValue > 0 ? (s.value / totalValue * 100) : 0);
 
         const ctx = document.getElementById('sectorChart').getContext('2d');
         if (sectorChart) sectorChart.destroy();
@@ -240,6 +238,14 @@
             maintainAspectRatio: false,
             plugins: {
               legend: { display: false },
+              tooltip: { enabled: false },
+              datalabels: {
+                anchor: 'end',
+                align: 'top',
+                color: '#e0e0e0',
+                font: { weight: 'bold', size: 11 },
+                formatter: (value, context) => percentages[context.dataIndex].toFixed(1) + '%',
+              }
             },
             scales: {
               x: {
@@ -257,16 +263,16 @@
             onClick: (event, elements, chart) => {
               if (elements.length > 0) {
                 const index = elements[0].index;
-                const rawLabel = chart.data.labels[index];
-                const sectorName = rawLabel.replace(/\s*\([\d.]+%\)\s*/, '');
+                const sectorName = chart.data.labels[index];
                 showSectorDetails(sectorName);
               }
             }
-          }
+          },
+          plugins: [ChartDataLabels]
         });
       }
 
-      // Топы роста/падения из позиций портфеля
+      // Топы роста/падения
       if (allPositions.length > 0) {
         const sorted = [...allPositions].sort((a, b) => b.yield_pct - a.yield_pct);
         const topGainers = sorted.slice(0, 5);
