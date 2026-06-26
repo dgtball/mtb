@@ -5,7 +5,6 @@ import pandas as pd
 from aiogram import types, Bot
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 
 from config import MY_CHAT_ID, TOP_N
 from utils import (
@@ -17,11 +16,9 @@ from moex_api import (
     get_market_data, get_historical_shares, get_historical_close,
     get_moex_index_info, get_top_movers, calc_period_change
 )
-from tinkoff_api import get_portfolio_summary
-from visualization import generate_portfolio_image
 from keyboards import main_keyboard
 
-# ---------- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ----------
+# ---------- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЫЕ ----------
 _http_session = None
 _bot = None
 
@@ -32,21 +29,6 @@ def set_http_session(session):
 def set_bot(bot_instance):
     global _bot
     _bot = bot_instance
-
-# ---------- FSM ----------
-class AddRemoveStates(StatesGroup):
-    waiting_for_rename = State()
-    waiting_for_unrename = State()
-
-# ---------- УДАЛЕНИЕ СООБЩЕНИЙ ----------
-async def safe_delete_message(chat_id: int, message_id: int):
-    try:
-        if _bot is None:
-            logging.error("Bot instance not set, cannot delete message")
-            return
-        await _bot.delete_message(chat_id, message_id)
-    except Exception as e:
-        logging.warning(f"Не удалось удалить сообщение {message_id}: {e}")
 
 # ---------- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ПОРТФЕЛЯ ----------
 def get_portfolio_change_str():
@@ -173,126 +155,18 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
     text = message.text
     logging.info(f"🔄 Обработка сообщения: '{text}'")
 
-    # ---------- ПОРТФЕЛЬ ----------
-    if text == "/portfolio" or text == "💼 Портфель":
-        logging.info("🔍 Обработка портфеля")
-        if not _http_session:
-            await message.answer("❌ Нет активной сессии.")
-            await safe_delete_message(message.chat.id, message.message_id)
-            return
-        loading_msg = await message.answer("⏳ Загружаю данные портфеля...")
-        try:
-            data = await get_portfolio_summary(_http_session)
-            if not data:
-                await loading_msg.delete()
-                await message.answer("❌ Не удалось получить данные портфеля.")
-                await safe_delete_message(message.chat.id, message.message_id)
-                return
-            total_amount = data['total_amount']
-            db.set_portfolio_value(total_amount)
-            today = datetime.date.today().isoformat()
-            snapshot = db.get_daily_snapshot(today)
-            if snapshot is not None and snapshot > 0:
-                daily_change = (total_amount - snapshot) / snapshot * 100
-            else:
-                daily_change = None 
-
-            img_buf = generate_portfolio_image(data, daily_change_pct=daily_change)
-            if img_buf is None:
-                await loading_msg.delete()
-                await message.answer("Нет данных для отображения.")
-                await safe_delete_message(message.chat.id, message.message_id)
-                return
-            from aiogram.types import BufferedInputFile
-            await message.answer_photo(
-                photo=BufferedInputFile(img_buf.getvalue(), filename="portfolio.png")
-            )
-            await loading_msg.delete()
-            await safe_delete_message(message.chat.id, message.message_id)
-        except Exception as e:
-            await loading_msg.delete()
-            logging.error(f"❌ Ошибка портфеля: {e}", exc_info=True)
-            await message.answer(f"❌ Ошибка: {e}")
-            await safe_delete_message(message.chat.id, message.message_id)
-        return
-
     # ---------- ТОП НЕДЕЛИ ----------
     if text == "📊 Топ недели":
         await send_top(message, 'week')
-        await safe_delete_message(message.chat.id, message.message_id)
         return
 
     # ---------- ТОП МЕСЯЦА ----------
     if text == "🗓️ Топ месяца":
         await send_top(message, 'month')
-        await safe_delete_message(message.chat.id, message.message_id)
-        return
-
-    # ---------- ПЕРЕИМЕНОВАТЬ ----------
-    if text == "✏️ Изменить":
-        await state.set_state(AddRemoveStates.waiting_for_rename)
-        prompt_msg = await message.answer(
-            "Введите тикер и новое название через пробел (например, SBER Сбер):"
-        )
-        await state.update_data(prompt_msg_id=prompt_msg.message_id)
-        await safe_delete_message(message.chat.id, message.message_id)
-        return
-
-    # ---------- УДАЛИТЬ ПЕРЕИМЕНОВАНИЕ ----------
-    if text == "🗑 Удалить имя":
-        await state.set_state(AddRemoveStates.waiting_for_unrename)
-        prompt_msg = await message.answer(
-            "Введите тикер, для которого нужно удалить переименование (например, SBER):"
-        )
-        await state.update_data(prompt_msg_id=prompt_msg.message_id)
-        await safe_delete_message(message.chat.id, message.message_id)
-        return
-
-    # ---------- ПОКАЗАТЬ ВСЕ ПЕРЕИМЕНОВАНИЯ ----------
-    if text == "📋 Список имён":
-        from config import NAME_OVERRIDES
-        if not NAME_OVERRIDES:
-            await message.answer("Переопределений названий пока нет.")
-        else:
-            lines = [f"{t} → {n}" for t, n in NAME_OVERRIDES.items()]
-            await message.answer("Текущие переименования:\n" + "\n".join(lines))
-        await safe_delete_message(message.chat.id, message.message_id)
-        return
-
-    # ---------- ОБРАБОТКА ТЕКСТА ПО СОСТОЯНИЮ ----------
-    current_state = await state.get_state()
-    if current_state == AddRemoveStates.waiting_for_rename.state:
-        data = await state.get_data()
-        prompt_msg_id = data.get('prompt_msg_id')
-        if prompt_msg_id:
-            await safe_delete_message(message.chat.id, prompt_msg_id)
-        await safe_delete_message(message.chat.id, message.message_id)
-        parts = message.text.strip().split(maxsplit=1)
-        if len(parts) < 2:
-            await message.answer("Нужно указать тикер и название через пробел. Например: SBER Сбер")
-            await state.clear()
-            return
-        ticker, new_name = parts[0].upper(), parts[1].strip()
-        db.set_name_override(ticker, new_name)
-        await message.answer(f"✅ Тикер {ticker} теперь будет отображаться как «{new_name}»")
-        await state.clear()
-        return
-
-    if current_state == AddRemoveStates.waiting_for_unrename.state:
-        data = await state.get_data()
-        prompt_msg_id = data.get('prompt_msg_id')
-        if prompt_msg_id:
-            await safe_delete_message(message.chat.id, prompt_msg_id)
-        await safe_delete_message(message.chat.id, message.message_id)
-        ticker = message.text.strip().upper()
-        db.remove_name_override(ticker)
-        await message.answer(f"✅ Переименование для {ticker} удалено (если было)")
-        await state.clear()
         return
 
     logging.info(f"FALLBACK: получено сообщение: '{text}'")
     await message.answer("Используйте кнопки меню.", reply_markup=main_keyboard())
-    await safe_delete_message(message.chat.id, message.message_id)
 
 def register_handlers(dp):
     dp.message.register(cmd_start, Command("start"))

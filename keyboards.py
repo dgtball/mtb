@@ -5,14 +5,7 @@ def main_keyboard():
     kb = [
         [KeyboardButton(text="📊 Топ недели"), KeyboardButton(text="🗓️ Топ месяца")],
     ]
-    if TINKOFF_TOKEN:
-        kb.append([KeyboardButton(text="💼 Портфель")])
     kb.append([
         KeyboardButton(text="🖥 Управление", web_app=WebAppInfo(url="https://mmvbbot3.bothost.tech/mini-app"))
-    ])
-    kb.append([
-        KeyboardButton(text="✏️ Изменить"),
-        KeyboardButton(text="🗑 Удалить имя"),
-        KeyboardButton(text="📋 Список имён")
     ])
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=False)
