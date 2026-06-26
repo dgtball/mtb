@@ -215,6 +215,7 @@
 
       allPositions = data.positions || [];
 
+      // Столбчатая диаграмма секторов
       if (data.sectors.length > 0) {
         const totalValue = data.sectors.reduce((sum, s) => sum + s.value, 0);
         const labels = data.sectors.map(s => s.name);
@@ -261,8 +262,19 @@
               }
             },
             onClick: (event, elements, chart) => {
+              let index = null;
               if (elements.length > 0) {
-                const index = elements[0].index;
+                index = elements[0].index;
+              } else {
+                // Клик по подписи – определяем индекс по координате X
+                const xScale = chart.scales.x;
+                const xPixel = event.x;
+                const labelIndex = xScale.getValueForPixel(xPixel);
+                if (typeof labelIndex === 'number' && labelIndex >= 0 && labelIndex < chart.data.labels.length) {
+                  index = Math.round(labelIndex);
+                }
+              }
+              if (index !== null) {
                 const sectorName = chart.data.labels[index];
                 showSectorDetails(sectorName);
               }
@@ -272,27 +284,25 @@
         });
       }
 
-      // Топы роста/падения
-      if (allPositions.length > 0) {
-        const sorted = [...allPositions].sort((a, b) => b.yield_pct - a.yield_pct);
-        const topGainers = sorted.slice(0, 5);
-        const topLosers = sorted.slice(-5).reverse();
+      // Лидеры роста/падения из портфеля (только акции, дневное изменение)
+      const gainersTable = document.getElementById('gainersTable').getElementsByTagName('tbody')[0];
+      const losersTable = document.getElementById('losersTable').getElementsByTagName('tbody')[0];
+      gainersTable.innerHTML = '';
+      losersTable.innerHTML = '';
 
-        const gainersTable = document.getElementById('gainersTable').getElementsByTagName('tbody')[0];
-        const losersTable = document.getElementById('losersTable').getElementsByTagName('tbody')[0];
-        gainersTable.innerHTML = '';
-        losersTable.innerHTML = '';
-
-        topGainers.forEach(p => {
+      if (data.portfolio_gainers) {
+        data.portfolio_gainers.forEach(item => {
           const row = gainersTable.insertRow();
-          const sign = p.yield_pct >= 0 ? '+' : '';
-          row.innerHTML = `<td>${p.name}</td><td>${p.price.toFixed(2)}</td><td style="color:#4caf50">${sign}${p.yield_pct.toFixed(2)}%</td>`;
+          const sign = item.change_pct >= 0 ? '+' : '';
+          row.innerHTML = `<td>${item.name}</td><td>${item.price_formatted}</td><td style="color:#4caf50">${sign}${item.change_pct.toFixed(2)}%</td>`;
         });
+      }
 
-        topLosers.forEach(p => {
+      if (data.portfolio_losers) {
+        data.portfolio_losers.forEach(item => {
           const row = losersTable.insertRow();
-          const sign = p.yield_pct >= 0 ? '+' : '';
-          row.innerHTML = `<td>${p.name}</td><td>${p.price.toFixed(2)}</td><td style="color:#f44336">${sign}${p.yield_pct.toFixed(2)}%</td>`;
+          const sign = item.change_pct >= 0 ? '+' : '';
+          row.innerHTML = `<td>${item.name}</td><td>${item.price_formatted}</td><td style="color:#f44336">${sign}${item.change_pct.toFixed(2)}%</td>`;
         });
       }
 
@@ -308,10 +318,15 @@
       container.classList.add('hidden');
       return;
     }
-    let html = `<h3>${sectorName}</h3><table><thead><tr><th>Название</th><th>Цена</th><th>Доходность</th></tr></thead><tbody>`;
+    let html = `<h3>${sectorName}</h3><table><thead><tr><th>Название</th><th>Средняя</th><th>Доходность</th><th>Доля</th></tr></thead><tbody>`;
     filtered.forEach(p => {
       const sign = p.yield_pct >= 0 ? '+' : '';
-      html += `<tr><td>${p.name}</td><td>${p.price.toFixed(2)}</td><td style="color:${p.yield_pct >= 0 ? '#4caf50' : '#f44336'}">${sign}${p.yield_pct.toFixed(2)}%</td></tr>`;
+      html += `<tr>
+        <td>${p.name}</td>
+        <td>${p.avg_price_formatted}</td>
+        <td style="color:${p.yield_pct >= 0 ? '#4caf50' : '#f44336'}">${sign}${p.yield_pct.toFixed(2)}%</td>
+        <td>${p.share}%</td>
+      </tr>`;
     });
     html += '</tbody></table>';
     container.innerHTML = html;

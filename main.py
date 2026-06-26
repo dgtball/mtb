@@ -126,70 +126,76 @@ async def api_portfolio(request: Request):
         raise HTTPException(status_code=403, detail="Forbidden")
     try:
         from tinkoff_api import get_portfolio_summary
-        from moex_api import get_market_data, get_top_movers
+        from moex_api import get_market_data
+        from utils import smart_price
 
-        # Данные портфеля
         data = await get_portfolio_summary(bot_session)
         if not data:
             return JSONResponse({"error": "Нет данных"}, status_code=404)
 
+        # Рыночные данные для дневных изменений
+        market_df = await get_market_data(bot_session)
+        ticker_change = {}
+        if not market_df.empty and 'SECID' in market_df.columns and 'CHANGEPERCENT' in market_df.columns:
+            for _, row in market_df.iterrows():
+                ticker_change[row['SECID']] = row['CHANGEPERCENT']
+
+        total_amount = data["total_amount"]
         positions = []
+        portfolio_equities = []  # для лидеров из портфеля
+
         for pos in data["positions"]:
             ticker = pos["ticker"]
-            sector_name = db.get_sector(ticker)          # из БД
+            sector_name = db.get_sector(ticker)
             value = pos["quantity"] * pos["price"]
+            share = (value / total_amount * 100) if total_amount > 0 else 0
+
             positions.append({
                 "ticker": ticker,
                 "name": pos["name"],
-                "price": pos["price"],
+                "price_formatted": smart_price(pos["price"]),
+                "avg_price_formatted": smart_price(pos["avg_price"]),
                 "value": value,
                 "yield_pct": pos["pos_yield_pct"],
                 "sector": sector_name,
+                "share": round(share, 1),
             })
 
+            # Собираем акции для лидеров
+            if pos["type_display"] == "Акции":
+                change = ticker_change.get(ticker)
+                if change is not None:
+                    portfolio_equities.append({
+                        "name": pos["name"],
+                        "price_formatted": smart_price(pos["price"]),
+                        "change_pct": change,
+                    })
+
+        # Сектора
         sectors = {}
         for p in positions:
             sec = p["sector"]
             sectors[sec] = sectors.get(sec, 0) + p["value"]
         sector_list = [{"name": k, "value": v} for k, v in sectors.items()]
 
-        # Топы роста/падения за день
-        market_df = await get_market_data(bot_session)
-        gainers, losers = get_top_movers(market_df, top_n=5) if not market_df.empty else (None, None)
-
-        top_gainers = []
-        if gainers is not None and not gainers.empty:
-            for _, row in gainers.iterrows():
-                top_gainers.append({
-                    "ticker": row.get("SECID", ""),
-                    "name": row.get("SHORTNAME", ""),
-                    "price": row.get("LAST", 0),
-                    "change_pct": row.get("CHANGEPERCENT", 0),
-                })
-
-        top_losers = []
-        if losers is not None and not losers.empty:
-            for _, row in losers.iterrows():
-                top_losers.append({
-                    "ticker": row.get("SECID", ""),
-                    "name": row.get("SHORTNAME", ""),
-                    "price": row.get("LAST", 0),
-                    "change_pct": row.get("CHANGEPERCENT", 0),
-                })
+        # Лидеры роста/падения из портфеля
+        portfolio_equities.sort(key=lambda x: x["change_pct"], reverse=True)
+        portfolio_gainers = portfolio_equities[:5]
+        portfolio_losers = portfolio_equities[-5:][::-1] if len(portfolio_equities) >= 5 else portfolio_equities[::-1]
 
         daily_change_pct = None
         today = datetime.date.today().isoformat()
         snapshot = db.get_daily_snapshot(today)
         if snapshot is not None and snapshot > 0:
-            daily_change_pct = (data["total_amount"] - snapshot) / snapshot * 100
+            daily_change_pct = (total_amount - snapshot) / snapshot * 100
 
         return JSONResponse({
-            "total_amount": data["total_amount"],
+            "total_amount": total_amount,
             "daily_change_pct": daily_change_pct,
             "positions": positions,
             "sectors": sector_list,
-            "top_gainers": top_gainers,
-            "top_losers": top_losers,
+            "portfolio_gainers": portfolio_gainers,
+            "portfolio_losers": portfolio_losers,
         })
     except Exception as e:
         logging.error(f"API portfolio: {e}")
