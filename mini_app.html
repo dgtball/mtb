@@ -80,31 +80,19 @@
       border-radius: 12px;
       padding: 16px;
     }
-    .position-item {
-      display: flex;
-      justify-content: space-between;
-      padding: 8px 0;
-      border-bottom: 1px solid var(--border);
-    }
-    .position-name {
-      flex: 1;
-    }
-    .position-value {
-      text-align: right;
-      margin-left: 12px;
-    }
     table {
       width: 100%;
       border-collapse: collapse;
+      margin-bottom: 16px;
     }
     th, td {
-      padding: 10px;
+      padding: 8px;
       text-align: left;
       border-bottom: 1px solid var(--border);
     }
     th {
       color: var(--text-secondary);
-      font-size: 12px;
+      font-size: 11px;
     }
     .actions button {
       background: var(--negative);
@@ -161,7 +149,12 @@
     <div class="chart-container">
       <canvas id="sectorChart"></canvas>
     </div>
-    <div class="top-positions" id="topPositions"></div>
+    <div class="top-positions">
+      <h3>📈 Лидеры роста</h3>
+      <table id="gainersTable"><thead><tr><th>Тикер</th><th>Цена</th><th>Изм.</th></tr></thead><tbody></tbody></table>
+      <h3>📉 Лидеры падения</h3>
+      <table id="losersTable"><thead><tr><th>Тикер</th><th>Цена</th><th>Изм.</th></tr></thead><tbody></tbody></table>
+    </div>
   </div>
 
   <div id="overrides" class="tab-content">
@@ -182,7 +175,6 @@
   let sectorChart;
 
   async function apiCall(endpoint, method = 'GET', body = null) {
-    // Добавляем токен как параметр запроса
     const url = `${endpoint}?token=${encodeURIComponent(API_TOKEN)}`;
     const options = { method, headers: { 'Content-Type': 'application/json' } };
     if (body) options.body = JSON.stringify(body);
@@ -227,17 +219,26 @@
         });
       }
 
-      const topPos = data.positions.sort((a,b) => b.value - a.value).slice(0, 5);
-      let html = '<h3 style="margin-top:0">Топ-5 позиций</h3>';
-      topPos.forEach(p => {
-        const sign = p.yield_pct >= 0 ? '+' : '';
-        html += `
-          <div class="position-item">
-            <span class="position-name">${p.name}</span>
-            <span class="position-value">${p.value.toLocaleString()} ₽ <br><span class="${p.yield_pct >= 0 ? 'positive' : 'negative'}">${sign}${p.yield_pct.toFixed(1)}%</span></span>
-          </div>`;
-      });
-      document.getElementById('topPositions').innerHTML = html;
+      // Заполняем таблицы роста и падения
+      const gainersTable = document.getElementById('gainersTable').getElementsByTagName('tbody')[0];
+      const losersTable = document.getElementById('losersTable').getElementsByTagName('tbody')[0];
+      gainersTable.innerHTML = '';
+      losersTable.innerHTML = '';
+
+      if (data.top_gainers) {
+        data.top_gainers.forEach(item => {
+          const row = gainersTable.insertRow();
+          row.innerHTML = `<td>${item.ticker}</td><td>${item.price.toFixed(2)}</td><td style="color:#4caf50">+${item.change_pct.toFixed(2)}%</td>`;
+        });
+      }
+
+      if (data.top_losers) {
+        data.top_losers.forEach(item => {
+          const row = losersTable.insertRow();
+          row.innerHTML = `<td>${item.ticker}</td><td>${item.price.toFixed(2)}</td><td style="color:#f44336">${item.change_pct.toFixed(2)}%</td>`;
+        });
+      }
+
     } catch(e) {
       console.error(e);
     }
@@ -247,22 +248,17 @@
     try {
       const data = await apiCall('/api/overrides');
       const tbody = document.getElementById('overridesTable');
-      // Очищаем таблицу
       while (tbody.firstChild) {
         tbody.removeChild(tbody.firstChild);
       }
-      // Строим строки безопасно через DOM
       data.forEach(o => {
         const tr = document.createElement('tr');
-
         const tdTicker = document.createElement('td');
         tdTicker.textContent = o.ticker;
         tr.appendChild(tdTicker);
-
         const tdName = document.createElement('td');
         tdName.textContent = o.name;
         tr.appendChild(tdName);
-
         const tdActions = document.createElement('td');
         tdActions.className = 'actions';
         const btn = document.createElement('button');
@@ -270,7 +266,6 @@
         btn.addEventListener('click', () => removeOverride(o.ticker));
         tdActions.appendChild(btn);
         tr.appendChild(tdActions);
-
         tbody.appendChild(tr);
       });
     } catch(e) {

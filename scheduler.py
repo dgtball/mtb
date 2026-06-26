@@ -144,6 +144,19 @@ async def scheduler_loop():
                         text = format_message(gainers, losers, index_info, update_time, session_status, portfolio_line)
                         sent_msg = await _bot.send_message(MY_CHAT_ID, text, parse_mode="HTML")
                         _active_day_message_id = sent_msg.message_id
+                        # Страховка: если снэпшот за сегодня отсутствует, создаём сейчас
+                        today_str = today.isoformat()
+                        if db.get_daily_snapshot(today_str) is None:
+                            try:
+                                from tinkoff_api import get_portfolio_summary
+                                data = await get_portfolio_summary(_http_session)
+                                if data:
+                                    total = data['total_amount']
+                                    db.set_daily_snapshot(today_str, total)
+                                    db.set_portfolio_value(total)
+                                    logging.info(f"Снэпшот портфеля восстановлен за {today_str}: {total:.2f}")
+                            except Exception as e:
+                                logging.error(f"Не удалось создать страховочный снэпшот: {e}")
                     await asyncio.sleep(day_update_interval)
                     continue
                 else:

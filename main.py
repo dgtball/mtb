@@ -126,6 +126,9 @@ async def api_portfolio(request: Request):
         raise HTTPException(status_code=403, detail="Forbidden")
     try:
         from tinkoff_api import get_portfolio_summary
+        from moex_api import get_market_data, get_top_movers
+
+        # Данные портфеля
         data = await get_portfolio_summary(bot_session)
         if not data:
             return JSONResponse({"error": "Нет данных"}, status_code=404)
@@ -133,17 +136,45 @@ async def api_portfolio(request: Request):
         positions = []
         for pos in data["positions"]:
             ticker = pos["ticker"]
+            sector_name = db.get_sector(ticker)          # из БД
             value = pos["quantity"] * pos["price"]
             positions.append({
                 "ticker": ticker,
                 "name": pos["name"],
                 "value": value,
                 "yield_pct": pos["pos_yield_pct"],
-                "sector": "Прочие",
+                "sector": sector_name,
             })
 
-        sectors = {"Прочие": sum(p["value"] for p in positions)}
+        sectors = {}
+        for p in positions:
+            sec = p["sector"]
+            sectors[sec] = sectors.get(sec, 0) + p["value"]
         sector_list = [{"name": k, "value": v} for k, v in sectors.items()]
+
+        # Топы роста/падения за день
+        market_df = await get_market_data(bot_session)
+        gainers, losers = get_top_movers(market_df, top_n=5) if not market_df.empty else (None, None)
+
+        top_gainers = []
+        if gainers is not None and not gainers.empty:
+            for _, row in gainers.iterrows():
+                top_gainers.append({
+                    "ticker": row.get("SECID", ""),
+                    "name": row.get("SHORTNAME", ""),
+                    "price": row.get("LAST", 0),
+                    "change_pct": row.get("CHANGEPERCENT", 0),
+                })
+
+        top_losers = []
+        if losers is not None and not losers.empty:
+            for _, row in losers.iterrows():
+                top_losers.append({
+                    "ticker": row.get("SECID", ""),
+                    "name": row.get("SHORTNAME", ""),
+                    "price": row.get("LAST", 0),
+                    "change_pct": row.get("CHANGEPERCENT", 0),
+                })
 
         daily_change_pct = None
         today = datetime.date.today().isoformat()
@@ -156,6 +187,8 @@ async def api_portfolio(request: Request):
             "daily_change_pct": daily_change_pct,
             "positions": positions,
             "sectors": sector_list,
+            "top_gainers": top_gainers,
+            "top_losers": top_losers,
         })
     except Exception as e:
         logging.error(f"API portfolio: {e}")

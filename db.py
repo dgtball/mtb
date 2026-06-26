@@ -12,10 +12,14 @@ def init_db():
     # Таблица состояния портфеля
     c.execute('''CREATE TABLE IF NOT EXISTS portfolio_state
                  (key TEXT PRIMARY KEY, value REAL)''')
+    # Новая таблица секторов
+    c.execute('''CREATE TABLE IF NOT EXISTS sectors
+                 (ticker TEXT PRIMARY KEY, sector_name TEXT)''')
     conn.commit()
     conn.close()
     logging.info(f"✅ База данных инициализирована: {DB_PATH}")
     seed_overrides()
+    seed_sectors()
 
 # ---------- НАЧАЛЬНЫЕ ПЕРЕОПРЕДЕЛЕНИЯ НАЗВАНИЙ ----------
 def seed_overrides():
@@ -32,6 +36,86 @@ def seed_overrides():
             c.execute("INSERT OR IGNORE INTO name_overrides (ticker, display_name) VALUES (?, ?)", (ticker, display_name))
         conn.commit()
         logging.info("✅ Новые переопределения добавлены в БД")
+    conn.close()
+
+# ---------- НАЧАЛЬНЫЕ СЕКТОРА ----------
+def seed_sectors():
+    initial_sectors = {
+        "SBER": "Финансы",
+        "ASTR": "ИТ",
+        "CHMF": "Металл",
+        "DELI": "Транспорт",
+        "FIXR": "Товары",
+        "FLOT": "Транспорт",
+        "GAZP": "Нефтегаз",
+        "HNFG": "Товары",
+        "LKOH": "Нефтегаз",
+        "MGNT": "Товары",
+        "MTLR": "Металл",
+        "NVTK": "Нефтегаз",
+        "ROSN": "Нефтегаз",
+        "RTKM": "ИТ",
+        "SMLT": "Стройка",
+        "SOFL": "ИТ",
+        "WUSH": "Транспорт",
+        "TATNP": "Нефтегаз",
+        "TRNFP": "Нефтегаз",
+        "MDMG": "Медицина",
+        "T": "Финансы",
+        "VKCO": "ИТ",
+        "YDEX": "ИТ",
+        "SU26233RMFS5": "Облигации",
+        "SU26238RMFS4": "Облигации",
+        "SU26240RMFS0": "Облигации",
+        "SU26245RMFS9": "Облигации",
+        "SU26246RMFS7": "Облигации",
+        "SU26247RMFS5": "Облигации",
+        "SU26248RMFS3": "Облигации",
+        "RU000A106UW3": "Облигации",
+        "LQDT": "Фонд",
+        "TDIV": "Фонд",
+        "TGLD": "Фонд",
+        "VTBR": "Финансы",
+        "X5": "Товары",
+        "TPAY": "Фонд",
+        "SU26254RMFS1": "Облигации",
+        "NLMK": "Металл",
+        "MGKL": "Финансы",
+        "SIBN": "Нефтегаз",
+        "GLRX": "Стройка",
+        "AFLT": "Транспорт",
+    }
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM sectors")
+    if c.fetchone()[0] == 0:
+        for ticker, sector in initial_sectors.items():
+            c.execute("INSERT OR IGNORE INTO sectors (ticker, sector_name) VALUES (?, ?)", (ticker, sector))
+        conn.commit()
+        logging.info(f"✅ Начальные сектора добавлены в БД ({len(initial_sectors)} шт.)")
+    conn.close()
+
+# ---------- РАБОТА С СЕКТОРАМИ ----------
+def get_sector(ticker: str) -> str:
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT sector_name FROM sectors WHERE ticker = ?", (ticker,))
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else "Прочие"
+
+def set_sector(ticker: str, sector_name: str):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO sectors (ticker, sector_name) VALUES (?, ?)", (ticker, sector_name))
+    conn.commit()
+    conn.close()
+
+def remove_sector(ticker: str):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM sectors WHERE ticker = ?", (ticker,))
+    conn.commit()
     conn.close()
 
 # ---------- СОСТОЯНИЕ ПОРТФЕЛЯ ----------
