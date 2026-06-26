@@ -183,7 +183,7 @@ async def scheduler_loop():
             if hour == 10 and minute == 0:
                 if TINKOFF_TOKEN:
                     from tinkoff_api import sync_operations
-                    asyncio.create_task(sync_operations(_http_session)
+                    asyncio.create_task(sync_operations(_http_session))
 
             # Пятница после 23:50
             if weekday == 4 and hour == 23 and minute >= 50:
