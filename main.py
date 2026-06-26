@@ -321,8 +321,12 @@ async def main():
 
     # Первая синхронизация операций
     if TINKOFF_TOKEN:
-        from tinkoff_api import sync_operations
-        asyncio.create_task(sync_operations(bot_session))
+        logging.info("Запуск первой синхронизации операций...")
+        try:
+            from tinkoff_api import sync_operations
+            asyncio.create_task(sync_operations(bot_session))
+        except Exception as e:
+            logging.error(f"Ошибка запуска первой синхронизации: {e}", exc_info=True)
 
     asyncio.create_task(scheduler.scheduler_loop())
     if TINKOFF_TOKEN:

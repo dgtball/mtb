@@ -150,62 +150,67 @@ async def get_portfolio_summary(http_session):
 
 async def sync_operations(http_session, from_date=None):
     """Синхронизирует операции из T-Invest API в БД. Возвращает количество новых операций."""
-    accounts = await get_accounts(http_session)
-    if not accounts:
+    logging.info("sync_operations started")
+    try:
+        accounts = await get_accounts(http_session)
+        if not accounts:
+            logging.warning("sync_operations: нет аккаунтов")
+            return 0
+        account_id = accounts[0].get("id")
+        if not account_id:
+            logging.warning("sync_operations: не найден account_id")
+            return 0
+
+        if from_date is None:
+            last_date = db.get_last_operation_date()
+            if last_date:
+                from_date = datetime.datetime.fromisoformat(last_date) + datetime.timedelta(seconds=1)
+            else:
+                from_date = datetime.datetime.now() - datetime.timedelta(days=365*5)
+
+        to_date = datetime.datetime.now()
+        params = {
+            "accountId": account_id,
+            "from": from_date.strftime("%Y-%m-%dT%H:%M:%S+03:00"),
+            "to": to_date.strftime("%Y-%m-%dT%H:%M:%S+03:00"),
+            "state": "OPERATION_STATE_EXECUTED"
+        }
+        data = await tinkoff_api_request(http_session, "POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetOperations", params=params)
+        operations = data.get("operations", [])
+        logging.info(f"sync_operations: получено {len(operations)} операций от API")
+
+        new_count = 0
+        for op in operations:
+            ticker = op.get("ticker")
+            if not ticker:
+                figi = op.get("figi")
+                if figi:
+                    ticker = figi_to_ticker.get(figi)
+            op["ticker"] = ticker
+
+            if op.get("currency", "RUB") != "RUB":
+                continue
+
+            db.insert_operation({
+                "id": op.get("id"),
+                "date": op.get("date"),
+                "type": op.get("type"),
+                "ticker": ticker,
+                "figi": op.get("figi"),
+                "instrument_type": op.get("instrumentType"),
+                "quantity": op.get("quantity"),
+                "payment": float(op.get("payment", {}).get("units", 0)) if op.get("payment") else 0,
+                "currency": op.get("currency", "RUB"),
+                "commission": float(op.get("commission", {}).get("units", 0)) if op.get("commission") else 0,
+                "name": op.get("name"),
+            })
+            new_count += 1
+
+        logging.info(f"sync_operations finished: добавлено {new_count} новых записей")
+        return new_count
+    except Exception as e:
+        logging.error(f"Ошибка в sync_operations: {e}", exc_info=True)
         return 0
-    account_id = accounts[0].get("id")
-    if not account_id:
-        return 0
-
-    if from_date is None:
-        last_date = db.get_last_operation_date()
-        if last_date:
-            from_date = datetime.datetime.fromisoformat(last_date) + datetime.timedelta(seconds=1)
-        else:
-            from_date = datetime.datetime.now() - datetime.timedelta(days=365*5)
-
-    to_date = datetime.datetime.now()
-    params = {
-        "accountId": account_id,
-        "from": from_date.strftime("%Y-%m-%dT%H:%M:%S+03:00"),
-        "to": to_date.strftime("%Y-%m-%dT%H:%M:%S+03:00"),
-        "state": "OPERATION_STATE_EXECUTED"
-    }
-    data = await tinkoff_api_request(http_session, "POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetOperations", params=params)
-    operations = data.get("operations", [])
-    logging.info(f"Получено {len(operations)} операций от API")
-        if operations:
-            logging.info(f"Пример первой операции: {operations[0]}")
-
-    new_count = 0
-    for op in operations:
-        ticker = op.get("ticker")
-        if not ticker:
-            figi = op.get("figi")
-            if figi:
-                ticker = figi_to_ticker.get(figi)
-        op["ticker"] = ticker
-
-        if op.get("currency", "RUB") != "RUB":
-            continue
-
-        db.insert_operation({
-            "id": op.get("id"),
-            "date": op.get("date"),
-            "type": op.get("type"),
-            "ticker": ticker,
-            "figi": op.get("figi"),
-            "instrument_type": op.get("instrumentType"),
-            "quantity": op.get("quantity"),
-            "payment": float(op.get("payment", {}).get("units", 0)) if op.get("payment") else 0,
-            "currency": op.get("currency", "RUB"),
-            "commission": float(op.get("commission", {}).get("units", 0)) if op.get("commission") else 0,
-            "name": op.get("name"),
-        })
-        new_count += 1
-
-    logging.info(f"Синхронизация операций: добавлено {new_count} новых записей")
-    return new_count
 
 async def get_portfolio_snapshot(http_session, target_date: datetime.date) -> float | None:
     """
