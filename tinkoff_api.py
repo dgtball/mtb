@@ -149,7 +149,6 @@ async def get_portfolio_summary(http_session):
         return None
 
 async def sync_operations(http_session, from_date=None):
-    """Синхронизирует операции из T-Invest API в БД. Возвращает количество новых операций."""
     logging.info("sync_operations started")
     try:
         accounts = await get_accounts(http_session)
@@ -188,9 +187,9 @@ async def sync_operations(http_session, from_date=None):
             if not ticker:
                 figi = op.get("figi")
                 if figi:
-                    ticker = figi_to_ticker.get(figi)  # словарь FIGI->тикер из moex_api
+                    ticker = figi_to_ticker.get(figi)
                 if not ticker:
-                    ticker = "Прочие"   # fallback, если ничего не нашлось
+                    ticker = "Прочие"
 
             if op.get("currency", "RUB").upper() != "RUB":
                 continue
