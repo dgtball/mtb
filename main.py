@@ -107,6 +107,13 @@ async def api_portfolio(request: Request):
         if not market_df.empty and 'SECID' in market_df.columns and 'CHANGEPERCENT' in market_df.columns:
             for _, row in market_df.iterrows():
                 ticker_change[row['SECID']] = row['CHANGEPERCENT']
+        logging.info(f"ticker_change keys count: {len(ticker_change)}")
+        # проверим первые 10 тикеров
+        sample = list(ticker_change.keys())[:10]
+        logging.info(f"ticker_change sample: {sample}")
+        # тикеры портфеля для сравнения
+        portfolio_tickers = [p["ticker"] for p in data["positions"]]
+        logging.info(f"portfolio tickers: {portfolio_tickers}")
 
         total_amount = data["total_amount"]
         positions = []
@@ -134,13 +141,11 @@ async def api_portfolio(request: Request):
 
             # Собираем акции для лидеров: не Прочие, не Фонд, не Облигации
             if sector_name and sector_name not in ("Прочие", "Фонд", "Облигации"):
-                change = ticker_change.get(ticker)
-                if change is not None:
-                    portfolio_equities.append({
-                        "name": pos["name"],
-                        "price_formatted": smart_price(pos["price"]),
-                        "change_pct": change,
-                    })
+                portfolio_equities.append({
+                    "name": pos["name"],
+                    "price_formatted": smart_price(pos["price"]),
+                    "change_pct": pos["pos_yield_pct"],   # общая доходность
+                })
 
         logging.info(f"Собрано {len(portfolio_equities)} акций для лидеров")
 
