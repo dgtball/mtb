@@ -213,6 +213,35 @@ async def api_override(request: Request):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
+# ---------- НОВЫЕ ЭНДПОИНТЫ ДЛЯ ВЫПЛАТ ----------
+@app.get("/api/my-dividends")
+async def api_my_dividends(request: Request):
+    if not check_token(request):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        dividends = db.get_personal_dividends()
+        return JSONResponse(dividends)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post("/api/sync")
+async def api_sync(request: Request):
+    if not check_token(request):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        from tinkoff_api import sync_operations
+        new_count = await sync_operations(bot_session)
+        return JSONResponse({"status": "ok", "new_operations": new_count})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get("/api/sync-status")
+async def api_sync_status(request: Request):
+    if not check_token(request):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    last_date = db.get_last_operation_date()
+    return JSONResponse({"last_sync": last_date})
+
 # ---------- ФОНОВЫЙ ОБНОВИТЕЛЬ ПОРТФЕЛЯ ----------
 async def portfolio_updater(http_session):
     import scheduler as sched
@@ -256,6 +285,14 @@ async def main():
         await bot.send_message(MY_CHAT_ID, f"🚀 Бот перезапущен и готов к работе! ver: {VERSION}")
     except Exception as e:
         logging.error(f"❌ Не удалось отправить уведомление о запуске: {e}")
+
+    # Первая синхронизация операций
+    if TINKOFF_TOKEN:
+        try:
+            from tinkoff_api import sync_operations
+            asyncio.create_task(sync_operations(bot_session))
+        except Exception as e:
+            logging.error(f"Ошибка запуска первой синхронизации: {e}")
 
     asyncio.create_task(scheduler.scheduler_loop())
     if TINKOFF_TOKEN:
