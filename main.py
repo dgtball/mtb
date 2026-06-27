@@ -81,7 +81,7 @@ async def telegram_webhook(request: Request):
         logging.error(f"Webhook error: {e}")
         return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
 
-# ---------- FASTAPI РОУТЫ MINI APP ----------
+# ---------- FASTAPI РОУТЫ ----------
 @app.get("/")
 async def root():
     return {"status": "ok", "version": VERSION}
@@ -223,13 +223,13 @@ async def api_my_dividends(request: Request):
         return JSONResponse(dividends)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
-        
+
 @app.get("/api/dividends-yearly")
 async def api_dividends_yearly(request: Request, year: int = None):
     if not check_token(request):
         raise HTTPException(status_code=403, detail="Forbidden")
     try:
-        conn = db._get_conn()
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         if year:
             c.execute("SELECT date, ticker, payment FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' AND date LIKE ? ORDER BY date", (f"{year}%",))
@@ -239,7 +239,7 @@ async def api_dividends_yearly(request: Request, year: int = None):
             for r in rows:
                 ticker = r[1]
                 if ticker != "Прочие":
-                    name = db.NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
+                    name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
                 else:
                     name = "Прочие"
                 details.append({"date": r[0], "name": name, "amount": r[2]})
@@ -253,7 +253,7 @@ async def api_dividends_yearly(request: Request, year: int = None):
                 y = r[0][:4]
                 ticker = r[1]
                 if ticker != "Прочие":
-                    name = db.NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
+                    name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
                 else:
                     name = "Прочие"
                 if y not in yearly:
@@ -328,9 +328,6 @@ async def main():
     scheduler.set_http_session(bot_session)
 
     await load_instrument_names(bot_session)
-    if TINKOFF_TOKEN:
-        from tinkoff_api import build_figi_map
-        await build_figi_map(bot_session)
     register_handlers(dp)
 
     webhook_url = f"https://mmvbbot3.bothost.tech/webhook"
@@ -341,6 +338,11 @@ async def main():
         await bot.send_message(MY_CHAT_ID, f"🚀 Бот перезапущен и готов к работе! ver: {VERSION}")
     except Exception as e:
         logging.error(f"❌ Не удалось отправить уведомление о запуске: {e}")
+
+    # Строим карту FIGI → ticker из портфеля
+    if TINKOFF_TOKEN:
+        from tinkoff_api import build_figi_map
+        await build_figi_map(bot_session)
 
     # Первая синхронизация операций
     if TINKOFF_TOKEN:
