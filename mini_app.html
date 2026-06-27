@@ -350,7 +350,7 @@
   async function loadMyDividends() {
     try {
       const status = await apiCall('/api/sync-status');
-      document.getElementById('lastSync').textContent = status.last_sync ? new Date(status.last_sync).toLocaleString() : 'никогда';
+      document.getElementById('lastSync').textContent = status.last_sync ? new Date(status.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }) : 'никогда';
 
       const data = await apiCall('/api/my-dividends');
       const tbody = document.getElementById('lastDividendsTable').getElementsByTagName('tbody')[0];

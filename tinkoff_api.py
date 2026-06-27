@@ -166,6 +166,7 @@ async def build_figi_map(http_session):
 async def sync_operations(http_session, from_date=None):
     """Синхронизирует операции из T-Invest API в БД. Возвращает количество новых операций."""
     logging.info("sync_operations started")
+    global portfolio_figi_to_ticker
     try:
         accounts = await get_accounts(http_session)
         if not accounts:
