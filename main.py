@@ -1,436 +1,384 @@
-"""
-main.py — FastAPI + вебхук Telegram + фоновые задачи
-"""
-
-import asyncio
+import os
+import sys
 import logging
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, HTTPException, Query
+import time
+import datetime
+import asyncio
+import aiohttp
+import sqlite3
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.filters import Command
-import os
-import json
-from datetime import datetime
-import pytz
-
-# Импорты из наших модулей
-import config
+from aiogram.fsm.storage.memory import MemoryStorage
+from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION, TINKOFF_TOKEN, SECTOR_NAMES, MINI_APP_SECRET, NAME_OVERRIDES, ticker_to_name, DB_PATH
 import db
-import moex_api
-import tinkoff_api
-import handlers
+from moex_api import load_instrument_names, ticker_to_sector
+from handlers import register_handlers, set_http_session, set_bot
 import scheduler
-import keyboards
-import utils
-from utils import get_moscow_time, smart_price
 
-# Настройка логирования
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler("data/logs/bot.log", encoding="utf-8"),
-        logging.StreamHandler()
-    ]
+# ---------- ЛОГИРОВАНИЕ ----------
+from logging.handlers import TimedRotatingFileHandler
+
+os.environ['TZ'] = 'Europe/Moscow'
+time.tzset()
+
+log_dir = os.path.join(os.getenv('DATA_DIR', '/app/data'), 'logs')
+os.makedirs(log_dir, exist_ok=True)
+
+file_handler = TimedRotatingFileHandler(
+    os.path.join(log_dir, 'bot.log'),
+    when='midnight',
+    interval=1,
+    backupCount=7,
+    encoding='utf-8'
 )
-logger = logging.getLogger(__name__)
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
 
-# Инициализация бота и диспетчера
-BOT_TOKEN = config.BOT_TOKEN
-MY_CHAT_ID = config.MY_CHAT_ID
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.WARNING)
+console_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
 
-# FastAPI приложение
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Старт
-    logger.info("Запуск приложения...")
-    db.init_db()  # создаём таблицы, если нет
-    # Загружаем кеш инструментов, если нужно (вызов из moex_api)
-    await moex_api.update_instruments_cache_if_needed()
-    # Запускаем планировщик (если он есть в scheduler)
-    scheduler.start_scheduler(bot)
-    # Устанавливаем вебхук
-    webhook_url = f"{config.WEBHOOK_BASE_URL}/webhook"
-    await bot.set_webhook(url=webhook_url)
-    logger.info(f"Вебхук установлен: {webhook_url}")
-    yield
-    # Завершение
-    logger.info("Остановка приложения...")
-    scheduler.stop_scheduler()
-    await bot.delete_webhook()
-    db.close_db()
-    logger.info("Соединение с БД закрыто.")
+logging.basicConfig(
+    level=logging.INFO,
+    handlers=[file_handler, console_handler]
+)
 
-app = FastAPI(lifespan=lifespan)
+logging.getLogger('aiogram.event').setLevel(logging.WARNING)
+logging.getLogger('aiohttp.access').setLevel(logging.WARNING)
+logging.getLogger('aiohttp.client').setLevel(logging.WARNING)
 
-# -------------------- Telegram Webhook --------------------
+# ---------- ИНИЦИАЛИЗАЦИЯ ----------
+if not API_TOKEN:
+    raise ValueError("BOT_TOKEN не задан")
+
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher(storage=MemoryStorage())
+
+app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---------- ПРОВЕРКА ТОКЕНА ----------
+def check_token(request: Request) -> bool:
+    token = request.headers.get("X-Mini-App-Token", "")
+    return token == MINI_APP_SECRET
+
+# ---------- ВЕБХУК ТЕЛЕГРАМ ----------
 @app.post("/webhook")
-async def webhook(request: Request):
-    """Принимает обновления от Telegram."""
+async def telegram_webhook(request: Request):
     try:
-        data = await request.json()
-        update = Update(**data)
-        await dp.process_update(update)
-        return {"status": "ok"}
+        update = await request.json()
+        telegram_update = types.Update(**update)
+        await dp.feed_update(bot, telegram_update)
+        return JSONResponse({"status": "ok"})
     except Exception as e:
-        logger.error(f"Ошибка в вебхуке: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(f"Webhook error: {e}")
+        return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
 
-# -------------------- Mini App API --------------------
+# ---------- FASTAPI РОУТЫ (без зависимостей от aiogram) ----------
+@app.get("/")
+async def root():
+    return {"status": "ok", "version": VERSION}
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+@app.get("/mini-app")
+async def mini_app(request: Request):
+    with open("mini_app.html", "r", encoding="utf-8") as f:
+        html = f.read()
+    html = html.replace("MINI_APP_TOKEN_PLACEHOLDER", MINI_APP_SECRET)
+    return HTMLResponse(content=html)
+
 @app.get("/api/portfolio")
-async def get_portfolio_data(request: Request):
-    """Возвращает данные для Mini App: портфель с секторами, лидеры роста/падения."""
-    # Проверка токена (если включена)
-    token = request.headers.get("X-Mini-App-Token")
-    if token != config.MINI_APP_SECRET:
+async def api_portfolio(request: Request):
+    if not check_token(request):
         raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        from tinkoff_api import get_portfolio_summary
+        from moex_api import get_market_data
+        from utils import smart_price
 
-    # Получаем портфель из БД
-    portfolio = db.get_portfolio()
-    if not portfolio:
-        return JSONResponse({"error": "Портфель пуст"})
+        data = await get_portfolio_summary(bot_session)
+        if not data:
+            return JSONResponse({"error": "Нет данных"}, status_code=404)
 
-    # Группировка по секторам для диаграммы
-    sectors_data = {}
-    for item in portfolio:
-        sector = item.get('sector_name', 'Прочее')
-        if sector not in sectors_data:
-            sectors_data[sector] = {'total': 0.0, 'items': []}
-        price = item.get('last_snapshot_price') or item.get('avg_price', 0)
-        value = item['quantity'] * price
-        sectors_data[sector]['total'] += value
-        sectors_data[sector]['items'].append({
-            'ticker': item['ticker'],
-            'name': item.get('custom_name') or item['ticker'],
-            'quantity': item['quantity'],
-            'avg_price': item['avg_price'],
-            'current_price': price,
-            'sector': sector,
-            'value': value
+        market_df = await get_market_data(bot_session)
+        ticker_change = {}
+        if not market_df.empty and 'SECID' in market_df.columns and 'LAST' in market_df.columns and 'OPEN' in market_df.columns:
+            for _, row in market_df.iterrows():
+                secid = row['SECID']
+                last = row['LAST']
+                open_price = row['OPEN']
+                if isinstance(last, (int, float)) and isinstance(open_price, (int, float)) and open_price != 0:
+                    change = ((last - open_price) / open_price) * 100
+                    ticker_change[secid] = change
+
+        total_amount = data["total_amount"]
+        positions = []
+        portfolio_equities = []
+
+        for pos in data["positions"]:
+            ticker = pos["ticker"]
+            sector_name = db.get_sector(ticker)
+            value = pos["quantity"] * pos["price"]
+            share = (value / total_amount * 100) if total_amount > 0 else 0
+
+            avg_formatted = smart_price(pos["avg_price"])
+
+            positions.append({
+                "ticker": ticker,
+                "name": pos["name"],
+                "price_formatted": smart_price(pos["price"]),
+                "avg_price_formatted": avg_formatted,
+                "value": value,
+                "yield_pct": pos["pos_yield_pct"],
+                "sector": sector_name,
+                "share": round(share, 1),
+            })
+
+            if sector_name and sector_name not in ("Прочие", "Фонд", "Облигации"):
+                change = ticker_change.get(ticker)
+                pct = change if change is not None else pos["pos_yield_pct"]
+                portfolio_equities.append({
+                    "name": pos["name"],
+                    "price_formatted": smart_price(pos["price"]),
+                    "change_pct": pct,
+                })
+
+        gainers_list = [p for p in portfolio_equities if p["change_pct"] > 0]
+        losers_list = [p for p in portfolio_equities if p["change_pct"] < 0]
+        gainers_list.sort(key=lambda x: x["change_pct"], reverse=True)
+        losers_list.sort(key=lambda x: x["change_pct"])
+
+        portfolio_gainers = gainers_list[:5]
+        portfolio_losers = losers_list[:5]
+
+        sectors = {}
+        for p in positions:
+            sec = p["sector"]
+            sectors[sec] = sectors.get(sec, 0) + p["value"]
+        sector_list = [{"name": k, "value": v} for k, v in sectors.items()]
+
+        daily_change_pct = None
+        today = datetime.date.today().isoformat()
+        snapshot = db.get_daily_snapshot(today)
+        if snapshot is not None and snapshot > 0:
+            daily_change_pct = (total_amount - snapshot) / snapshot * 100
+
+        return JSONResponse({
+            "total_amount": total_amount,
+            "daily_change_pct": daily_change_pct,
+            "positions": positions,
+            "sectors": sector_list,
+            "portfolio_gainers": portfolio_gainers,
+            "portfolio_losers": portfolio_losers,
         })
+    except Exception as e:
+        logging.error(f"API portfolio: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
-    # Сортируем сектора по убыванию стоимости
-    sectors_list = [
-        {'sector': name, 'total': data['total']}
-        for name, data in sectors_data.items()
-    ]
-    sectors_list.sort(key=lambda x: x['total'], reverse=True)
+@app.get("/api/overrides")
+async def api_overrides(request: Request):
+    if not check_token(request):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        overrides = [{"ticker": k, "name": v} for k, v in NAME_OVERRIDES.items()]
+        return JSONResponse(overrides)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
-    # Получаем топ-5 лидеров роста и падения (только акции)
-    # Для этого нам нужны текущие цены и цены закрытия вчера (или снэпшот)
-    # Допустим, мы используем данные из moex_api для всех инструментов
-    # Здесь можно использовать get_all_instruments() и текущие котировки
-    # Для простоты примера я пропущу детальную реализацию, но покажу структуру
-    # В реальности вы вызовете moex_api.get_prices_for_tickers() или что-то подобное
+@app.post("/api/override")
+async def api_override(request: Request):
+    if not check_token(request):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        body = await request.json()
+        action = body.get("action")
+        ticker = body.get("ticker")
+        if action == "add":
+            display_name = body.get("display_name")
+            db.set_name_override(ticker, display_name)
+        elif action == "remove":
+            db.remove_name_override(ticker)
+        return JSONResponse({"status": "ok"})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
-    # Пример: лидеры роста/падения (заглушка)
-    leaders = {
-        'gainers': [],  # список {ticker, name, change_percent}
-        'losers': []
-    }
-
-    # Получаем все инструменты из кеша
-    all_inst = db.get_all_instruments()
-    # Здесь нужно запросить текущие цены у MOEX и вычислить изменения относительно вчерашнего закрытия
-    # Это можно сделать через moex_api.get_market_data(tickers_list)
-    # И затем отсортировать
-
-    # Пока заглушка
-    # ...
-
-    return JSONResponse({
-        'portfolio': portfolio,
-        'sectors': sectors_list,
-        'leaders': leaders
-    })
+# ---------- НОВЫЕ ЭНДПОИНТЫ ДЛЯ ВЫПЛАТ ----------
+@app.get("/api/my-dividends")
+async def api_my_dividends(request: Request):
+    if not check_token(request):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        dividends = db.get_personal_dividends()
+        return JSONResponse(dividends)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.get("/api/dividends-yearly")
-async def dividends_yearly(request: Request):
-    """Возвращает сумму дивидендов и купонов по годам для столбчатого графика."""
-    token = request.headers.get("X-Mini-App-Token")
-    if token != config.MINI_APP_SECRET:
+async def api_dividends_yearly(request: Request, year: int = None, ticker: str = None):
+    if not check_token(request):
         raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        if year and ticker:
+            # Фильтр по году и тикеру (или названию)
+            c.execute("SELECT date, ticker, payment FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' AND date LIKE ? AND (ticker = ? OR ticker IN (SELECT ticker FROM name_overrides WHERE display_name = ?)) ORDER BY date DESC", (f"{year}%", ticker, ticker))
+            rows = c.fetchall()
+            conn.close()
+            details = []
+            for r in rows:
+                tick = r[1]
+                if tick != "Прочие":
+                    name = NAME_OVERRIDES.get(tick) or ticker_to_name.get(tick, tick)
+                else:
+                    name = "Прочие"
+                details.append({"date": r[0], "name": name, "amount": r[2]})
+            return JSONResponse({"year": year, "ticker": ticker, "details": details})
+        elif year:
+            # Только год
+            c.execute("SELECT date, ticker, payment FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' AND date LIKE ? ORDER BY date", (f"{year}%",))
+            rows = c.fetchall()
+            conn.close()
+            details = []
+            for r in rows:
+                tick = r[1]
+                if tick != "Прочие":
+                    name = NAME_OVERRIDES.get(tick) or ticker_to_name.get(tick, tick)
+                else:
+                    name = "Прочие"
+                details.append({"date": r[0], "name": name, "amount": r[2]})
+            return JSONResponse({"year": year, "details": details})
+        else:
+            # Общий график
+            c.execute("SELECT date, ticker, payment FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date")
+            rows = c.fetchall()
+            conn.close()
+            yearly = {}
+            for r in rows:
+                y = r[0][:4]
+                tick = r[1]
+                if tick != "Прочие":
+                    name = NAME_OVERRIDES.get(tick) or ticker_to_name.get(tick, tick)
+                else:
+                    name = "Прочие"
+                if y not in yearly:
+                    yearly[y] = {}
+                if name not in yearly[y]:
+                    yearly[y][name] = 0.0
+                yearly[y][name] += r[2]
+            years = sorted(yearly.keys())
+            datasets = []
+            for name in sorted(set(n for y in yearly.values() for n in y.keys())):
+                datasets.append({
+                    "label": name,
+                    "data": [yearly[y].get(name, 0) for y in years]
+                })
+            return JSONResponse({"years": years, "datasets": datasets})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
-    # Получаем все годы, за которые есть операции
-    conn = db.get_conn()
-    rows = conn.execute("SELECT DISTINCT strftime('%Y', date) as year FROM operations WHERE operation_type IN ('dividend', 'coupon') ORDER BY year").fetchall()
-    years = [row['year'] for row in rows]
-    if not years:
-        return JSONResponse({'years': [], 'dividends': [], 'coupons': []})
-
-    dividends = []
-    coupons = []
-    for year in years:
-        div_sum = db.get_operations_sum_by_year_and_type(int(year), 'dividend')
-        coup_sum = db.get_operations_sum_by_year_and_type(int(year), 'coupon')
-        dividends.append(div_sum)
-        coupons.append(coup_sum)
-
-    return JSONResponse({
-        'years': years,
-        'dividends': dividends,
-        'coupons': coupons
-    })
-
-@app.get("/api/dividends-details")
-async def dividends_details(request: Request, year: int, ticker: Optional[str] = None):
-    """Возвращает детализацию выплат по году и, опционально, по тикеру."""
-    token = request.headers.get("X-Mini-App-Token")
-    if token != config.MINI_APP_SECRET:
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    if ticker:
-        ops = db.get_operations_by_ticker_and_year(ticker, year)
-    else:
-        # Все операции за год (дивиденды и купоны)
-        ops = db.get_operations_by_year(year, None)  # без фильтра по типу
-        # Отфильтруем только выплаты
-        ops = [op for op in ops if op['operation_type'] in ('dividend', 'coupon')]
-
-    return JSONResponse({'operations': ops})
-
-@app.get("/api/instrument-mapping")
-async def get_mapping(request: Request):
-    """Возвращает все переименования."""
-    token = request.headers.get("X-Mini-App-Token")
-    if token != config.MINI_APP_SECRET:
-        raise HTTPException(status_code=403, detail="Forbidden")
-    mapping = db.get_instrument_mapping()
-    return JSONResponse({'mapping': mapping})
-
-@app.post("/api/instrument-mapping")
-async def set_mapping(request: Request):
-    """Устанавливает кастомное имя для тикера."""
-    token = request.headers.get("X-Mini-App-Token")
-    if token != config.MINI_APP_SECRET:
-        raise HTTPException(status_code=403, detail="Forbidden")
-    data = await request.json()
-    ticker = data.get('ticker')
-    custom_name = data.get('custom_name')
-    if not ticker:
-        raise HTTPException(status_code=400, detail="ticker required")
-    db.set_instrument_mapping(ticker, custom_name=custom_name)
-    return JSONResponse({'status': 'ok'})
-
-@app.delete("/api/instrument-mapping")
-async def delete_mapping(request: Request):
-    """Удаляет переименование для тикера."""
-    token = request.headers.get("X-Mini-App-Token")
-    if token != config.MINI_APP_SECRET:
-        raise HTTPException(status_code=403, detail="Forbidden")
-    data = await request.json()
-    ticker = data.get('ticker')
-    if not ticker:
-        raise HTTPException(status_code=400, detail="ticker required")
-    db.set_instrument_mapping(ticker, custom_name=None, figi=None)  # удаляем
-    return JSONResponse({'status': 'ok'})
-
-# -------------------- Mini App HTML --------------------
-@app.get("/mini-app", response_class=HTMLResponse)
-async def mini_app(request: Request):
-    """Отдаёт HTML Mini App."""
-    html_content = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Мой портфель</title>
-        <!-- Подключите Chart.js и Tailwind (или Bootstrap) -->
-        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-        <script src="https://cdn.tailwindcss.com"></script>
-        <style>
-            body { background: #f7fafc; }
-            .container { max-width: 800px; margin: 0 auto; padding: 20px; }
-            .card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
-            h2 { font-size: 1.5rem; font-weight: bold; margin-bottom: 1rem; }
-        </style>
-    </head>
-    <body>
-        <div class="container" id="app">
-            <div id="loading" class="text-center py-10">Загрузка...</div>
-            <div id="content" style="display:none;">
-                <!-- Портфель -->
-                <div class="card">
-                    <h2>Портфель по секторам</h2>
-                    <canvas id="sectorChart" height="200"></canvas>
-                </div>
-                <!-- Лидеры -->
-                <div class="card">
-                    <h2>Топ-5 роста</h2>
-                    <ul id="gainersList"></ul>
-                    <h2>Топ-5 падения</h2>
-                    <ul id="losersList"></ul>
-                </div>
-                <!-- Выплаты -->
-                <div class="card">
-                    <h2>Выплаты по годам</h2>
-                    <canvas id="dividendsChart" height="200"></canvas>
-                </div>
-                <!-- Детализация по клику (пока пусто) -->
-                <div id="details" class="card" style="display:none;">
-                    <h2>Детали</h2>
-                    <div id="detailsContent"></div>
-                </div>
-                <!-- Кнопка синхронизации -->
-                <button id="syncBtn" class="bg-blue-500 text-white px-4 py-2 rounded">Синхронизировать с Т-Инвестициями</button>
-            </div>
-        </div>
-        <script>
-            const token = '{{ token }}';  // вставляется сервером
-
-            async function fetchData(url) {
-                const response = await fetch(url, { headers: { 'X-Mini-App-Token': token } });
-                if (!response.ok) throw new Error('Ошибка загрузки');
-                return response.json();
-            }
-
-            async function loadData() {
-                try {
-                    const [portfolioData, dividendsData] = await Promise.all([
-                        fetchData('/api/portfolio'),
-                        fetchData('/api/dividends-yearly')
-                    ]);
-                    renderPortfolio(portfolioData);
-                    renderDividends(dividendsData);
-                    document.getElementById('loading').style.display = 'none';
-                    document.getElementById('content').style.display = 'block';
-                } catch (e) {
-                    document.getElementById('loading').textContent = 'Ошибка загрузки данных';
-                    console.error(e);
-                }
-            }
-
-            function renderPortfolio(data) {
-                // Секторная диаграмма
-                const ctx = document.getElementById('sectorChart').getContext('2d');
-                const sectors = data.sectors || [];
-                new Chart(ctx, {
-                    type: 'bar',
-                    data: {
-                        labels: sectors.map(s => s.sector),
-                        datasets: [{
-                            label: 'Стоимость (руб)',
-                            data: sectors.map(s => s.total),
-                            backgroundColor: 'rgba(54, 162, 235, 0.6)',
-                            borderColor: 'rgba(54, 162, 235, 1)',
-                            borderWidth: 1
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        plugins: {
-                            legend: { display: false }
-                        }
-                    }
-                });
-
-                // Лидеры
-                const gainers = data.leaders?.gainers || [];
-                const losers = data.leaders?.losers || [];
-                const gainersList = document.getElementById('gainersList');
-                const losersList = document.getElementById('losersList');
-                gainersList.innerHTML = gainers.map(g => `<li>${g.name} (${g.ticker}) ${g.change_percent}%</li>`).join('');
-                losersList.innerHTML = losers.map(l => `<li>${l.name} (${l.ticker}) ${l.change_percent}%</li>`).join('');
-            }
-
-            function renderDividends(data) {
-                const ctx = document.getElementById('dividendsChart').getContext('2d');
-                const years = data.years || [];
-                new Chart(ctx, {
-                    type: 'bar',
-                    data: {
-                        labels: years,
-                        datasets: [
-                            {
-                                label: 'Дивиденды',
-                                data: data.dividends || [],
-                                backgroundColor: 'rgba(75, 192, 192, 0.6)',
-                                borderColor: 'rgba(75, 192, 192, 1)',
-                                borderWidth: 1
-                            },
-                            {
-                                label: 'Купоны',
-                                data: data.coupons || [],
-                                backgroundColor: 'rgba(255, 206, 86, 0.6)',
-                                borderColor: 'rgba(255, 206, 86, 1)',
-                                borderWidth: 1
-                            }
-                        ]
-                    },
-                    options: {
-                        responsive: true,
-                        plugins: {
-                            legend: { position: 'top' }
-                        },
-                        onClick: (e, item) => {
-                            if (item.length > 0) {
-                                const year = years[item[0].datasetIndex];
-                                showDetails(year);
-                            }
-                        }
-                    }
-                });
-            }
-
-            async function showDetails(year) {
-                // Запрос деталей по году
-                try {
-                    const data = await fetchData(`/api/dividends-details?year=${year}`);
-                    const content = document.getElementById('detailsContent');
-                    if (data.operations && data.operations.length) {
-                        content.innerHTML = `<h3>Выплаты за ${year}</h3><ul>${data.operations.map(op => `<li>${op.ticker}: ${op.payment} руб (${op.date})</li>`).join('')}</ul>`;
-                    } else {
-                        content.innerHTML = `<h3>Выплаты за ${year}</h3><p>Нет данных</p>`;
-                    }
-                    document.getElementById('details').style.display = 'block';
-                } catch (e) {
-                    console.error(e);
-                }
-            }
-
-            // Синхронизация
-            document.getElementById('syncBtn').addEventListener('click', async () => {
-                // Здесь вызывается ваш эндпоинт для синхронизации, например, /api/sync
-                // Или просто отправка команды боту
-                alert('Синхронизация запущена (заглушка)');
-            });
-
-            loadData();
-        </script>
-    </body>
-    </html>
-    """
-    # Заменяем {{ token }} на реальный токен
-    html_content = html_content.replace('{{ token }}', config.MINI_APP_SECRET)
-    return HTMLResponse(content=html_content)
-
-# -------------------- Дополнительные эндпоинты --------------------
-# Можно добавить эндпоинт для синхронизации с Т-Инвестициями
 @app.post("/api/sync")
-async def sync_operations(request: Request):
-    """Запускает синхронизацию операций из Т-Инвестиций."""
-    token = request.headers.get("X-Mini-App-Token")
-    if token != config.MINI_APP_SECRET:
+async def api_sync(request: Request):
+    if not check_token(request):
         raise HTTPException(status_code=403, detail="Forbidden")
-    # Запускаем синхронизацию в фоне
-    asyncio.create_task(tinkoff_api.sync_all_operations())
-    return JSONResponse({"status": "sync started"})
+    try:
+        from tinkoff_api import sync_operations
+        new_count = await sync_operations(bot_session)
+        now_moscow = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3)).isoformat()
+        return JSONResponse({
+            "status": "ok",
+            "new_operations": new_count,
+            "last_sync": now_moscow
+        })
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
-# -------------------- Регистрация обработчиков команд --------------------
-# Подключаем handlers (если они определены)
-# например, dp.message.register(handlers.start_command, Command("start"))
-# dp.callback_query.register(handlers.button_callback)
-# Но так как у вас handlers.py, вы должны зарегистрировать их там.
+@app.get("/api/sync-status")
+async def api_sync_status(request: Request):
+    if not check_token(request):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    last_date = db.get_last_operation_date()
+    return JSONResponse({"last_sync": last_date})
 
-# Если handlers.py экспортирует функцию register_handlers(dp), то вызываем:
-# handlers.register_handlers(dp)
+# ---------- ФОНОВЫЙ ОБНОВИТЕЛЬ ПОРТФЕЛЯ ----------
+async def portfolio_updater(http_session):
+    import scheduler as sched
+    await asyncio.sleep(10)
+    while True:
+        try:
+            if sched.is_portfolio_update_allowed():
+                from tinkoff_api import get_portfolio_summary
+                data = await get_portfolio_summary(http_session)
+                if data:
+                    total = data['total_amount']
+                    db.set_portfolio_value(total)
+                    logging.debug(f"Портфель автообновлён: {total:.2f}")
+                await asyncio.sleep(300)
+            else:
+                await asyncio.sleep(60)
+        except Exception as e:
+            logging.error(f"Ошибка автообновления портфеля: {e}")
+            await asyncio.sleep(60)
 
-# -------------------- Запуск (если файл запускается напрямую) --------------------
+# ---------- ГЛАВНАЯ ФУНКЦИЯ ----------
+async def main():
+    global bot_session
+    db.init_db()
+    db.load_name_overrides()
+
+    bot_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
+    set_http_session(bot_session)
+    set_bot(bot)
+    scheduler.set_bot(bot)
+    scheduler.set_http_session(bot_session)
+
+    await load_instrument_names(bot_session)
+    register_handlers(dp)
+
+    webhook_url = f"https://mmvbbot3.bothost.tech/webhook"
+    await bot.set_webhook(webhook_url)
+    logging.info(f"✅ Вебхук установлен: {webhook_url}")
+
+    try:
+        await bot.send_message(MY_CHAT_ID, f"🚀 Бот перезапущен и готов к работе! ver: {VERSION}")
+    except Exception as e:
+        logging.error(f"❌ Не удалось отправить уведомление о запуске: {e}")
+
+    # Строим карту FIGI → ticker из портфеля
+    if TINKOFF_TOKEN:
+        from tinkoff_api import build_figi_map
+        await build_figi_map(bot_session)
+
+    # Первая синхронизация операций
+    if TINKOFF_TOKEN:
+        try:
+            from tinkoff_api import sync_operations
+            asyncio.create_task(sync_operations(bot_session))
+        except Exception as e:
+            logging.error(f"Ошибка запуска первой синхронизации: {e}")
+
+    asyncio.create_task(scheduler.scheduler_loop())
+    if TINKOFF_TOKEN:
+        asyncio.create_task(portfolio_updater(bot_session))
+
+    config = uvicorn.Config(app, host="0.0.0.0", port=PORT, log_level="warning")
+    server = uvicorn.Server(config)
+    logging.info(f"✅ FastAPI сервер запущен на порту {PORT}")
+    await server.serve()
+
+    await bot_session.close()
+    logging.info("✅ HTTP сессия закрыта")
+
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
+    asyncio.run(main())
