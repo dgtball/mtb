@@ -231,9 +231,33 @@ async def api_dividends_yearly(request: Request, year: int = None, ticker: str =
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        if year and ticker:
-            # Фильтр по году и тикеру (или названию)
-            c.execute("SELECT date, ticker, payment FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' AND date LIKE ? AND (ticker = ? OR ticker IN (SELECT ticker FROM name_overrides WHERE display_name = ?)) ORDER BY date DESC", (f"{year}%", ticker, ticker))
+        
+        # Если передан ticker (это может быть отображаемое имя), пытаемся найти фактический тикер
+        actual_ticker = None
+        if ticker:
+            # 1. Ищем в name_overrides, где display_name = ticker
+            c.execute("SELECT ticker FROM name_overrides WHERE display_name = ?", (ticker,))
+            row = c.fetchone()
+            if row:
+                actual_ticker = row[0]
+            else:
+                # 2. Ищем в ticker_to_name (глобальный словарь) по значению
+                for t, name in ticker_to_name.items():
+                    if name == ticker:
+                        actual_ticker = t
+                        break
+                # 3. Если не нашли, считаем, что передан сам тикер
+                if not actual_ticker:
+                    actual_ticker = ticker
+
+        if year and actual_ticker:
+            # Детализация по году и тикеру
+            c.execute("""SELECT date, ticker, payment FROM operations 
+                         WHERE type IN ('Выплата дивидендов', 'Выплата купонов') 
+                         AND currency = 'RUB' AND date LIKE ? 
+                         AND ticker = ? 
+                         ORDER BY date DESC""", 
+                      (f"{year}%", actual_ticker))
             rows = c.fetchall()
             conn.close()
             details = []
@@ -247,14 +271,22 @@ async def api_dividends_yearly(request: Request, year: int = None, ticker: str =
                     name = "Прочие"
                 details.append({"date": r[0], "name": name, "amount": r[2]})
             return JSONResponse({"year": year, "ticker": ticker, "details": details})
-        elif year:
-            # Только год
-            c.execute("SELECT date, ticker, payment FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' AND date LIKE ? ORDER BY date", (f"{year}%",))
+        
+        elif actual_ticker:
+            # Без года – возвращаем все выплаты по активу, сгруппированные по годам
+            c.execute("""SELECT date, ticker, payment FROM operations 
+                         WHERE type IN ('Выплата дивидендов', 'Выплата купонов') 
+                         AND currency = 'RUB' 
+                         AND ticker = ? 
+                         ORDER BY date DESC""", 
+                      (actual_ticker,))
             rows = c.fetchall()
             conn.close()
             details = []
+            yearly_totals = {}
             for r in rows:
                 tick = r[1]
+                y = r[0][:4]
                 if tick is None:
                     tick = "Прочие"
                 if tick != "Прочие":
@@ -262,9 +294,11 @@ async def api_dividends_yearly(request: Request, year: int = None, ticker: str =
                 else:
                     name = "Прочие"
                 details.append({"date": r[0], "name": name, "amount": r[2]})
-            return JSONResponse({"year": year, "details": details})
+                yearly_totals[y] = yearly_totals.get(y, 0) + r[2]
+            return JSONResponse({"ticker": ticker, "details": details, "yearly_totals": yearly_totals})
+        
         else:
-            # Общий график
+            # Общий график (как было)
             c.execute("SELECT date, ticker, payment FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date")
             rows = c.fetchall()
             conn.close()
@@ -328,10 +362,68 @@ async def set_sector(request: Request):
     if not ticker or not sector:
         raise HTTPException(400, "Missing ticker or sector")
     db.update_instrument_sector(ticker, sector)
-    # обновляем глобальный словарь
     from moex_api import ticker_to_sector
     ticker_to_sector[ticker] = sector
-    return JSONResponse({"status": "ok"})
+    return JSONResponse({"status": "ok"}))
+    
+@app.get("/api/instruments")
+async def get_instruments(request: Request):
+    if not check_token(request):
+        raise HTTPException(403)
+    try:
+        instruments = db.get_all_instruments()
+        # можно отфильтровать только те, что есть в портфеле, или все
+        return JSONResponse(instruments)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    
+@app.get("/api/operations/unticked")
+async def get_unticked_operations(request: Request):
+    if not check_token(request):
+        raise HTTPException(403)
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("""SELECT id, date, payment, ticker, name 
+                     FROM operations 
+                     WHERE (ticker IS NULL OR ticker = 'Прочие') 
+                       AND type IN ('Выплата дивидендов', 'Выплата купонов')
+                     ORDER BY date DESC""")
+        rows = c.fetchall()
+        conn.close()
+        result = []
+        for r in rows:
+            result.append({
+                "id": r[0],
+                "date": r[1],
+                "payment": r[2],
+                "ticker": r[3],
+                "name": r[4] or "Неизвестно"
+            })
+        return JSONResponse(result)
+    except Exception as e:
+        logging.error(f"Error in /api/operations/unticked: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post("/api/operations/link")
+async def link_ticker_to_operation(request: Request):
+    if not check_token(request):
+        raise HTTPException(403)
+    try:
+        body = await request.json()
+        op_id = body.get("id")
+        new_ticker = body.get("ticker")
+        if not op_id or not new_ticker:
+            raise HTTPException(400, "Missing id or ticker")
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("UPDATE operations SET ticker = ? WHERE id = ?", (new_ticker, op_id))
+        conn.commit()
+        conn.close()
+        return JSONResponse({"status": "ok"})
+    except Exception as e:
+        logging.error(f"Error in /api/operations/link: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 # ---------- ФОНОВЫЙ ОБНОВИТЕЛЬ ПОРТФЕЛЯ ----------
 async def portfolio_updater(http_session):

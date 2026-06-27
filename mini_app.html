@@ -159,15 +159,63 @@
       cursor: pointer;
       font-size: 11px;
     }
+
+    /* Стили для подвкладок Настроек */
+    .settings-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 12px;
+    }
+    .settings-tab {
+      padding: 8px 16px;
+      cursor: pointer;
+      color: var(--text-secondary);
+      font-size: 12px;
+      border-bottom: 2px solid transparent;
+    }
+    .settings-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .settings-content {
+      display: none;
+    }
+    .settings-content.active {
+      display: block;
+    }
+
+    .ticker-select, .sector-input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 4px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .link-btn, .sector-save-btn {
+      background: var(--accent);
+      border: none;
+      color: white;
+      padding: 4px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 10px;
+    }
+    .link-btn:hover, .sector-save-btn:hover {
+      opacity: 0.8;
+    }
   </style>
 </head>
 <body>
   <div class="tabs">
     <div class="tab active" onclick="switchTab('portfolio')">Портфель</div>
-    <div class="tab" onclick="switchTab('overrides')">Переименования</div>
     <div class="tab" onclick="switchTab('dividends')">Мои выплаты</div>
+    <div class="tab" onclick="switchTab('settings')">Настройки</div>
   </div>
 
+  <!-- Вкладка: Портфель -->
   <div id="portfolio" class="tab-content active">
     <div class="summary">
       <div class="summary-row"><span class="label">Стоимость портфеля</span><span class="value" id="totalAmount">—</span></div>
@@ -183,14 +231,7 @@
     </div>
   </div>
 
-  <div id="overrides" class="tab-content">
-    <div class="add-form">
-      <input type="text" id="newTicker" placeholder="Тикер"><input type="text" id="newName" placeholder="Новое название">
-      <button onclick="addOverride()">Добавить</button>
-    </div>
-    <table><thead><tr><th>Тикер</th><th>Название</th><th></th></tr></thead><tbody id="overridesTable"></tbody></table>
-  </div>
-
+  <!-- Вкладка: Мои выплаты -->
   <div id="dividends" class="tab-content">
     <div class="sync-status">
       <span>Последняя синхронизация: <span id="lastSync">—</span></span>
@@ -200,10 +241,41 @@
     <div id="dividendDetails" class="dividend-details hidden"></div>
   </div>
 
+  <!-- Вкладка: Настройки -->
+  <div id="settings" class="tab-content">
+    <div class="settings-tabs">
+      <span class="settings-tab active" onclick="switchSettingsTab('overrides')">Переименования</span>
+      <span class="settings-tab" onclick="switchSettingsTab('link')">Привязка тикеров</span>
+      <span class="settings-tab" onclick="switchSettingsTab('sectors')">Сектора</span>
+    </div>
+
+    <!-- Подвкладка: Переименования -->
+    <div id="settings-overrides" class="settings-content active">
+      <div class="add-form">
+        <input type="text" id="newTicker" placeholder="Тикер"><input type="text" id="newName" placeholder="Новое название">
+        <button onclick="addOverride()">Добавить</button>
+      </div>
+      <table><thead><tr><th>Тикер</th><th>Название</th><th></th></tr></thead><tbody id="overridesTable"></tbody></table>
+    </div>
+
+    <!-- Подвкладка: Привязка тикеров -->
+    <div id="settings-link" class="settings-content">
+      <p style="font-size:12px;color:var(--text-secondary);">Операции с неизвестным тикером. Выберите правильный тикер из выпадающего списка.</p>
+      <table><thead><tr><th>Дата</th><th>Сумма</th><th>Текущий тикер</th><th>Новый тикер</th><th></th></tr></thead><tbody id="untickedTable"></tbody></table>
+    </div>
+
+    <!-- Подвкладка: Сектора -->
+    <div id="settings-sectors" class="settings-content">
+      <p style="font-size:12px;color:var(--text-secondary);">Редактирование секторов инструментов.</p>
+      <table><thead><tr><th>Тикер</th><th>Название</th><th>Сектор</th><th></th></tr></thead><tbody id="sectorsTable"></tbody></table>
+    </div>
+  </div>
+
 <script>
   const API_TOKEN = 'MINI_APP_TOKEN_PLACEHOLDER';
   let sectorChart, dividendChart;
   let allPositions = [];
+  let allTickersList = [];
 
   async function apiCall(endpoint, method = 'GET', body = null) {
     const options = { method, headers: { 'Content-Type': 'application/json', 'X-Mini-App-Token': API_TOKEN } };
@@ -213,6 +285,33 @@
     return res.json();
   }
 
+  // ===== Переключение основных вкладок =====
+  function switchTab(tab) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    const tabIndex = { portfolio: 1, dividends: 2, settings: 3 };
+    document.querySelector(`.tab:nth-child(${tabIndex[tab]})`).classList.add('active');
+    document.getElementById(tab).classList.add('active');
+    if (tab === 'portfolio') loadPortfolio();
+    else if (tab === 'dividends') loadDividends();
+    else if (tab === 'settings') {
+      // По умолчанию показываем первую подвкладку (она уже активна)
+      loadOverrides(); // загружаем переименования по умолчанию
+    }
+  }
+
+  // ===== Переключение подвкладок Настроек =====
+  function switchSettingsTab(tab) {
+    document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.settings-content').forEach(c => c.classList.remove('active'));
+    document.querySelector(`.settings-tab[onclick="switchSettingsTab('${tab}')"]`).classList.add('active');
+    document.getElementById(`settings-${tab}`).classList.add('active');
+    if (tab === 'overrides') loadOverrides();
+    else if (tab === 'link') loadUntickedOperations();
+    else if (tab === 'sectors') loadSectors();
+  }
+
+  // ===== Вкладка Портфель =====
   async function loadPortfolio() {
     try {
       const data = await apiCall('/api/portfolio');
@@ -258,13 +357,31 @@
     } catch(e) { console.error(e); }
   }
 
+  function showSectorDetails(sectorName) {
+    const filtered = allPositions.filter(p => p.sector === sectorName);
+    const container = document.getElementById('sectorDetails');
+    if (filtered.length === 0) { container.classList.add('hidden'); return; }
+    let html = `<h3>${sectorName}</h3><table><thead><tr><th>Название</th><th>Средняя</th><th>Доходность</th><th>Доля</th></tr></thead><tbody>`;
+    filtered.forEach(p => {
+      const sign = p.yield_pct >= 0 ? '+' : '';
+      html += `<tr><td>${p.name}</td><td>${p.avg_price_formatted}</td><td style="color:${p.yield_pct >= 0 ? '#4caf50' : '#f44336'}">${sign}${p.yield_pct.toFixed(2)}%</td><td>${p.share}%</td></tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+    container.classList.remove('hidden');
+  }
+
+  // ===== Вкладка Мои выплаты =====
   async function loadDividends() {
     try {
       const data = await apiCall('/api/dividends-yearly');
       const ctx = document.getElementById('dividendChart').getContext('2d');
       if (dividendChart) dividendChart.destroy();
 
-      if (!data.years || data.years.length === 0) return;
+      if (!data.years || data.years.length === 0) {
+        // Показываем пустой график или сообщение
+        return;
+      }
 
       const years = data.years;
       const datasets = [];
@@ -323,6 +440,12 @@
           }
         }
       });
+
+      // Загружаем статус синхронизации
+      const syncStatus = await apiCall('/api/sync-status');
+      if (syncStatus.last_sync) {
+        document.getElementById('lastSync').textContent = new Date(syncStatus.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+      }
     } catch(e) { console.error(e); }
   }
 
@@ -350,25 +473,12 @@
     } catch(e) { alert('Ошибка синхронизации'); }
   }
 
-  function showSectorDetails(sectorName) {
-    const filtered = allPositions.filter(p => p.sector === sectorName);
-    const container = document.getElementById('sectorDetails');
-    if (filtered.length === 0) { container.classList.add('hidden'); return; }
-    let html = `<h3>${sectorName}</h3><table><thead><tr><th>Название</th><th>Средняя</th><th>Доходность</th><th>Доля</th></tr></thead><tbody>`;
-    filtered.forEach(p => {
-      const sign = p.yield_pct >= 0 ? '+' : '';
-      html += `<tr><td>${p.name}</td><td>${p.avg_price_formatted}</td><td style="color:${p.yield_pct >= 0 ? '#4caf50' : '#f44336'}">${sign}${p.yield_pct.toFixed(2)}%</td><td>${p.share}%</td></tr>`;
-    });
-    html += '</tbody></table>';
-    container.innerHTML = html;
-    container.classList.remove('hidden');
-  }
-
+  // ===== Подвкладка: Переименования =====
   async function loadOverrides() {
     try {
       const data = await apiCall('/api/overrides');
       const tbody = document.getElementById('overridesTable');
-      while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+      tbody.innerHTML = '';
       data.forEach(o => {
         const tr = document.createElement('tr');
         const tdTicker = document.createElement('td'); tdTicker.textContent = o.ticker; tr.appendChild(tdTicker);
@@ -400,18 +510,105 @@
     } catch(e) { alert('Ошибка'); }
   }
 
-  function switchTab(tab) {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    const tabIndex = { portfolio: 1, overrides: 2, dividends: 3 };
-    document.querySelector(`.tab:nth-child(${tabIndex[tab]})`).classList.add('active');
-    document.getElementById(tab).classList.add('active');
-    if (tab === 'portfolio') loadPortfolio();
-    else if (tab === 'overrides') loadOverrides();
-    else if (tab === 'dividends') loadDividends();
+  // ===== Подвкладка: Привязка тикеров =====
+  async function loadUntickedOperations() {
+    try {
+      const data = await apiCall('/api/operations/unticked');
+      const tbody = document.getElementById('untickedTable');
+      tbody.innerHTML = '';
+      if (data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5">Нет операций без тикера</td></tr>';
+        return;
+      }
+      // Получаем список всех доступных тикеров из instruments
+      const instruments = await apiCall('/api/instruments');
+      const tickerOptions = instruments.map(i => i.ticker).sort();
+      allTickersList = tickerOptions;
+
+      data.forEach(op => {
+        const tr = document.createElement('tr');
+        const tdDate = document.createElement('td'); tdDate.textContent = new Date(op.date).toLocaleDateString(); tr.appendChild(tdDate);
+        const tdPayment = document.createElement('td'); tdPayment.textContent = op.payment.toLocaleString(); tr.appendChild(tdPayment);
+        const tdCurrent = document.createElement('td'); tdCurrent.textContent = op.ticker || '—'; tr.appendChild(tdCurrent);
+        const tdSelect = document.createElement('td');
+        const select = document.createElement('select');
+        select.className = 'ticker-select';
+        select.dataset.opid = op.id;
+        const defaultOption = document.createElement('option'); defaultOption.value = ''; defaultOption.textContent = 'Выберите'; select.appendChild(defaultOption);
+        tickerOptions.forEach(t => {
+          const opt = document.createElement('option'); opt.value = t; opt.textContent = t; select.appendChild(opt);
+        });
+        tdSelect.appendChild(select);
+        tr.appendChild(tdSelect);
+        const tdAction = document.createElement('td');
+        const btn = document.createElement('button'); btn.className = 'link-btn'; btn.textContent = 'Привязать';
+        btn.addEventListener('click', () => linkTicker(op.id));
+        tdAction.appendChild(btn);
+        tr.appendChild(tdAction);
+        tbody.appendChild(tr);
+      });
+    } catch(e) { console.error(e); }
   }
 
-  window.onload = () => loadPortfolio();
+  async function linkTicker(opId) {
+    const select = document.querySelector(`.ticker-select[data-opid="${opId}"]`);
+    const newTicker = select.value;
+    if (!newTicker) { alert('Выберите тикер'); return; }
+    try {
+      await apiCall('/api/operations/link', 'POST', { id: opId, ticker: newTicker });
+      loadUntickedOperations();
+      loadDividends(); // обновить график
+    } catch(e) { alert('Ошибка привязки'); }
+  }
+
+  // ===== Подвкладка: Сектора =====
+  async function loadSectors() {
+    try {
+      const data = await apiCall('/api/instruments');
+      const tbody = document.getElementById('sectorsTable');
+      tbody.innerHTML = '';
+      data.forEach(inst => {
+        const tr = document.createElement('tr');
+        const tdTicker = document.createElement('td'); tdTicker.textContent = inst.ticker; tr.appendChild(tdTicker);
+        const tdName = document.createElement('td'); tdName.textContent = inst.name || inst.ticker; tr.appendChild(tdName);
+        const tdSector = document.createElement('td');
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'sector-input';
+        input.dataset.ticker = inst.ticker;
+        input.value = inst.sector || 'Прочие';
+        tdSector.appendChild(input);
+        tr.appendChild(tdSector);
+        const tdAction = document.createElement('td');
+        const btn = document.createElement('button'); btn.className = 'sector-save-btn'; btn.textContent = 'Сохранить';
+        btn.addEventListener('click', () => updateSector(inst.ticker));
+        tdAction.appendChild(btn);
+        tr.appendChild(tdAction);
+        tbody.appendChild(tr);
+      });
+    } catch(e) { console.error(e); }
+  }
+
+  async function updateSector(ticker) {
+    const input = document.querySelector(`.sector-input[data-ticker="${ticker}"]`);
+    const newSector = input.value.trim();
+    if (!newSector) { alert('Введите сектор'); return; }
+    try {
+      await apiCall('/api/sector', 'POST', { ticker, sector: newSector });
+      alert('Сектор обновлён');
+    } catch(e) { alert('Ошибка'); }
+  }
+
+  // ===== Инициализация =====
+  window.onload = () => {
+    loadPortfolio();
+    // Загружаем статус синхронизации при старте
+    apiCall('/api/sync-status').then(data => {
+      if (data.last_sync) {
+        document.getElementById('lastSync').textContent = new Date(data.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+      }
+    }).catch(() => {});
+  };
 </script>
 </body>
 </html>
