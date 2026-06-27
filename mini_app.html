@@ -196,7 +196,9 @@
       <span>Последняя синхронизация: <span id="lastSync">—</span></span>
       <button onclick="syncOperations()">Синхронизировать</button>
     </div>
-    <div class="chart-container" style="height:400px"><canvas id="dividendChart"></canvas></div>
+    <div class="chart-container" style="height:400px">
+      <div id="dividendChartContainer"><canvas id="dividendChart"></canvas></div>
+    </div>
     <div id="dividendDetails" class="dividend-details hidden"></div>
   </div>
 
@@ -324,16 +326,13 @@
   }
 
 async function syncOperations() {
-	try {
-	  const res = await apiCall('/api/sync', 'POST');
-	  // Обновляем время в интерфейсе из ответа
-	  if (res.last_sync) {
-		document.getElementById('lastSync').textContent = new Date(res.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
-	  }
-	  loadDividends();
-	} catch(e) {
-	  alert('Ошибка синхронизации');
-	}
+    try {
+      const res = await apiCall('/api/sync', 'POST');
+      if (res.last_sync) {
+        document.getElementById('lastSync').textContent = new Date(res.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+      }
+      loadDividends(); // обновляем график
+    } catch(e) { alert('Ошибка синхронизации'); }
   }
 
   function showSectorDetails(sectorName) {
