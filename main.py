@@ -279,7 +279,12 @@ async def api_sync(request: Request):
     try:
         from tinkoff_api import sync_operations
         new_count = await sync_operations(bot_session)
-        return JSONResponse({"status": "ok", "new_operations": new_count})
+        now_moscow = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3)).isoformat()
+        return JSONResponse({
+            "status": "ok",
+            "new_operations": new_count,
+            "last_sync": now_moscow
+        })
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 

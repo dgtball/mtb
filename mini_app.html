@@ -239,7 +239,7 @@
               datalabels: { anchor: 'end', align: 'top', color: '#e0e0e0', font: { weight: 'bold', size: 11 },
                 formatter: (value, context) => percentages[context.dataIndex].toFixed(1) + '%' } },
             scales: { x: { ticks: { color: '#9e9e9e' }, grid: { display: false } },
-                      y: { ticks: { color: '#9e9e9e', callback: v => v.toLocaleString() + ' ₽' }, grid: { color: '#333' } } },
+                      y: { ticks: { color: '#9e9e9e', callback: v => v.toLocaleString('ru-RU')}, grid: { color: '#333' } } },
             onClick: (event, elements, chart) => {
               let index = null;
               if (elements.length > 0) index = elements[0].index;
@@ -270,6 +270,10 @@
       const ctx = document.getElementById('dividendChart').getContext('2d');
       if (dividendChart) dividendChart.destroy();
       if (!data.years || data.years.length === 0) return;
+	  if (!data.years || data.years.length === 0) {
+        document.getElementById('dividendChartContainer').innerHTML = '<p style="color:#9e9e9e; text-align:center">Нет данных о выплатах</p>';
+        return;
+      }
 
       const colors = ['#2196F3','#FF9800','#4CAF50','#F44336','#9C27B0','#00BCD4','#FFEB3B','#795548','#607D8B','#E91E63',
                       '#3F51B5','#009688','#8BC34A','#CDDC39','#FFC107','#FF5722','#9E9E9E','#000000','#FFFFFF','#FF00FF'];
@@ -294,7 +298,7 @@
           },
           scales: {
             x: { stacked: true, ticks: { color: '#9e9e9e' }, grid: { display: false } },
-            y: { stacked: true, ticks: { color: '#9e9e9e', callback: v => v.toLocaleString() + ' ₽' }, grid: { color: '#333' } }
+            y: { stacked: true, ticks: { color: '#9e9e9e', callback: v => v.toLocaleString('ru-RU')}, grid: { color: '#333' } }
           },
           onClick: (event, elements, chart) => {
             if (elements.length > 0) {
@@ -319,11 +323,17 @@
     container.classList.remove('hidden');
   }
 
-  async function syncOperations() {
-    try {
-      await apiCall('/api/sync', 'POST');
-      loadDividends(); // после синхронизации обновляем график и время
-    } catch(e) { alert('Ошибка синхронизации'); }
+async function syncOperations() {
+	try {
+	  const res = await apiCall('/api/sync', 'POST');
+	  // Обновляем время в интерфейсе из ответа
+	  if (res.last_sync) {
+		document.getElementById('lastSync').textContent = new Date(res.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+	  }
+	  loadDividends();
+	} catch(e) {
+	  alert('Ошибка синхронизации');
+	}
   }
 
   function showSectorDetails(sectorName) {

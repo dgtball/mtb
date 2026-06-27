@@ -217,7 +217,7 @@ async def sync_operations(http_session, from_date=None):
 
             db.insert_operation({
                 "id": op.get("id"),
-                "date": op.get("date"),
+                "date": datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S+03:00"),
                 "type": op.get("type"),
                 "ticker": ticker,
                 "figi": op.get("figi"),
