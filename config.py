@@ -1,7 +1,7 @@
 import os
 
 # ---------- ВЕРСИЯ ----------
-VERSION = "3.4"
+VERSION = "3.4.1"
 
 # ---------- ТОКЕНЫ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -14,6 +14,11 @@ try:
     MY_CHAT_ID = int(MY_CHAT_ID)
 except ValueError:
     raise ValueError("MY_CHAT_ID должен быть числом")
+DOMAIN = os.getenv("DOMAIN")
+if not DOMAIN:
+    raise ValueError("DOMAIN не задан")
+# Формируем webhook_url автоматически
+WEBHOOK_URL = f"{DOMAIN}/webhook"
 
 # ---------- ПАРАМЕТРЫ ----------
 TOP_N = 10

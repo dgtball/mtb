@@ -6,17 +6,17 @@ import datetime
 import asyncio
 import aiohttp
 import sqlite3
+import db
+import uvicorn
+import scheduler
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
-from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION, TINKOFF_TOKEN, SECTOR_NAMES, MINI_APP_SECRET, NAME_OVERRIDES, ticker_to_name, DB_PATH
-import db
+from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION, TINKOFF_TOKEN, SECTOR_NAMES, MINI_APP_SECRET, NAME_OVERRIDES, ticker_to_name, DB_PATH, WEBHOOK_URL
 from moex_api import load_instrument_names, ticker_to_sector
 from handlers import register_handlers, set_http_session, set_bot
-import scheduler
 
 # ---------- ЛОГИРОВАНИЕ ----------
 from logging.handlers import TimedRotatingFileHandler
@@ -346,9 +346,8 @@ async def main():
     await load_instrument_names(bot_session)
     register_handlers(dp)
 
-    webhook_url = f"https://mmvbbot3.bothost.tech/webhook"
-    await bot.set_webhook(webhook_url)
-    logging.info(f"✅ Вебхук установлен: {webhook_url}")
+    await bot.set_webhook(WEBHOOK_URL)
+    logging.info(f"✅ Вебхук установлен: {WEBHOOK_URL}")
 
     try:
         await bot.send_message(MY_CHAT_ID, f"🚀 Бот перезапущен и готов к работе! ver: {VERSION}")
