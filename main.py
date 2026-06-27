@@ -364,7 +364,7 @@ async def set_sector(request: Request):
     db.update_instrument_sector(ticker, sector)
     from moex_api import ticker_to_sector
     ticker_to_sector[ticker] = sector
-    return JSONResponse({"status": "ok"}))
+    return JSONResponse({"status": "ok"})
     
 @app.get("/api/instruments")
 async def get_instruments(request: Request):
