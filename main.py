@@ -365,7 +365,7 @@ async def main():
     scheduler.set_bot(bot)
     scheduler.set_http_session(bot_session)
 
-    await load_instrument_names(bot_session)
+    await load_instrument_names(bot_session, force=True)
     register_handlers(dp)
 
     await bot.set_webhook(WEBHOOK_URL)
