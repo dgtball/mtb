@@ -275,6 +275,9 @@ async def main():
     scheduler.set_http_session(bot_session)
 
     await load_instrument_names(bot_session)
+    if TINKOFF_TOKEN:
+        from tinkoff_api import build_figi_map
+        await build_figi_map(bot_session)
     register_handlers(dp)
 
     webhook_url = f"https://mmvbbot3.bothost.tech/webhook"

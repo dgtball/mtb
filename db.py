@@ -1,6 +1,6 @@
 import sqlite3
 import logging
-from config import DB_PATH, NAME_OVERRIDES
+from config import DB_PATH, NAME_OVERRIDES, ticker_to_name
 
 # ---------- ИНИЦИАЛИЗАЦИЯ ----------
 def init_db():
@@ -128,14 +128,21 @@ def insert_operation(op):
 def get_personal_dividends():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    # Используем русские названия типов
-    c.execute("SELECT COUNT(*) FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB'")
-    count = c.fetchone()[0]
-    logging.info(f"get_personal_dividends: найдено {count} выплат в БД")
     c.execute("SELECT date, ticker, payment FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date")
     rows = c.fetchall()
     conn.close()
-    return [{"date": r[0], "ticker": r[1], "amount": r[2]} for r in rows]
+    result = []
+    for r in rows:
+        ticker = r[1]
+        if ticker == "Прочие":
+            name = "Прочие"
+        else:
+            # Используем переопределение, если есть, иначе — название из MOEX
+            name = NAME_OVERRIDES.get(ticker)
+            if name is None:
+                name = ticker_to_name.get(ticker, ticker)
+        result.append({"date": r[0], "ticker": name, "amount": r[2]})
+    return result
     
 def get_last_dividends(limit=10):
     conn = sqlite3.connect(DB_PATH)

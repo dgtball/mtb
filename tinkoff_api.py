@@ -148,6 +148,21 @@ async def get_portfolio_summary(http_session):
         logging.error(f"Ошибка портфеля: {e}")
         return None
 
+async def build_figi_map(http_session):
+    """Запрашивает текущий портфель и строит словарь FIGI → ticker."""
+    global portfolio_figi_to_ticker
+    try:
+        summary = await get_portfolio_summary(http_session)
+        if summary:
+            for pos in summary["positions"]:
+                figi = pos["figi"]
+                ticker = pos["ticker"]
+                if figi and ticker and figi not in portfolio_figi_to_ticker:
+                    portfolio_figi_to_ticker[figi] = ticker
+            logging.info(f"build_figi_map: загружено {len(portfolio_figi_to_ticker)} FIGI из портфеля")
+    except Exception as e:
+        logging.error(f"Ошибка build_figi_map: {e}")
+
 async def sync_operations(http_session, from_date=None):
     """Синхронизирует операции из T-Invest API в БД. Возвращает количество новых операций."""
     logging.info("sync_operations started")
@@ -185,7 +200,12 @@ async def sync_operations(http_session, from_date=None):
             if not ticker:
                 figi = op.get("figi")
                 if figi:
-                    ticker = figi_to_ticker.get(figi)
+                    # Сначала пробуем словарь из портфеля
+                    ticker = portfolio_figi_to_ticker.get(figi)
+                    if not ticker:
+                        # Если не нашли, пробуем MOEX (может быть пустым)
+                        from moex_api import figi_to_ticker as moex_figi_to_ticker
+                        ticker = moex_figi_to_ticker.get(figi)
                 if not ticker:
                     ticker = "Прочие"
 
