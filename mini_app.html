@@ -302,26 +302,22 @@
             x: { stacked: true, ticks: { color: '#9e9e9e', font: { size: 9 } }, grid: { display: false } },
             y: { stacked: true, ticks: { color: '#9e9e9e', callback: v => v.toLocaleString(), font: { size: 9 } }, grid: { color: '#333' } }
           },
-		  // Добавляем явные размеры столбцов для лучшей кликабельности
           barPercentage: 0.9,
           categoryPercentage: 0.9,
           onClick: (event, elements, chart) => {
             const xScale = chart.scales.x;
             const xPixel = event.x;
-            const yPixel = event.y;
             const xIndex = Math.round(xScale.getValueForPixel(xPixel));
             if (xIndex >= 0 && xIndex < chart.data.labels.length) {
               const asset = chart.data.labels[xIndex];
-              // Определяем год (dataset) по наибольшему значению для этого актива
-              let maxVal = -Infinity;
+              // Находим первый год с ненулевой выплатой для этого актива
               let year = null;
-              chart.data.datasets.forEach(ds => {
-                const val = ds.data[xIndex] || 0;
-                if (val > maxVal) {
-                  maxVal = val;
+              for (let ds of chart.data.datasets) {
+                if (ds.data[xIndex] > 0) {
                   year = ds.label;
+                  break;
                 }
-              });
+              }
               if (year) showDividendDetails(year, asset);
             }
           }
