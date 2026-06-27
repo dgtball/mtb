@@ -263,33 +263,40 @@
 
   async function loadDividends() {
     try {
-      const status = await apiCall('/api/sync-status');
-      document.getElementById('lastSync').textContent = status.last_sync
-        ? new Date(status.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })
-        : 'никогда';
-
       const data = await apiCall('/api/dividends-yearly');
       const ctx = document.getElementById('dividendChart').getContext('2d');
       if (dividendChart) dividendChart.destroy();
-      if (!data.years || data.years.length === 0) return;
-	  if (!data.years || data.years.length === 0) {
-        document.getElementById('dividendChartContainer').innerHTML = '<p style="color:#9e9e9e; text-align:center">Нет данных о выплатах</p>';
+
+      if (!data.years || data.years.length === 0) {
         return;
       }
 
-      const colors = ['#2196F3','#FF9800','#4CAF50','#F44336','#9C27B0','#00BCD4','#FFEB3B','#795548','#607D8B','#E91E63',
-                      '#3F51B5','#009688','#8BC34A','#CDDC39','#FFC107','#FF5722','#9E9E9E','#000000','#FFFFFF','#FF00FF'];
+      // Транспонируем данные: активы по X, годы в легенду
+      const years = data.years;
+      const datasets = [];
+      const assetSet = new Set();
+      data.datasets.forEach(ds => assetSet.add(ds.label));
+      const assets = Array.from(assetSet).sort();
+
+      // Для каждого года создаём набор значений по активам
+      years.forEach((year, yearIndex) => {
+        const yearData = assets.map(asset => {
+          const ds = data.datasets.find(d => d.label === asset);
+          return ds ? ds.data[yearIndex] : 0;
+        });
+        datasets.push({
+          label: year,
+          data: yearData,
+          backgroundColor: ['#2196F3','#FF9800','#4CAF50','#F44336','#9C27B0','#00BCD4','#FFEB3B','#795548','#607D8B','#E91E63'][yearIndex % 10],
+          borderRadius: 4,
+        });
+      });
 
       dividendChart = new Chart(ctx, {
         type: 'bar',
         data: {
-          labels: data.years,
-          datasets: data.datasets.map((ds, i) => ({
-            label: ds.label,
-            data: ds.data,
-            backgroundColor: colors[i % colors.length],
-            borderRadius: 4,
-          }))
+          labels: assets,
+          datasets: datasets,
         },
         options: {
           responsive: true,
@@ -300,12 +307,12 @@
           },
           scales: {
             x: { stacked: true, ticks: { color: '#9e9e9e' }, grid: { display: false } },
-            y: { stacked: true, ticks: { color: '#9e9e9e', callback: v => v.toLocaleString('ru-RU')}, grid: { color: '#333' } }
+            y: { stacked: true, ticks: { color: '#9e9e9e', callback: v => v.toLocaleString('ru-RU') + ' ₽' }, grid: { color: '#333' } }
           },
           onClick: (event, elements, chart) => {
             if (elements.length > 0) {
-              const index = elements[0].index;
-              const year = chart.data.labels[index];
+              const datasetIndex = elements[0].datasetIndex;
+              const year = chart.data.datasets[datasetIndex].label;
               showDividendDetails(year);
             }
           }
@@ -325,13 +332,13 @@
     container.classList.remove('hidden');
   }
 
-async function syncOperations() {
+  async function syncOperations() {
     try {
       const res = await apiCall('/api/sync', 'POST');
       if (res.last_sync) {
         document.getElementById('lastSync').textContent = new Date(res.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
       }
-      loadDividends(); // обновляем график
+      loadDividends();
     } catch(e) { alert('Ошибка синхронизации'); }
   }
 
