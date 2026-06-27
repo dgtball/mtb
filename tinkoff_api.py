@@ -103,7 +103,9 @@ async def get_portfolio_summary(http_session):
         for pos in filtered_positions:
             figi = pos.get("figi")
             ticker = pos.get("ticker") or figi
-            raw_name = ticker_to_name.get(ticker, ticker)
+            raw_name = ticker_to_name.get(ticker)
+            if raw_name is None:
+                raw_name = ticker  # защита от None
             name = NAME_OVERRIDES.get(ticker)
             if name is None:
                 name = NAME_OVERRIDES.get(raw_name, raw_name)
@@ -136,7 +138,7 @@ async def get_portfolio_summary(http_session):
             result["positions"].append({
                 "figi": figi,
                 "ticker": ticker,
-                "name": name,
+                "name": name or ticker,  # защита от None
                 "instrument_type": instrument_type,
                 "type_display": type_display,
                 "quantity": quantity,

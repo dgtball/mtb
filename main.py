@@ -136,7 +136,7 @@ async def api_portfolio(request: Request):
 
             positions.append({
                 "ticker": ticker,
-                "name": pos["name"],
+                "name": pos["name"] or pos["ticker"],  # если name None, подставляем тикер
                 "price_formatted": smart_price(pos["price"]),
                 "avg_price_formatted": avg_formatted,
                 "value": value,
@@ -239,6 +239,8 @@ async def api_dividends_yearly(request: Request, year: int = None, ticker: str =
             details = []
             for r in rows:
                 tick = r[1]
+                if tick is None:
+                    tick = "Прочие"
                 if tick != "Прочие":
                     name = NAME_OVERRIDES.get(tick) or ticker_to_name.get(tick, tick)
                 else:
@@ -253,6 +255,8 @@ async def api_dividends_yearly(request: Request, year: int = None, ticker: str =
             details = []
             for r in rows:
                 tick = r[1]
+                if tick is None:
+                    tick = "Прочие"
                 if tick != "Прочие":
                     name = NAME_OVERRIDES.get(tick) or ticker_to_name.get(tick, tick)
                 else:
@@ -268,6 +272,8 @@ async def api_dividends_yearly(request: Request, year: int = None, ticker: str =
             for r in rows:
                 y = r[0][:4]
                 tick = r[1]
+                if tick is None:
+                    tick = "Прочие"
                 if tick != "Прочие":
                     name = NAME_OVERRIDES.get(tick) or ticker_to_name.get(tick, tick)
                 else:
@@ -286,6 +292,7 @@ async def api_dividends_yearly(request: Request, year: int = None, ticker: str =
                 })
             return JSONResponse({"years": years, "datasets": datasets})
     except Exception as e:
+        logging.error(f"Error in /api/dividends-yearly: {e}", exc_info=True)
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/api/sync")

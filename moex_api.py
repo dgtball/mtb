@@ -11,12 +11,13 @@ figi_to_ticker = {}
 
 async def load_instrument_names(http_session, force=False):
     global ticker_to_name, ticker_to_sector, figi_to_ticker
+    
     # Если не force, пробуем загрузить из БД
     if not force:
         instruments = db.get_all_instruments()
         if instruments:
             for inst in instruments:
-                ticker_to_name[inst['ticker']] = inst['name']
+                ticker_to_name[inst['ticker']] = inst['name'] or inst['ticker']  # защита от None
                 if inst['sector']:
                     ticker_to_sector[inst['ticker']] = inst['sector']
                 if inst['figi']:
@@ -26,6 +27,7 @@ async def load_instrument_names(http_session, force=False):
 
     # Иначе загружаем из MOEX
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    
     # Акции TQBR
     url_shares = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=securities"
     try:
@@ -42,8 +44,9 @@ async def load_instrument_names(http_session, force=False):
                         clean_name = raw_name.replace(' ао', '').replace(' ап', '')
                         if clean_name.startswith('i'):
                             clean_name = clean_name[1:]
+                        if not clean_name:
+                            clean_name = secid  # защита от пустой строки
                         figi = row.get('FIGI', None)
-                        # sector не берём из MOEX, оставляем None – upsert_instrument подставит из БД или "Прочие"
                         db.upsert_instrument(secid, clean_name, sector=None, figi=figi, instrument_type='share')
                         ticker_to_name[secid] = clean_name
                         if figi:
@@ -68,6 +71,8 @@ async def load_instrument_names(http_session, force=False):
                             clean_name = raw_name.replace(' ао', '').replace(' ап', '')
                             if clean_name.startswith('i'):
                                 clean_name = clean_name[1:]
+                            if not clean_name:
+                                clean_name = secid
                             figi = row.get('FIGI', None)
                             db.upsert_instrument(secid, clean_name, sector=None, figi=figi, instrument_type='bond')
                             ticker_to_name[secid] = clean_name
@@ -92,6 +97,8 @@ async def load_instrument_names(http_session, force=False):
                         clean_name = raw_name.replace(' ао', '').replace(' ап', '')
                         if clean_name.startswith('i'):
                             clean_name = clean_name[1:]
+                        if not clean_name:
+                            clean_name = secid
                         figi = row.get('FIGI', None)
                         db.upsert_instrument(secid, clean_name, sector=None, figi=figi, instrument_type='etf')
                         ticker_to_name[secid] = clean_name
@@ -100,11 +107,11 @@ async def load_instrument_names(http_session, force=False):
     except Exception as e:
         logging.error(f"Ошибка загрузки ETF: {e}")
 
-    # После загрузки обновляем глобальные словари из БД, чтобы подтянуть сектора
+    # После загрузки обновляем глобальные словари из БД, чтобы подтянуть сектора (если есть)
     instruments = db.get_all_instruments()
     for inst in instruments:
         if inst['ticker'] not in ticker_to_name:
-            ticker_to_name[inst['ticker']] = inst['name']
+            ticker_to_name[inst['ticker']] = inst['name'] or inst['ticker']
         if inst['sector']:
             ticker_to_sector[inst['ticker']] = inst['sector']
         if inst['figi']:

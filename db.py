@@ -169,10 +169,11 @@ def get_personal_dividends():
     result = []
     for r in rows:
         ticker = r[1]
+        if ticker is None:
+            ticker = "Прочие"
         if ticker == "Прочие":
             name = "Прочие"
         else:
-            # Используем переопределение, если есть, иначе — название из MOEX
             name = NAME_OVERRIDES.get(ticker)
             if name is None:
                 name = ticker_to_name.get(ticker, ticker)
@@ -285,19 +286,21 @@ def upsert_instrument(ticker: str, name: str = None, sector: str = None, figi: s
     if name is None:
         c.execute("SELECT name FROM instruments WHERE ticker = ?", (ticker,))
         row = c.fetchone()
-        if row:
+        if row and row[0]:
             name = row[0]
+        else:
+            name = ticker  # гарантируем, что не None
     # Если figi не указан, оставляем существующий
     if figi is None:
         c.execute("SELECT figi FROM instruments WHERE ticker = ?", (ticker,))
         row = c.fetchone()
-        if row:
+        if row and row[0]:
             figi = row[0]
     # Если instrument_type не указан, оставляем существующий
     if instrument_type is None:
         c.execute("SELECT instrument_type FROM instruments WHERE ticker = ?", (ticker,))
         row = c.fetchone()
-        if row:
+        if row and row[0]:
             instrument_type = row[0]
 
     c.execute('''INSERT OR REPLACE INTO instruments (ticker, name, sector, figi, instrument_type, updated_at)
