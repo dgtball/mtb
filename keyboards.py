@@ -6,6 +6,6 @@ def main_keyboard():
         [KeyboardButton(text="📊 Топ недели"), KeyboardButton(text="🗓️ Топ месяца")],
     ]
     kb.append([
-        KeyboardButton(text="🖥 Управление", web_app=WebAppInfo(url="https://minvest.bothost.tech//mini-app"))
+        KeyboardButton(text="🖥 Управление", web_app=WebAppInfo(url="https://mmvbbot3.bothost.tech/mini-app"))
     ])
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=False)

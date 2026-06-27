@@ -248,7 +248,7 @@ async def main():
     await load_instrument_names(bot_session)
     register_handlers(dp)
 
-    webhook_url = f"https://minvest.bothost.tech/webhook"
+    webhook_url = f"https://mmvbbot3.bothost.tech/webhook"
     await bot.set_webhook(webhook_url)
     logging.info(f"✅ Вебхук установлен: {webhook_url}")
 
