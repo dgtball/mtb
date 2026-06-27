@@ -260,11 +260,6 @@
 
   async function loadDividends() {
     try {
-      const status = await apiCall('/api/sync-status');
-      document.getElementById('lastSync').textContent = status.last_sync
-        ? new Date(status.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })
-        : 'никогда';
-
       const data = await apiCall('/api/dividends-yearly');
       const ctx = document.getElementById('dividendChart').getContext('2d');
       if (dividendChart) dividendChart.destroy();
@@ -307,13 +302,27 @@
             x: { stacked: true, ticks: { color: '#9e9e9e', font: { size: 9 } }, grid: { display: false } },
             y: { stacked: true, ticks: { color: '#9e9e9e', callback: v => v.toLocaleString(), font: { size: 9 } }, grid: { color: '#333' } }
           },
+		  // Добавляем явные размеры столбцов для лучшей кликабельности
+          barPercentage: 0.9,
+          categoryPercentage: 0.9,
           onClick: (event, elements, chart) => {
-            if (elements.length > 0) {
-              const datasetIndex = elements[0].datasetIndex;
-              const dataIndex = elements[0].index;
-              const year = chart.data.datasets[datasetIndex].label;
-              const asset = chart.data.labels[dataIndex];
-              showDividendDetails(year, asset);
+            const xScale = chart.scales.x;
+            const xPixel = event.x;
+            const yPixel = event.y;
+            const xIndex = Math.round(xScale.getValueForPixel(xPixel));
+            if (xIndex >= 0 && xIndex < chart.data.labels.length) {
+              const asset = chart.data.labels[xIndex];
+              // Определяем год (dataset) по наибольшему значению для этого актива
+              let maxVal = -Infinity;
+              let year = null;
+              chart.data.datasets.forEach(ds => {
+                const val = ds.data[xIndex] || 0;
+                if (val > maxVal) {
+                  maxVal = val;
+                  year = ds.label;
+                }
+              });
+              if (year) showDividendDetails(year, asset);
             }
           }
         }
