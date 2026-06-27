@@ -392,23 +392,48 @@ async def get_unticked_operations(request: Request):
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
+        # 1. Получаем операции без тикера
         c.execute("""SELECT id, date, payment, ticker, name 
                      FROM operations 
                      WHERE (ticker IS NULL OR ticker = 'Прочие') 
                        AND type IN ('Выплата дивидендов', 'Выплата купонов')
                      ORDER BY date DESC""")
         rows = c.fetchall()
-        conn.close()
-        result = []
+        operations = []
         for r in rows:
-            result.append({
+            operations.append({
                 "id": r[0],
                 "date": r[1],
                 "payment": r[2],
                 "ticker": r[3],
                 "name": r[4] or "Неизвестно"
             })
-        return JSONResponse(result)
+        
+        # 2. Собираем все возможные тикеры для выпадающего списка:
+        #    - из instruments
+        #    - из name_overrides
+        #    - из операций (где ticker не NULL и не 'Прочие')
+        tickers_set = set()
+        c.execute("SELECT ticker FROM instruments")
+        for row in c.fetchall():
+            if row[0]:
+                tickers_set.add(row[0])
+        c.execute("SELECT ticker FROM name_overrides")
+        for row in c.fetchall():
+            if row[0]:
+                tickers_set.add(row[0])
+        c.execute("SELECT DISTINCT ticker FROM operations WHERE ticker IS NOT NULL AND ticker != 'Прочие'")
+        for row in c.fetchall():
+            if row[0]:
+                tickers_set.add(row[0])
+        
+        tickers_list = sorted(tickers_set)
+        conn.close()
+        
+        return JSONResponse({
+            "operations": operations,
+            "available_tickers": tickers_list
+        })
     except Exception as e:
         logging.error(f"Error in /api/operations/unticked: {e}", exc_info=True)
         return JSONResponse({"error": str(e)}, status_code=500)

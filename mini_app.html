@@ -724,54 +724,52 @@
 
   // ===== НАСТРОЙКИ: Привязка тикеров =====
   async function loadUntickedOperations() {
-    try {
-      const data = await apiCall('/api/operations/unticked');
-      const tbody = document.getElementById('untickedTable');
-      tbody.innerHTML = '';
-      if (data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5">Нет операций без тикера</td></tr>';
-        return;
-      }
-      // Получаем список тикеров (если ещё не загружен)
-      if (allTickersList.length === 0) {
-        const instruments = await apiCall('/api/instruments');
-        allTickersList = instruments.map(i => i.ticker).sort();
-      }
-
-      data.forEach(op => {
-        const tr = document.createElement('tr');
-        const tdDate = document.createElement('td'); tdDate.textContent = new Date(op.date).toLocaleDateString(); tr.appendChild(tdDate);
-        const tdPayment = document.createElement('td'); tdPayment.textContent = op.payment.toLocaleString(); tr.appendChild(tdPayment);
-        const tdCurrent = document.createElement('td'); tdCurrent.textContent = op.ticker || '—'; tr.appendChild(tdCurrent);
-        const tdSelect = document.createElement('td');
-        const select = document.createElement('select');
-        select.className = 'ticker-select';
-        select.dataset.opid = op.id;
-        const defaultOpt = document.createElement('option'); defaultOpt.value = ''; defaultOpt.textContent = 'Выберите'; select.appendChild(defaultOpt);
-        allTickersList.forEach(t => {
-          const opt = document.createElement('option'); opt.value = t; opt.textContent = t; select.appendChild(opt);
-        });
-        tdSelect.appendChild(select);
-        tr.appendChild(tdSelect);
-        const tdAction = document.createElement('td');
-        const btn = document.createElement('button');
-        btn.className = 'btn-success';
-        btn.textContent = 'Привязать';
-        btn.style.padding = '4px 10px';
-        btn.style.border = 'none';
-        btn.style.borderRadius = '6px';
-        btn.style.cursor = 'pointer';
-        btn.style.fontSize = '10px';
-        btn.addEventListener('click', () => linkTicker(op.id));
-        tdAction.appendChild(btn);
-        tr.appendChild(tdAction);
-        tbody.appendChild(tr);
-      });
-    } catch(e) {
-      console.error(e);
-      showToast('Ошибка загрузки операций без тикера', 'error');
+  try {
+    const data = await apiCall('/api/operations/unticked');
+    const tbody = document.getElementById('untickedTable');
+    tbody.innerHTML = '';
+    const operations = data.operations || [];
+    if (operations.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5">Нет операций без тикера</td></tr>';
+      return;
     }
+    const tickers = data.available_tickers || [];
+    allTickersList = tickers;
+
+    operations.forEach(op => {
+      const tr = document.createElement('tr');
+      const tdDate = document.createElement('td'); tdDate.textContent = new Date(op.date).toLocaleDateString(); tr.appendChild(tdDate);
+      const tdPayment = document.createElement('td'); tdPayment.textContent = op.payment.toLocaleString(); tr.appendChild(tdPayment);
+      const tdCurrent = document.createElement('td'); tdCurrent.textContent = op.ticker || '—'; tr.appendChild(tdCurrent);
+      const tdSelect = document.createElement('td');
+      const select = document.createElement('select');
+      select.className = 'ticker-select';
+      select.dataset.opid = op.id;
+      const defaultOpt = document.createElement('option'); defaultOpt.value = ''; defaultOpt.textContent = 'Выберите'; select.appendChild(defaultOpt);
+      tickers.forEach(t => {
+        const opt = document.createElement('option'); opt.value = t; opt.textContent = t; select.appendChild(opt);
+      });
+      tdSelect.appendChild(select);
+      tr.appendChild(tdSelect);
+      const tdAction = document.createElement('td');
+      const btn = document.createElement('button');
+      btn.className = 'btn-success';
+      btn.textContent = 'Привязать';
+      btn.style.padding = '4px 10px';
+      btn.style.border = 'none';
+      btn.style.borderRadius = '6px';
+      btn.style.cursor = 'pointer';
+      btn.style.fontSize = '10px';
+      btn.addEventListener('click', () => linkTicker(op.id));
+      tdAction.appendChild(btn);
+      tr.appendChild(tdAction);
+      tbody.appendChild(tr);
+    });
+  } catch(e) {
+    console.error(e);
+    showToast('Ошибка загрузки операций без тикера', 'error');
   }
+}
 
   async function linkTicker(opId) {
     const select = document.querySelector(`.ticker-select[data-opid="${opId}"]`);
