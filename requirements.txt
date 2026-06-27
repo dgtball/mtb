@@ -1,5 +1,7 @@
 aiogram
-aiohttp
+aiohttp==3.9.5
+aiohttp-retry==2.8.3
+pytz==2024.2
 pandas
 tabulate
 fastapi
