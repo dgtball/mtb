@@ -223,6 +223,54 @@ async def api_my_dividends(request: Request):
         return JSONResponse(dividends)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+        
+@app.get("/api/dividends-yearly")
+async def api_dividends_yearly(request: Request, year: int = None):
+    if not check_token(request):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        conn = db._get_conn()
+        c = conn.cursor()
+        if year:
+            c.execute("SELECT date, ticker, payment FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' AND date LIKE ? ORDER BY date", (f"{year}%",))
+            rows = c.fetchall()
+            conn.close()
+            details = []
+            for r in rows:
+                ticker = r[1]
+                if ticker != "Прочие":
+                    name = db.NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
+                else:
+                    name = "Прочие"
+                details.append({"date": r[0], "name": name, "amount": r[2]})
+            return JSONResponse({"year": year, "details": details})
+        else:
+            c.execute("SELECT date, ticker, payment FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date")
+            rows = c.fetchall()
+            conn.close()
+            yearly = {}
+            for r in rows:
+                y = r[0][:4]
+                ticker = r[1]
+                if ticker != "Прочие":
+                    name = db.NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
+                else:
+                    name = "Прочие"
+                if y not in yearly:
+                    yearly[y] = {}
+                if name not in yearly[y]:
+                    yearly[y][name] = 0.0
+                yearly[y][name] += r[2]
+            years = sorted(yearly.keys())
+            datasets = []
+            for name in sorted(set(n for y in yearly.values() for n in y.keys())):
+                datasets.append({
+                    "label": name,
+                    "data": [yearly[y].get(name, 0) for y in years]
+                })
+            return JSONResponse({"years": years, "datasets": datasets})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/api/sync")
 async def api_sync(request: Request):
