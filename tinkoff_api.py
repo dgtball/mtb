@@ -2,8 +2,10 @@ import logging
 import datetime
 import aiohttp
 from config import TINKOFF_TOKEN, TINKOFF_API_URL, NAME_OVERRIDES, ticker_to_name
-from moex_api import figi_to_ticker
 import db
+
+# Глобальный словарь FIGI → Ticker, заполняется при старте
+portfolio_figi_to_ticker = {}
 
 async def tinkoff_api_request(http_session, method: str, endpoint: str, params: dict = None) -> dict:
     if not TINKOFF_TOKEN:
