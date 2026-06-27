@@ -14,7 +14,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
-from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION, TINKOFF_TOKEN, SECTOR_NAMES, MINI_APP_SECRET, NAME_OVERRIDES, ticker_to_name, DB_PATH, WEBHOOK_URL
+from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION, TINKOFF_TOKEN, SECTOR_NAMES, MINI_APP_SECRET, NAME_OVERRIDES, ticker_to_name, DB_PATH, WEBHOOK_URL, SECTOR_NAMES
 from moex_api import load_instrument_names, ticker_to_sector
 from handlers import register_handlers, set_http_session, set_bot
 
@@ -365,6 +365,14 @@ async def set_sector(request: Request):
     from moex_api import ticker_to_sector
     ticker_to_sector[ticker] = sector
     return JSONResponse({"status": "ok"})
+    
+@app.get("/api/sectors/list")
+async def get_sectors_list(request: Request):
+    if not check_token(request):
+        raise HTTPException(403)
+    # Возвращаем список уникальных секторов из справочника
+    sectors = sorted(set(SECTOR_NAMES.values()))
+    return JSONResponse(sectors)
     
 @app.get("/api/instruments")
 async def get_instruments(request: Request):

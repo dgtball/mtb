@@ -1,8 +1,10 @@
 import os
 
 # ---------- ВЕРСИЯ ----------
-VERSION = "3.4.4"
+VERSION = "3.4.5"
 
+
+UPDATE operations SET ticker = 'FIXP' WHERE ticker = 'Прочие' AND date LIKE '2025-02-11%'; INSERT OR REPLACE INTO name_overrides (ticker, display_name) VALUES ('FIXP', 'ФИКС Прайс');
 # ---------- ТОКЕНЫ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
 TINKOFF_TOKEN = os.getenv("TITN")
