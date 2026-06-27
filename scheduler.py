@@ -1,13 +1,14 @@
 import asyncio
 import datetime
 import logging
-import db
 import pandas as pd
 from aiogram import Bot
-from utils import get_moscow_time, get_local_time, get_session_status
+
+import db
 from handlers import format_message, format_historical_table, get_portfolio_change_str
 from moex_api import get_market_data, get_moex_index_info, get_top_movers, get_historical_shares, calc_period_change
-from config import MY_CHAT_ID, TOP_N
+from utils import get_moscow_time, get_local_time, get_session_status
+from config import MY_CHAT_ID, TOP_N, TINKOFF_TOKEN  # добавили импорт TINKOFF_TOKEN
 
 _bot = None
 _http_session = None
@@ -28,6 +29,7 @@ def is_portfolio_update_allowed():
     global portfolio_update_allowed
     return portfolio_update_allowed
 
+# ---------- ФУНКЦИИ ОТПРАВКИ ТОПОВ ----------
 async def send_weekly_top():
     try:
         now = get_moscow_time()
@@ -90,15 +92,17 @@ async def send_monthly_top():
     except Exception as e:
         logging.error(f"Ошибка отправки ежемесячного топа: {e}")
 
-def last_trading_day(today):
-    if today.month == 12:
-        last_day = datetime.date(today.year+1, 1, 1) - datetime.timedelta(days=1)
-    else:
-        last_day = datetime.date(today.year, today.month+1, 1) - datetime.timedelta(days=1)
-    while last_day.weekday() >= 5:
-        last_day -= datetime.timedelta(days=1)
-    return last_day
+# ---------- ФУНКЦИЯ ОБНОВЛЕНИЯ КЭША ИНСТРУМЕНТОВ ----------
+async def refresh_instruments_cache():
+    logging.info("🔄 Обновление справочника инструментов из MOEX")
+    try:
+        from moex_api import load_instrument_names
+        await load_instrument_names(_http_session, force=True)
+        logging.info("✅ Справочник инструментов обновлён")
+    except Exception as e:
+        logging.error(f"❌ Ошибка обновления справочника: {e}")
 
+# ---------- ОСНОВНОЙ ЦИКЛ ПЛАНИРОВЩИКА ----------
 async def scheduler_loop():
     global _active_day_message_id, portfolio_update_allowed
     last_week_sent_date = None
@@ -178,12 +182,16 @@ async def scheduler_loop():
             else:
                 portfolio_update_allowed = False
                 _active_day_message_id = None # сбрасываем, чтобы утром отправить новый топ, но старый не трогаем
-                
+
             # Ежедневная синхронизация операций в 10:00
             if hour == 10 and minute == 0:
                 if TINKOFF_TOKEN:
                     from tinkoff_api import sync_operations
                     asyncio.create_task(sync_operations(_http_session))
+
+            # Ежедневное обновление кэша инструментов в 03:00
+            if hour == 3 and minute == 0:
+                asyncio.create_task(refresh_instruments_cache())
 
             # Пятница после 23:50
             if weekday == 4 and hour == 23 and minute >= 50:
@@ -192,6 +200,7 @@ async def scheduler_loop():
                     last_week_sent_date = today
 
             # Последний торговый день месяца после 23:50
+            from utils import last_trading_day
             last_trade_day = last_trading_day(today)
             if today == last_trade_day and hour == 23 and minute >= 50:
                 if last_month_sent_date != today:

@@ -6,12 +6,20 @@ from config import DB_PATH, NAME_OVERRIDES, ticker_to_name
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    
+    # Таблица переопределений названий
     c.execute('''CREATE TABLE IF NOT EXISTS name_overrides
                  (ticker TEXT PRIMARY KEY, display_name TEXT)''')
+    
+    # Таблица состояния портфеля (снапшоты, текущая стоимость)
     c.execute('''CREATE TABLE IF NOT EXISTS portfolio_state
                  (key TEXT PRIMARY KEY, value REAL)''')
+    
+    # Старая таблица секторов (для обратной совместимости)
     c.execute('''CREATE TABLE IF NOT EXISTS sectors
                  (ticker TEXT PRIMARY KEY, sector_name TEXT)''')
+    
+    # Таблица операций (выплаты, сделки)
     c.execute('''CREATE TABLE IF NOT EXISTS operations
                  (id TEXT PRIMARY KEY,
                   date TEXT NOT NULL,
@@ -26,11 +34,25 @@ def init_db():
                   name TEXT)''')
     c.execute('CREATE INDEX IF NOT EXISTS idx_operations_date ON operations(date)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_operations_type ON operations(type)')
+    
+    # Новая таблица инструментов (кэш MOEX)
+    c.execute('''CREATE TABLE IF NOT EXISTS instruments (
+        ticker TEXT PRIMARY KEY,
+        name TEXT,
+        sector TEXT,
+        figi TEXT,
+        instrument_type TEXT,
+        updated_at TIMESTAMP
+    )''')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_instruments_figi ON instruments(figi)')
+    
     conn.commit()
     conn.close()
     logging.info(f"✅ База данных инициализирована: {DB_PATH}")
+    
     seed_overrides()
     seed_sectors()
+    migrate_sectors_to_instruments()
 
 # ---------- НАЧАЛЬНЫЕ ПЕРЕОПРЕДЕЛЕНИЯ ----------
 def seed_overrides():
@@ -53,7 +75,7 @@ def seed_overrides():
         logging.info("✅ Новые переопределения добавлены в БД")
     conn.close()
 
-# ---------- СЕКТОРА ----------
+# ---------- СЕКТОРА (старая таблица, для обратной совместимости) ----------
 def seed_sectors():
     initial_sectors = {
         "SBER": "Финансы",
@@ -110,6 +132,19 @@ def seed_sectors():
     conn.commit()
     conn.close()
     logging.info(f"✅ Сектора обновлены ({inserted} шт.)")
+
+# ---------- МИГРАЦИЯ СТАРЫХ СЕКТОРОВ В НОВУЮ ТАБЛИЦУ ----------
+def migrate_sectors_to_instruments():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    # Переносим все записи из sectors в instruments (если их там ещё нет)
+    c.execute("SELECT ticker, sector_name FROM sectors")
+    rows = c.fetchall()
+    for ticker, sector in rows:
+        c.execute("INSERT OR IGNORE INTO instruments (ticker, sector, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)", (ticker, sector))
+    conn.commit()
+    conn.close()
+    logging.info(f"✅ Перенесено {len(rows)} секторов в instruments")
 
 # ---------- ОПЕРАЦИИ ----------
 def insert_operation(op):
@@ -216,8 +251,78 @@ def remove_name_override(ticker: str):
     conn.close()
     load_name_overrides()
 
-# ---------- СЕКТОРА (дополнительные функции) ----------
+# ---------- НОВАЯ ТАБЛИЦА INSTRUMENTS ----------
+def get_instrument(ticker: str) -> dict | None:
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT ticker, name, sector, figi, instrument_type, updated_at FROM instruments WHERE ticker = ?", (ticker,))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        return {"ticker": row[0], "name": row[1], "sector": row[2], "figi": row[3], "instrument_type": row[4], "updated_at": row[5]}
+    return None
+
+def get_all_instruments():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT ticker, name, sector, figi, instrument_type, updated_at FROM instruments")
+    rows = c.fetchall()
+    conn.close()
+    return [{"ticker": r[0], "name": r[1], "sector": r[2], "figi": r[3], "instrument_type": r[4], "updated_at": r[5]} for r in rows]
+
+def upsert_instrument(ticker: str, name: str = None, sector: str = None, figi: str = None, instrument_type: str = None):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    # Если сектор не указан, пытаемся взять из старой таблицы sectors
+    if sector is None:
+        c.execute("SELECT sector_name FROM sectors WHERE ticker = ?", (ticker,))
+        row = c.fetchone()
+        if row:
+            sector = row[0]
+        else:
+            sector = "Прочие"
+    # Если имя не указано, оставляем существующее
+    if name is None:
+        c.execute("SELECT name FROM instruments WHERE ticker = ?", (ticker,))
+        row = c.fetchone()
+        if row:
+            name = row[0]
+    # Если figi не указан, оставляем существующий
+    if figi is None:
+        c.execute("SELECT figi FROM instruments WHERE ticker = ?", (ticker,))
+        row = c.fetchone()
+        if row:
+            figi = row[0]
+    # Если instrument_type не указан, оставляем существующий
+    if instrument_type is None:
+        c.execute("SELECT instrument_type FROM instruments WHERE ticker = ?", (ticker,))
+        row = c.fetchone()
+        if row:
+            instrument_type = row[0]
+
+    c.execute('''INSERT OR REPLACE INTO instruments (ticker, name, sector, figi, instrument_type, updated_at)
+                 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)''',
+              (ticker, name, sector, figi, instrument_type))
+    conn.commit()
+    conn.close()
+
+def update_instrument_sector(ticker: str, new_sector: str):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("UPDATE instruments SET sector = ?, updated_at = CURRENT_TIMESTAMP WHERE ticker = ?", (new_sector, ticker))
+    conn.commit()
+    conn.close()
+    # также обновляем в старой таблице sectors для совместимости
+    c.execute("INSERT OR REPLACE INTO sectors (ticker, sector_name) VALUES (?, ?)", (ticker, new_sector))
+    conn.commit()
+    conn.close()
+
+# ---------- СЕКТОРА (обновленная функция) ----------
 def get_sector(ticker: str) -> str:
+    inst = get_instrument(ticker)
+    if inst and inst['sector']:
+        return inst['sector']
+    # fallback на старую таблицу sectors
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT sector_name FROM sectors WHERE ticker = ?", (ticker,))

@@ -310,6 +310,21 @@ async def api_sync_status(request: Request):
         raise HTTPException(status_code=403, detail="Forbidden")
     last_date = db.get_last_operation_date()
     return JSONResponse({"last_sync": last_date})
+    
+@app.post("/api/sector")
+async def set_sector(request: Request):
+    if not check_token(request):
+        raise HTTPException(403)
+    body = await request.json()
+    ticker = body.get("ticker")
+    sector = body.get("sector")
+    if not ticker or not sector:
+        raise HTTPException(400, "Missing ticker or sector")
+    db.update_instrument_sector(ticker, sector)
+    # обновляем глобальный словарь
+    from moex_api import ticker_to_sector
+    ticker_to_sector[ticker] = sector
+    return JSONResponse({"status": "ok"})
 
 # ---------- ФОНОВЫЙ ОБНОВИТЕЛЬ ПОРТФЕЛЯ ----------
 async def portfolio_updater(http_session):

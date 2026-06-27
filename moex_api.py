@@ -8,10 +8,23 @@ from config import ticker_to_name
 ticker_to_sector = {}
 figi_to_ticker = {}
 
-async def load_instrument_names(http_session):
-    global ticker_to_name
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+async def load_instrument_names(http_session, force=False):
+    global ticker_to_name, ticker_to_sector, figi_to_ticker
+    # Если не force, пробуем загрузить из БД
+    if not force:
+        instruments = db.get_all_instruments()
+        if instruments:
+            for inst in instruments:
+                ticker_to_name[inst['ticker']] = inst['name']
+                if inst['sector']:
+                    ticker_to_sector[inst['ticker']] = inst['sector']
+                if inst['figi']:
+                    figi_to_ticker[inst['figi']] = inst['ticker']
+            logging.info(f"✅ Загружено {len(instruments)} инструментов из БД")
+            return
 
+    # Иначе загружаем из MOEX
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     # Акции TQBR
     url_shares = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=securities"
     try:
@@ -22,22 +35,22 @@ async def load_instrument_names(http_session):
                     columns = json_data['securities']['columns']
                     data_rows = json_data['securities']['data']
                     df = pd.DataFrame(data_rows, columns=columns)
-                    logging.info(f"Колонки для доски: {list(df.columns)}")
-                    if 'SECID' in df.columns and 'SHORTNAME' in df.columns:
-                        for _, row in df.iterrows():
-                            raw_name = row['SHORTNAME']
-                            clean_name = raw_name.replace(' ао', '').replace(' ап', '')
-                            if clean_name.startswith('i'):
-                                clean_name = clean_name[1:]
-                            ticker_to_name[row['SECID']] = clean_name
-                            if 'SECTORID' in df.columns:
-                                ticker_to_sector[row['SECID']] = row['SECTORID']
-                            if 'FIGI' in df.columns:
-                                figi_to_ticker[row['FIGI']] = row['SECID']
+                    for _, row in df.iterrows():
+                        secid = row['SECID']
+                        raw_name = row['SHORTNAME']
+                        clean_name = raw_name.replace(' ао', '').replace(' ап', '')
+                        if clean_name.startswith('i'):
+                            clean_name = clean_name[1:]
+                        figi = row.get('FIGI', None)
+                        # sector не берём из MOEX, оставляем None – upsert_instrument подставит из БД или "Прочие"
+                        db.upsert_instrument(secid, clean_name, sector=None, figi=figi, instrument_type='share')
+                        ticker_to_name[secid] = clean_name
+                        if figi:
+                            figi_to_ticker[figi] = secid
     except Exception as e:
-        logging.error(f"Ошибка загрузки акций: {e}")
+        logging.error(f"Ошибка загрузки акций TQBR: {e}")
 
-    # Облигации (две доски)
+    # Облигации TQOB и TQCB
     for board in ['TQOB', 'TQCB']:
         url_bonds = f"https://iss.moex.com/iss/engines/stock/markets/bonds/boards/{board}/securities.json?iss.meta=off&iss.only=securities"
         try:
@@ -48,22 +61,21 @@ async def load_instrument_names(http_session):
                         columns = json_data['securities']['columns']
                         data_rows = json_data['securities']['data']
                         df = pd.DataFrame(data_rows, columns=columns)
-                        logging.info(f"Колонки для доски: {list(df.columns)}")
-                        if 'SECID' in df.columns and 'SHORTNAME' in df.columns:
-                            for _, row in df.iterrows():
-                                raw_name = row['SHORTNAME']
-                                clean_name = raw_name.replace(' ао', '').replace(' ап', '')
-                                if clean_name.startswith('i'):
-                                    clean_name = clean_name[1:]
-                                ticker_to_name[row['SECID']] = clean_name
-                                if 'SECTORID' in df.columns:
-                                    ticker_to_sector[row['SECID']] = row['SECTORID']
-                                if 'FIGI' in df.columns:
-                                    figi_to_ticker[row['FIGI']] = row['SECID']
+                        for _, row in df.iterrows():
+                            secid = row['SECID']
+                            raw_name = row['SHORTNAME']
+                            clean_name = raw_name.replace(' ао', '').replace(' ап', '')
+                            if clean_name.startswith('i'):
+                                clean_name = clean_name[1:]
+                            figi = row.get('FIGI', None)
+                            db.upsert_instrument(secid, clean_name, sector=None, figi=figi, instrument_type='bond')
+                            ticker_to_name[secid] = clean_name
+                            if figi:
+                                figi_to_ticker[figi] = secid
         except Exception as e:
             logging.error(f"Ошибка загрузки облигаций {board}: {e}")
 
-    # ETF
+    # ETF TQTF
     url_etf = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQTF/securities.json?iss.meta=off&iss.only=securities"
     try:
         async with http_session.get(url_etf, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
@@ -73,23 +85,32 @@ async def load_instrument_names(http_session):
                     columns = json_data['securities']['columns']
                     data_rows = json_data['securities']['data']
                     df = pd.DataFrame(data_rows, columns=columns)
-                    logging.info(f"Колонки для доски: {list(df.columns)}")
-                    if 'SECID' in df.columns and 'SHORTNAME' in df.columns:
-                        for _, row in df.iterrows():
-                            raw_name = row['SHORTNAME']
-                            clean_name = raw_name.replace(' ао', '').replace(' ап', '')
-                            if clean_name.startswith('i'):
-                                clean_name = clean_name[1:]
-                            ticker_to_name[row['SECID']] = clean_name
-                            if 'SECTORID' in df.columns:
-                                ticker_to_sector[row['SECID']] = row['SECTORID']
-                            if 'FIGI' in df.columns:
-                                figi_to_ticker[row['FIGI']] = row['SECID']
+                    for _, row in df.iterrows():
+                        secid = row['SECID']
+                        raw_name = row['SHORTNAME']
+                        clean_name = raw_name.replace(' ао', '').replace(' ап', '')
+                        if clean_name.startswith('i'):
+                            clean_name = clean_name[1:]
+                        figi = row.get('FIGI', None)
+                        db.upsert_instrument(secid, clean_name, sector=None, figi=figi, instrument_type='etf')
+                        ticker_to_name[secid] = clean_name
+                        if figi:
+                            figi_to_ticker[figi] = secid
     except Exception as e:
         logging.error(f"Ошибка загрузки ETF: {e}")
 
-    logging.info(f"✅ Загружено {len(ticker_to_name)} наименований, {len(ticker_to_sector)} секторов, {len(figi_to_ticker)} FIGI")
+    # После загрузки обновляем глобальные словари из БД, чтобы подтянуть сектора
+    instruments = db.get_all_instruments()
+    for inst in instruments:
+        if inst['ticker'] not in ticker_to_name:
+            ticker_to_name[inst['ticker']] = inst['name']
+        if inst['sector']:
+            ticker_to_sector[inst['ticker']] = inst['sector']
+        if inst['figi']:
+            figi_to_ticker[inst['figi']] = inst['ticker']
 
+    logging.info(f"✅ Обновлено {len(instruments)} инструментов из MOEX")
+    
 async def get_market_data(http_session):
     url = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=marketdata,securities"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
