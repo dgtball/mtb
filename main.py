@@ -225,35 +225,51 @@ async def api_my_dividends(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.get("/api/dividends-yearly")
-async def api_dividends_yearly(request: Request, year: int = None):
+async def api_dividends_yearly(request: Request, year: int = None, ticker: str = None):
     if not check_token(request):
         raise HTTPException(status_code=403, detail="Forbidden")
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        if year:
+        if year and ticker:
+            # Фильтр по году и тикеру (или названию)
+            c.execute("SELECT date, ticker, payment FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' AND date LIKE ? AND (ticker = ? OR ticker IN (SELECT ticker FROM name_overrides WHERE display_name = ?)) ORDER BY date DESC", (f"{year}%", ticker, ticker))
+            rows = c.fetchall()
+            conn.close()
+            details = []
+            for r in rows:
+                tick = r[1]
+                if tick != "Прочие":
+                    name = NAME_OVERRIDES.get(tick) or ticker_to_name.get(tick, tick)
+                else:
+                    name = "Прочие"
+                details.append({"date": r[0], "name": name, "amount": r[2]})
+            return JSONResponse({"year": year, "ticker": ticker, "details": details})
+        elif year:
+            # Только год
             c.execute("SELECT date, ticker, payment FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' AND date LIKE ? ORDER BY date", (f"{year}%",))
             rows = c.fetchall()
             conn.close()
             details = []
             for r in rows:
-                ticker = r[1]
-                if ticker != "Прочие":
-                    name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
+                tick = r[1]
+                if tick != "Прочие":
+                    name = NAME_OVERRIDES.get(tick) or ticker_to_name.get(tick, tick)
                 else:
                     name = "Прочие"
                 details.append({"date": r[0], "name": name, "amount": r[2]})
             return JSONResponse({"year": year, "details": details})
         else:
+            # Общий график
             c.execute("SELECT date, ticker, payment FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date")
             rows = c.fetchall()
             conn.close()
             yearly = {}
             for r in rows:
                 y = r[0][:4]
-                ticker = r[1]
-                if ticker != "Прочие":
-                    name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
+                tick = r[1]
+                if tick != "Прочие":
+                    name = NAME_OVERRIDES.get(tick) or ticker_to_name.get(tick, tick)
                 else:
                     name = "Прочие"
                 if y not in yearly:

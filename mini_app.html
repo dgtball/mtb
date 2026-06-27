@@ -76,7 +76,7 @@
       width: 100%;
       max-width: 100%;
       margin: 0 0 16px 0;
-      height: 300px;
+      height: 280px; /* немного уменьшили для мобильных */
     }
     .top-positions {
       background: var(--surface);
@@ -93,11 +93,11 @@
       padding: 8px;
       text-align: left;
       border-bottom: 1px solid var(--border);
-      font-size: 11px;
+      font-size: 10px; /* уменьшенный шрифт */
     }
     th {
       color: var(--text-secondary);
-      font-size: 10px;
+      font-size: 9px;
     }
     .actions button {
       background: var(--negative);
@@ -148,7 +148,7 @@
       border-radius: 12px;
       padding: 12px 16px;
       margin-bottom: 16px;
-      font-size: 12px;
+      font-size: 11px;
     }
     .sync-status button {
       background: var(--accent);
@@ -157,7 +157,7 @@
       padding: 6px 14px;
       border-radius: 6px;
       cursor: pointer;
-      font-size: 12px;
+      font-size: 11px;
     }
   </style>
 </head>
@@ -196,9 +196,7 @@
       <span>Последняя синхронизация: <span id="lastSync">—</span></span>
       <button onclick="syncOperations()">Синхронизировать</button>
     </div>
-    <div class="chart-container" style="height:400px">
-      <div id="dividendChartContainer"><canvas id="dividendChart"></canvas></div>
-    </div>
+    <div class="chart-container" style="height:320px"><canvas id="dividendChart"></canvas></div>
     <div id="dividendDetails" class="dividend-details hidden"></div>
   </div>
 
@@ -241,7 +239,7 @@
               datalabels: { anchor: 'end', align: 'top', color: '#e0e0e0', font: { weight: 'bold', size: 11 },
                 formatter: (value, context) => percentages[context.dataIndex].toFixed(1) + '%' } },
             scales: { x: { ticks: { color: '#9e9e9e' }, grid: { display: false } },
-                      y: { ticks: { color: '#9e9e9e', callback: v => v.toLocaleString('ru-RU')}, grid: { color: '#333' } } },
+                      y: { ticks: { color: '#9e9e9e', callback: v => v.toLocaleString() + ' ₽' }, grid: { color: '#333' } } },
             onClick: (event, elements, chart) => {
               let index = null;
               if (elements.length > 0) index = elements[0].index;
@@ -252,7 +250,6 @@
           }, plugins: [ChartDataLabels]
         });
       }
-      // таблицы лидеров
       const gainersTable = document.getElementById('gainersTable').getElementsByTagName('tbody')[0];
       const losersTable = document.getElementById('losersTable').getElementsByTagName('tbody')[0];
       gainersTable.innerHTML = ''; losersTable.innerHTML = '';
@@ -263,22 +260,23 @@
 
   async function loadDividends() {
     try {
+      const status = await apiCall('/api/sync-status');
+      document.getElementById('lastSync').textContent = status.last_sync
+        ? new Date(status.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })
+        : 'никогда';
+
       const data = await apiCall('/api/dividends-yearly');
       const ctx = document.getElementById('dividendChart').getContext('2d');
       if (dividendChart) dividendChart.destroy();
 
-      if (!data.years || data.years.length === 0) {
-        return;
-      }
+      if (!data.years || data.years.length === 0) return;
 
-      // Транспонируем данные: активы по X, годы в легенду
       const years = data.years;
       const datasets = [];
       const assetSet = new Set();
       data.datasets.forEach(ds => assetSet.add(ds.label));
       const assets = Array.from(assetSet).sort();
 
-      // Для каждого года создаём набор значений по активам
       years.forEach((year, yearIndex) => {
         const yearData = assets.map(asset => {
           const ds = data.datasets.find(d => d.label === asset);
@@ -303,17 +301,19 @@
           maintainAspectRatio: false,
           plugins: {
             legend: { position: 'bottom', labels: { color: '#e0e0e0', font: { size: 10 } } },
-            tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.raw.toLocaleString()} ₽` } }
+            tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.raw.toLocaleString()}` } }
           },
           scales: {
-            x: { stacked: true, ticks: { color: '#9e9e9e' }, grid: { display: false } },
-            y: { stacked: true, ticks: { color: '#9e9e9e', callback: v => v.toLocaleString('ru-RU') + ' ₽' }, grid: { color: '#333' } }
+            x: { stacked: true, ticks: { color: '#9e9e9e', font: { size: 9 } }, grid: { display: false } },
+            y: { stacked: true, ticks: { color: '#9e9e9e', callback: v => v.toLocaleString(), font: { size: 9 } }, grid: { color: '#333' } }
           },
           onClick: (event, elements, chart) => {
             if (elements.length > 0) {
               const datasetIndex = elements[0].datasetIndex;
+              const dataIndex = elements[0].index;
               const year = chart.data.datasets[datasetIndex].label;
-              showDividendDetails(year);
+              const asset = chart.data.labels[dataIndex];
+              showDividendDetails(year, asset);
             }
           }
         }
@@ -321,12 +321,15 @@
     } catch(e) { console.error(e); }
   }
 
-  async function showDividendDetails(year) {
-    const data = await apiCall(`/api/dividends-yearly?year=${year}`);
+  async function showDividendDetails(year, asset) {
+    const url = `/api/dividends-yearly?year=${year}&ticker=${encodeURIComponent(asset)}`;
+    const data = await apiCall(url);
     const container = document.getElementById('dividendDetails');
     if (!data.details || data.details.length === 0) { container.classList.add('hidden'); return; }
-    let html = `<h3>Выплаты за ${year}</h3><table><thead><tr><th>Дата</th><th>Название</th><th>Сумма</th></tr></thead><tbody>`;
-    data.details.forEach(d => { html += `<tr><td>${new Date(d.date).toLocaleDateString()}</td><td>${d.name}</td><td>${d.amount.toLocaleString()} ₽</td></tr>`; });
+    let html = `<h3>${asset} за ${year}</h3><table><thead><tr><th>Дата</th><th>Название</th><th>Сумма</th></tr></thead><tbody>`;
+    data.details.forEach(d => {
+      html += `<tr><td>${new Date(d.date).toLocaleDateString()}</td><td>${d.name}</td><td>${d.amount.toLocaleString()}</td></tr>`;
+    });
     html += '</tbody></table>';
     container.innerHTML = html;
     container.classList.remove('hidden');
@@ -345,19 +348,11 @@
   function showSectorDetails(sectorName) {
     const filtered = allPositions.filter(p => p.sector === sectorName);
     const container = document.getElementById('sectorDetails');
-    if (filtered.length === 0) {
-      container.classList.add('hidden');
-      return;
-    }
+    if (filtered.length === 0) { container.classList.add('hidden'); return; }
     let html = `<h3>${sectorName}</h3><table><thead><tr><th>Название</th><th>Средняя</th><th>Доходность</th><th>Доля</th></tr></thead><tbody>`;
     filtered.forEach(p => {
       const sign = p.yield_pct >= 0 ? '+' : '';
-      html += `<tr>
-        <td>${p.name}</td>
-        <td>${p.avg_price_formatted}</td>
-        <td style="color:${p.yield_pct >= 0 ? '#4caf50' : '#f44336'}">${sign}${p.yield_pct.toFixed(2)}%</td>
-        <td>${p.share}%</td>
-      </tr>`;
+      html += `<tr><td>${p.name}</td><td>${p.avg_price_formatted}</td><td style="color:${p.yield_pct >= 0 ? '#4caf50' : '#f44336'}">${sign}${p.yield_pct.toFixed(2)}%</td><td>${p.share}%</td></tr>`;
     });
     html += '</tbody></table>';
     container.innerHTML = html;
@@ -368,29 +363,18 @@
     try {
       const data = await apiCall('/api/overrides');
       const tbody = document.getElementById('overridesTable');
-      while (tbody.firstChild) {
-        tbody.removeChild(tbody.firstChild);
-      }
+      while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
       data.forEach(o => {
         const tr = document.createElement('tr');
-        const tdTicker = document.createElement('td');
-        tdTicker.textContent = o.ticker;
-        tr.appendChild(tdTicker);
-        const tdName = document.createElement('td');
-        tdName.textContent = o.name;
-        tr.appendChild(tdName);
-        const tdActions = document.createElement('td');
-        tdActions.className = 'actions';
-        const btn = document.createElement('button');
-        btn.textContent = 'Удалить';
+        const tdTicker = document.createElement('td'); tdTicker.textContent = o.ticker; tr.appendChild(tdTicker);
+        const tdName = document.createElement('td'); tdName.textContent = o.name; tr.appendChild(tdName);
+        const tdActions = document.createElement('td'); tdActions.className = 'actions';
+        const btn = document.createElement('button'); btn.textContent = 'Удалить';
         btn.addEventListener('click', () => removeOverride(o.ticker));
-        tdActions.appendChild(btn);
-        tr.appendChild(tdActions);
+        tdActions.appendChild(btn); tr.appendChild(tdActions);
         tbody.appendChild(tr);
       });
-    } catch(e) {
-      console.error(e);
-    }
+    } catch(e) { console.error(e); }
   }
 
   async function addOverride() {
@@ -399,21 +383,16 @@
     if (!ticker || !name) return;
     try {
       await apiCall('/api/override', 'POST', { action: 'add', ticker, display_name: name });
-      document.getElementById('newTicker').value = '';
-      document.getElementById('newName').value = '';
+      document.getElementById('newTicker').value = ''; document.getElementById('newName').value = '';
       loadOverrides();
-    } catch(e) {
-      alert('Ошибка');
-    }
+    } catch(e) { alert('Ошибка'); }
   }
 
   async function removeOverride(ticker) {
     try {
       await apiCall('/api/override', 'POST', { action: 'remove', ticker });
       loadOverrides();
-    } catch(e) {
-      alert('Ошибка');
-    }
+    } catch(e) { alert('Ошибка'); }
   }
 
   function switchTab(tab) {
@@ -424,7 +403,7 @@
     document.getElementById(tab).classList.add('active');
     if (tab === 'portfolio') loadPortfolio();
     else if (tab === 'overrides') loadOverrides();
-    else if (tab === 'dividends') loadMyDividends();
+    else if (tab === 'dividends') loadDividends();
   }
 
   window.onload = () => loadPortfolio();
