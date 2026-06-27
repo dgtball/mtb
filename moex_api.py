@@ -3,6 +3,7 @@ import asyncio
 import datetime
 import pandas as pd
 import aiohttp
+import db  # <-- добавить
 from config import ticker_to_name
 
 ticker_to_sector = {}
