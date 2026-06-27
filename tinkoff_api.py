@@ -159,8 +159,6 @@ async def build_figi_map(http_session):
             for pos in summary["positions"]:
                 figi = pos["figi"]
                 ticker = pos["ticker"]
-                if ticker == "Прочие" and op.get("figi"):
-                logging.info(f"Операция без тикера: id={op.get('id')}, figi={op.get('figi')}, name={op.get('name')}")
                 if figi and ticker and figi not in portfolio_figi_to_ticker:
                     portfolio_figi_to_ticker[figi] = ticker
             logging.info(f"build_figi_map: загружено {len(portfolio_figi_to_ticker)} FIGI из портфеля")
