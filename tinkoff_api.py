@@ -52,18 +52,24 @@ async def get_portfolio_summary(http_session):
         data = await get_portfolio_data(http_session, account_id)
         positions = data.get("positions", [])
 
-        total_amount = data.get("totalAmountPortfolio", {})
-        total = float(total_amount.get("units", 0))
-        total_currency = total_amount.get("currency", "RUB")
+        # Общая стоимость портфеля (с копейками)
+        total_amount_obj = data.get("totalAmountPortfolio", {})
+        total = float(total_amount_obj.get("units", 0)) + float(total_amount_obj.get("nano", 0)) / 1e9
+        total_currency = total_amount_obj.get("currency", "RUB")
 
         total_cost = 0.0
         total_value = 0.0
         balance = 0.0
 
+        # Определяем баланс (деньги на счёте)
         for pos in positions:
             ticker = pos.get("ticker", "")
             if ticker == "RUB000UTSTOM" or pos.get("instrumentType") == "INSTRUMENT_TYPE_CURRENCY":
-                balance = float(pos.get("quantity", {}).get("units", 0)) * float(pos.get("currentPrice", {}).get("units", 1))
+                quantity_obj = pos.get("quantity", {})
+                qty = float(quantity_obj.get("units", 0)) + float(quantity_obj.get("nano", 0)) / 1e9
+                price_obj = pos.get("currentPrice", {})
+                price = float(price_obj.get("units", 0)) + float(price_obj.get("nano", 0)) / 1e9
+                balance = qty * price
                 break
 
         filtered_positions = []
@@ -73,10 +79,14 @@ async def get_portfolio_summary(http_session):
                 continue
             filtered_positions.append(pos)
 
+        # Суммируем стоимость и затраты
         for pos in filtered_positions:
-            quantity = float(pos.get("quantity", {}).get("units", 0))
-            avg_price = float(pos.get("averagePositionPrice", {}).get("units", 0))
-            price = float(pos.get("currentPrice", {}).get("units", 0))
+            quantity_obj = pos.get("quantity", {})
+            quantity = float(quantity_obj.get("units", 0)) + float(quantity_obj.get("nano", 0)) / 1e9
+            avg_obj = pos.get("averagePositionPrice", {})
+            avg_price = float(avg_obj.get("units", 0)) + float(avg_obj.get("nano", 0)) / 1e9
+            price_obj = pos.get("currentPrice", {})
+            price = float(price_obj.get("units", 0)) + float(price_obj.get("nano", 0)) / 1e9
             total_cost += quantity * avg_price
             total_value += quantity * price
 
@@ -106,24 +116,31 @@ async def get_portfolio_summary(http_session):
             "CURRENCY": "Валюта",
         }
 
+        # Обрабатываем каждую позицию
         for pos in filtered_positions:
             figi = pos.get("figi")
             ticker = pos.get("ticker") or figi
             raw_name = ticker_to_name.get(ticker)
             if raw_name is None:
-                raw_name = ticker  # защита от None
+                raw_name = ticker
             name = NAME_OVERRIDES.get(ticker)
             if name is None:
                 name = NAME_OVERRIDES.get(raw_name, raw_name)
 
-            quantity = float(pos.get("quantity", {}).get("units", 0))
-            price = float(pos.get("currentPrice", {}).get("units", 0))
-            avg_price = float(pos.get("averagePositionPrice", {}).get("units", 0))
-            expected_yield = float(pos.get("expectedYield", {}).get("units", 0))
+            quantity_obj = pos.get("quantity", {})
+            quantity = float(quantity_obj.get("units", 0)) + float(quantity_obj.get("nano", 0)) / 1e9
+            price_obj = pos.get("currentPrice", {})
+            price = float(price_obj.get("units", 0)) + float(price_obj.get("nano", 0)) / 1e9
+            avg_obj = pos.get("averagePositionPrice", {})
+            avg_price = float(avg_obj.get("units", 0)) + float(avg_obj.get("nano", 0)) / 1e9
+            expected_yield_obj = pos.get("expectedYield", {})
+            expected_yield = float(expected_yield_obj.get("units", 0)) + float(expected_yield_obj.get("nano", 0)) / 1e9
+
             if avg_price and quantity:
                 pos_yield_pct = (expected_yield / (avg_price * quantity)) * 100
             else:
                 pos_yield_pct = 0.0
+
             instrument_type = pos.get("instrumentType", "").upper()
 
             if instrument_type in type_map:
@@ -144,7 +161,7 @@ async def get_portfolio_summary(http_session):
             result["positions"].append({
                 "figi": figi,
                 "ticker": ticker,
-                "name": name or ticker,  # защита от None
+                "name": name or ticker,
                 "instrument_type": instrument_type,
                 "type_display": type_display,
                 "quantity": quantity,
@@ -174,10 +191,10 @@ async def build_figi_map(http_session):
         logging.error(f"Ошибка build_figi_map: {e}")
 
 @retry(max_attempts=3, delay=2, backoff=2)
-async def sync_operations(http_session, from_date=None):
-    """Синхронизирует операции из T-Invest API в БД. Возвращает количество новых операций."""
+async def sync_operations(http_session, from_date=None, force_full=False):
+    if force_full:
+        from_date = None
     logging.info("sync_operations started")
-    global portfolio_figi_to_ticker
     try:
         accounts = await get_accounts(http_session)
         if not accounts:
@@ -212,10 +229,8 @@ async def sync_operations(http_session, from_date=None):
             if not ticker:
                 figi = op.get("figi")
                 if figi:
-                    # Сначала пробуем словарь из портфеля
                     ticker = portfolio_figi_to_ticker.get(figi)
                     if not ticker:
-                        # Если не нашли, пробуем MOEX (может быть пустым)
                         from moex_api import figi_to_ticker as moex_figi_to_ticker
                         ticker = moex_figi_to_ticker.get(figi)
                 if not ticker:
@@ -223,6 +238,17 @@ async def sync_operations(http_session, from_date=None):
 
             if op.get("currency", "RUB").upper() != "RUB":
                 continue
+
+            # Извлечение суммы с копейками
+            payment = op.get("payment", {})
+            units = float(payment.get("units", 0))
+            nano = float(payment.get("nano", 0)) / 1e9
+            payment_rub = units + nano
+
+            commission = op.get("commission", {})
+            comm_units = float(commission.get("units", 0))
+            comm_nano = float(commission.get("nano", 0)) / 1e9
+            commission_rub = comm_units + comm_nano
 
             db.insert_operation({
                 "id": op.get("id"),
@@ -232,9 +258,9 @@ async def sync_operations(http_session, from_date=None):
                 "figi": op.get("figi"),
                 "instrument_type": op.get("instrumentType"),
                 "quantity": op.get("quantity"),
-                "payment": float(op.get("payment", {}).get("units", 0)) if op.get("payment") else 0,
+                "payment": payment_rub,
                 "currency": op.get("currency", "RUB").upper(),
-                "commission": float(op.get("commission", {}).get("units", 0)) if op.get("commission") else 0,
+                "commission": commission_rub,
                 "name": op.get("name"),
             })
             new_count += 1

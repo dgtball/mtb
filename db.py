@@ -128,7 +128,7 @@ def migrate_sectors_to_instruments():
 def insert_operation(op):
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
-        c.execute('''INSERT OR IGNORE INTO operations
+        c.execute('''INSERT OR REPLACE INTO operations
                      (id, date, type, ticker, figi, instrument_type, quantity, payment, currency, commission, name)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                   (op.get('id'), op.get('date'), op.get('type'), op.get('ticker'),

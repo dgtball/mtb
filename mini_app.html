@@ -564,7 +564,7 @@
       html += `<button class="all-btn" onclick="showAllDividendDetails('${asset}')">Все выплаты</button>`;
       html += `<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Название</th><th>Сумма</th></tr></thead><tbody>`;
       data.details.forEach(d => {
-        html += `<tr><td>${new Date(d.date).toLocaleDateString()}</td><td>${d.name}</td><td>${d.amount.toLocaleString()}</td></tr>`;
+        html += `<tr><td>${new Date(d.date).toLocaleDateString()}</td><td>${d.name}</td><td>${d.amount.toFixed(2)}</td></tr>`;
       });
       html += '</tbody></table></div>';
       container.innerHTML = html;
@@ -596,7 +596,7 @@
       }
       html += `<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Название</th><th>Сумма</th></tr></thead><tbody>`;
       data.details.forEach(d => {
-        html += `<tr><td>${new Date(d.date).toLocaleDateString()}</td><td>${d.name}</td><td>${d.amount.toLocaleString()}</td></tr>`;
+        html += `<tr><td>${new Date(d.date).toLocaleDateString()}</td><td>${d.name}</td><td>${d.amount.toFixed(2)}</td></tr>`;
       });
       html += '</tbody></table></div>';
       container.innerHTML = html;

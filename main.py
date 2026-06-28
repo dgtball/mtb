@@ -346,12 +346,14 @@ async def api_sync(request: Request):
         raise HTTPException(403)
     try:
         from tinkoff_api import sync_operations
-        new_count = await sync_operations(bot_session)
+        full = request.query_params.get("full") == "true"
+        new_count = await sync_operations(bot_session, force_full=full)
         now_moscow = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3)).isoformat()
         return JSONResponse({
             "status": "ok",
             "new_operations": new_count,
-            "last_sync": now_moscow
+            "last_sync": now_moscow,
+            "full": full
         })
     except Exception as e:
         logging.error(f"Sync error: {e}", exc_info=True)
