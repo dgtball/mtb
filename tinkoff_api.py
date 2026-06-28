@@ -204,17 +204,19 @@ async def sync_operations(http_session, from_date=None, force_full=False):
             logging.warning("sync_operations: не найден account_id")
             return 0
 
+        # Определяем диапазон дат
         if force_full:
-            from_date = None
-        if from_date is None:
-            last_date = db.get_last_operation_date()
-            if last_date:
-                from_date = datetime.datetime.fromisoformat(last_date) + datetime.timedelta(seconds=1)
-            else:
-                from_date = datetime.datetime.now() - datetime.timedelta(days=365*5)
+            # При полной синхронизации игнорируем последнюю дату в БД
+            from_date = datetime.datetime.now() - datetime.timedelta(days=365*5)
+        else:
+            if from_date is None:
+                last_date = db.get_last_operation_date()
+                if last_date:
+                    from_date = datetime.datetime.fromisoformat(last_date) + datetime.timedelta(seconds=1)
+                else:
+                    from_date = datetime.datetime.now() - datetime.timedelta(days=365*5)
 
         to_date = datetime.datetime.now()
-        # Для отладки: выведем диапазон дат
         logging.info(f"Запрос операций с {from_date} по {to_date}")
 
         params = {
@@ -223,13 +225,8 @@ async def sync_operations(http_session, from_date=None, force_full=False):
             "to": to_date.strftime("%Y-%m-%dT%H:%M:%S+03:00"),
             "state": "OPERATION_STATE_EXECUTED"
         }
-        # Вызов API с логированием ошибок
-        try:
-            data = await tinkoff_api_request(http_session, "POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetOperations", params=params)
-        except Exception as e:
-            logging.error(f"Ошибка при вызове API операций: {e}")
-            return 0
 
+        data = await tinkoff_api_request(http_session, "POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetOperations", params=params)
         operations = data.get("operations", [])
         logging.info(f"sync_operations: получено {len(operations)} операций от API")
 
@@ -260,14 +257,11 @@ async def sync_operations(http_session, from_date=None, force_full=False):
             comm_nano = float(commission_obj.get("nano", 0)) / 1e9
             commission_rub = comm_units + comm_nano
 
-            # Проверяем, существует ли уже операция
-            existing = None
+            # Проверяем, существует ли уже запись
             with sqlite3.connect(db.DB_PATH) as conn:
                 c = conn.cursor()
                 c.execute("SELECT id FROM operations WHERE id = ?", (op.get("id"),))
-                row = c.fetchone()
-                if row:
-                    existing = row[0]
+                exists = c.fetchone() is not None
 
             db.insert_operation({
                 "id": op.get("id"),
@@ -282,7 +276,7 @@ async def sync_operations(http_session, from_date=None, force_full=False):
                 "commission": commission_rub,
                 "name": op.get("name"),
             })
-            if existing:
+            if exists:
                 updated_count += 1
             else:
                 new_count += 1
