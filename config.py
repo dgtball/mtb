@@ -23,8 +23,8 @@ TINKOFF_API_URL = os.getenv("TINKOFF_API_URL", "https://invest-public-api.tbank.
 
 # ---------- DOMAIN (нормализация) ----------    
 DOMAIN = os.getenv("DOMAIN")
-if not DOMAIN.startswith("https://"):
-    DOMAIN = "https://" + DOMAIN
+#if not DOMAIN.startswith("https://"):
+#    DOMAIN = "https://" + DOMAIN
 WEBHOOK_URL = f"{DOMAIN}/webhook"
 
 
