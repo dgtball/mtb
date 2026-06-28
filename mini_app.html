@@ -557,126 +557,152 @@
   }
 
   // ===== МЕСЯЧНЫЙ ГРАФИК =====
-  async function loadMonthlyDividends() {
-    const yearSelect = document.getElementById('monthly-year-select');
-    let year = yearSelect.value;
-    if (!year) {
-      // Загружаем доступные годы
-      try {
-        const data = await apiCall('/api/dividends-monthly');
-        yearSelect.innerHTML = '';
+async function loadMonthlyDividends() {
+  const yearSelect = document.getElementById('monthly-year-select');
+  let year = yearSelect.value;
+
+  try {
+    // Если список годов пуст или год не выбран – загружаем данные для текущего года,
+    // чтобы получить список доступных годов
+    if (!year || yearSelect.options.length === 0) {
+      const data = await apiCall('/api/dividends-monthly');
+      if (data.error) {
+        showToast('Ошибка загрузки данных: ' + data.error, 'error');
+        return;
+      }
+      yearSelect.innerHTML = '';
+      if (data.available_years && data.available_years.length > 0) {
         data.available_years.forEach(y => {
           const opt = document.createElement('option');
           opt.value = y;
           opt.textContent = y;
           yearSelect.appendChild(opt);
         });
-        year = data.available_years[0] || new Date().getFullYear();
+        year = data.available_years[0];
         yearSelect.value = year;
-      } catch(e) {
-        showToast('Ошибка загрузки списка годов', 'error');
-        return;
+      } else {
+        // Если нет доступных годов – показываем текущий год
+        year = new Date().getFullYear();
+        const opt = document.createElement('option');
+        opt.value = year;
+        opt.textContent = year;
+        yearSelect.appendChild(opt);
+        yearSelect.value = year;
       }
     }
 
-    try {
-      const data = await apiCall(`/api/dividends-monthly?year=${year}`);
-      // Обновим список годов, если он пуст (на случай, если не было годов)
-      if (yearSelect.options.length === 0) {
-        data.available_years.forEach(y => {
+    // Теперь загружаем данные для выбранного года
+    const data = await apiCall(`/api/dividends-monthly?year=${year}`);
+    if (data.error) {
+      showToast('Ошибка загрузки данных: ' + data.error, 'error');
+      return;
+    }
+
+    // Обновляем список годов, если он не совпадает (например, добавились новые годы)
+    if (data.available_years && data.available_years.length > 0) {
+      const currentValues = Array.from(yearSelect.options).map(opt => opt.value);
+      data.available_years.forEach(y => {
+        if (!currentValues.includes(String(y))) {
           const opt = document.createElement('option');
           opt.value = y;
           opt.textContent = y;
           yearSelect.appendChild(opt);
-        });
+        }
+      });
+      // Если текущий год не в списке – выбираем первый
+      if (!data.available_years.includes(Number(year))) {
+        year = data.available_years[0];
         yearSelect.value = year;
+        // Перезагружаем с новым годом
+        return loadMonthlyDividends();
       }
+    }
 
-      const ctx = document.getElementById('dividendChart').getContext('2d');
-      if (dividendChart) { dividendChart.destroy(); dividendChart = null; }
-      if (monthlyChart) { monthlyChart.destroy(); monthlyChart = null; }
+    // Строим график
+    const ctx = document.getElementById('dividendChart').getContext('2d');
+    if (dividendChart) { dividendChart.destroy(); dividendChart = null; }
+    if (monthlyChart) { monthlyChart.destroy(); monthlyChart = null; }
 
-      monthlyChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: data.months,
-          datasets: [
-            {
-              label: 'Фактические выплаты',
-              data: data.actual,
-              backgroundColor: '#2196F3',
-              borderRadius: 4,
-            },
-            {
-              label: 'Прогнозные выплаты',
-              data: data.forecast,
-              backgroundColor: '#9C27B0',
-              borderRadius: 4,
-            }
-          ]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: {
-              position: 'bottom',
-              labels: { color: '#e0e0e0', font: { size: 10 } }
-            },
-            tooltip: {
-              callbacks: {
-                label: function(context) {
-                  return context.dataset.label + ': ' + context.raw.toLocaleString() + ' ₽';
-                }
-              }
-            },
-            datalabels: {
-              anchor: 'end',
-              align: 'top',
-              color: '#e0e0e0',
-              font: { weight: 'bold', size: 9 },
-              formatter: function(value) {
-                return value > 0 ? value.toLocaleString() : '';
+    monthlyChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: data.months,
+        datasets: [
+          {
+            label: 'Фактические выплаты',
+            data: data.actual,
+            backgroundColor: '#2196F3',
+            borderRadius: 4,
+          },
+          {
+            label: 'Прогнозные выплаты',
+            data: data.forecast,
+            backgroundColor: '#9C27B0',
+            borderRadius: 4,
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { color: '#e0e0e0', font: { size: 10 } }
+          },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                return context.dataset.label + ': ' + context.raw.toLocaleString() + ' ₽';
               }
             }
           },
-          scales: {
-            x: { stacked: true, ticks: { color: '#9e9e9e' }, grid: { display: false } },
-            y: { stacked: true, ticks: { color: '#9e9e9e', callback: v => v.toLocaleString() }, grid: { color: '#333' } }
-          },
-          onClick: (event, elements, chart) => {
-            if (elements.length > 0) {
-              const index = elements[0].index;
-              const month = chart.data.labels[index];
-              const monthNum = index + 1;
-              const actualDetails = data.details_actual[monthNum] || [];
-              const forecastDetails = data.details_forecast[monthNum] || [];
-              const allDetails = [...actualDetails, ...forecastDetails];
-              if (allDetails.length > 0) {
-                showMonthlyDetails(month, allDetails);
-              }
+          datalabels: {
+            anchor: 'end',
+            align: 'top',
+            color: '#e0e0e0',
+            font: { weight: 'bold', size: 9 },
+            formatter: function(value) {
+              return value > 0 ? value.toLocaleString() : '';
             }
           }
         },
-        plugins: [ChartDataLabels]
-      });
+        scales: {
+          x: { stacked: true, ticks: { color: '#9e9e9e' }, grid: { display: false } },
+          y: { stacked: true, ticks: { color: '#9e9e9e', callback: v => v.toLocaleString() }, grid: { color: '#333' } }
+        },
+        onClick: (event, elements, chart) => {
+          if (elements.length > 0) {
+            const index = elements[0].index;
+            const month = chart.data.labels[index];
+            const monthNum = index + 1;
+            const actualDetails = data.details_actual[monthNum] || [];
+            const forecastDetails = data.details_forecast[monthNum] || [];
+            const allDetails = [...actualDetails, ...forecastDetails];
+            if (allDetails.length > 0) {
+              showMonthlyDetails(month, allDetails);
+            }
+          }
+        }
+      },
+      plugins: [ChartDataLabels]
+    });
 
-      // Показываем итоги за год
-      const totalLabel = document.getElementById('totalYearLabel');
-      totalLabel.style.display = 'block';
-      totalLabel.textContent = `💰 Итого за ${year}: фактические ${data.total_actual.toLocaleString()} ₽, прогнозные ${data.total_forecast.toLocaleString()} ₽`;
+    // Показываем итоги за год
+    const totalLabel = document.getElementById('totalYearLabel');
+    totalLabel.style.display = 'block';
+    totalLabel.textContent = `💰 Итого за ${year}: фактические ${data.total_actual.toLocaleString()} ₽, прогнозные ${data.total_forecast.toLocaleString()} ₽`;
 
-      // Обновляем статус синхронизации (если нужно)
-      const syncStatus = await apiCall('/api/sync-status');
-      if (syncStatus.last_sync) {
-        document.getElementById('lastSync').textContent = new Date(syncStatus.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
-      }
-    } catch(e) {
-      console.error(e);
-      showToast('Ошибка загрузки данных по месяцам', 'error');
+    // Обновляем статус синхронизации
+    const syncStatus = await apiCall('/api/sync-status');
+    if (syncStatus.last_sync) {
+      document.getElementById('lastSync').textContent = new Date(syncStatus.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
     }
+  } catch(e) {
+    console.error(e);
+    showToast('Ошибка загрузки данных по месяцам', 'error');
   }
-
+}
   // ===== ДЕТАЛИЗАЦИЯ МЕСЯЧНОГО ГРАФИКА =====
   function showMonthlyDetails(month, details) {
     const container = document.getElementById('dividendDetails');
