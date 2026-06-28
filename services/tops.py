@@ -3,9 +3,8 @@ import logging
 import datetime
 import pandas as pd
 from moex_api import get_market_data, get_historical_shares, calc_period_change, get_moex_index_info, get_top_movers
-from utils import get_moscow_time, get_session_status, smart_price, build_table_universal
+from utils import get_moscow_time, get_session_status, smart_price, build_table_universal, get_portfolio_change_str
 from config import TOP_N
-from handlers import get_portfolio_change_str  # возможно, стоит вынести в отдельный модуль
 
 async def get_top_data(period: str, http_session):
     """
