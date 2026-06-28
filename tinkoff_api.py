@@ -205,43 +205,43 @@ async def sync_operations(http_session, from_date=None, force_full=False):
             return 0
 
         if force_full:
-            from_date = datetime.datetime.now() - datetime.timedelta(days=365*5)
-        else:
-            if from_date is None:
-                last_date = db.get_last_operation_date()
-                if last_date:
-                    from_date = datetime.datetime.fromisoformat(last_date) + datetime.timedelta(seconds=1)
-                else:
-                    from_date = datetime.datetime.now() - datetime.timedelta(days=365*5)
+            from_date = None
+        if from_date is None:
+            last_date = db.get_last_operation_date()
+            if last_date:
+                from_date = datetime.datetime.fromisoformat(last_date) + datetime.timedelta(seconds=1)
+            else:
+                from_date = datetime.datetime.now() - datetime.timedelta(days=365*5)
 
         to_date = datetime.datetime.now()
         logging.info(f"Запрос операций с {from_date} по {to_date}")
 
         all_operations = []
-        page_token = None
+        page_token = None  # для пагинации (если есть)
         while True:
             params = {
                 "accountId": account_id,
                 "from": from_date.strftime("%Y-%m-%dT%H:%M:%S+03:00"),
                 "to": to_date.strftime("%Y-%m-%dT%H:%M:%S+03:00"),
-                "state": "OPERATION_STATE_EXECUTED",
-                "limit": 1000,
+                "state": "OPERATION_STATE_EXECUTED"
             }
             if page_token:
-                params["page_token"] = page_token
+                params["pageToken"] = page_token  # если API использует pageToken
 
             data = await tinkoff_api_request(http_session, "POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetOperations", params=params)
             operations = data.get("operations", [])
+            if not operations:
+                break
             all_operations.extend(operations)
-            logging.info(f"Получена страница, операций на странице: {len(operations)}, всего собрано: {len(all_operations)}")
+            logging.info(f"Получено {len(operations)} операций, всего собрано {len(all_operations)}")
             # Проверяем наличие следующей страницы
-            next_page_token = data.get("next_page_token")
-            if not next_page_token or not operations:
+            next_page_token = data.get("nextPage")
+            if not next_page_token:
                 break
             page_token = next_page_token
 
-        operations = all_operations
-        logging.info(f"sync_operations: получено {len(operations)} операций от API")
+        logging.info(f"sync_operations: получено {len(all_operations)} операций от API")
+
         new_count = 0
         updated_count = 0
         for op in all_operations:
@@ -253,6 +253,8 @@ async def sync_operations(http_session, from_date=None, force_full=False):
                     if not ticker:
                         from moex_api import figi_to_ticker as moex_figi_to_ticker
                         ticker = moex_figi_to_ticker.get(figi)
+                    if not ticker:
+                        ticker = EXTRA_FIGI_MAP.get(figi)   # ваш дополнительный маппинг
                 if not ticker:
                     ticker = "Прочие"
 
@@ -269,6 +271,7 @@ async def sync_operations(http_session, from_date=None, force_full=False):
             comm_nano = float(commission_obj.get("nano", 0)) / 1e9
             commission_rub = comm_units + comm_nano
 
+            # Проверяем существование записи
             with sqlite3.connect(db.DB_PATH) as conn:
                 c = conn.cursor()
                 c.execute("SELECT id FROM operations WHERE id = ?", (op.get("id"),))
