@@ -282,7 +282,7 @@ async def api_dividends_monthly(request: Request, year: int = None):
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
 
-        # Фактические выплаты за указанный год
+        # ---------- ФАКТИЧЕСКИЕ ВЫПЛАТЫ ----------
         c.execute("""SELECT date, ticker, payment, name 
                      FROM operations 
                      WHERE type IN ('Выплата дивидендов', 'Выплата купонов') 
@@ -290,7 +290,7 @@ async def api_dividends_monthly(request: Request, year: int = None):
                        AND date LIKE ? 
                      ORDER BY date""", (f"{year}%",))
         rows = c.fetchall()
-
+        
         actual_by_month = {m: {"total": 0.0, "details": []} for m in range(1, 13)}
         for r in rows:
             date_str = r[0]
@@ -311,7 +311,56 @@ async def api_dividends_monthly(request: Request, year: int = None):
                 "type": "actual"
             })
 
-        # Доступные годы
+        # ---------- ОБЪЯВЛЕННЫЕ ДИВИДЕНДЫ ----------
+        c.execute("""
+            SELECT ticker, payment_date, dividend_net
+            FROM dividend_calendar
+            WHERE strftime('%Y', payment_date) = ?
+        """, (str(year),))
+        declared_dividends = c.fetchall()
+        
+        declared_by_month = {m: {"total": 0.0, "details": []} for m in range(1, 13)}
+        for row in declared_dividends:
+            ticker = row[0]
+            date_str = row[1]
+            amount = row[2]
+            if date_str and amount:
+                month = int(date_str[5:7])
+                name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
+                declared_by_month[month]["total"] += amount
+                declared_by_month[month]["details"].append({
+                    "date": date_str,
+                    "ticker": ticker,
+                    "name": name,
+                    "amount": amount,
+                    "type": "declared_dividend"
+                })
+
+        # ---------- ОБЪЯВЛЕННЫЕ КУПОНЫ ----------
+        c.execute("""
+            SELECT ticker, coupon_date, coupon_value
+            FROM coupon_calendar
+            WHERE strftime('%Y', coupon_date) = ?
+        """, (str(year),))
+        declared_coupons = c.fetchall()
+        
+        for row in declared_coupons:
+            ticker = row[0]
+            date_str = row[1]
+            amount = row[2]
+            if date_str and amount:
+                month = int(date_str[5:7])
+                name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
+                declared_by_month[month]["total"] += amount
+                declared_by_month[month]["details"].append({
+                    "date": date_str,
+                    "ticker": ticker,
+                    "name": name,
+                    "amount": amount,
+                    "type": "declared_coupon"
+                })
+
+        # ---------- ДОСТУПНЫЕ ГОДЫ ----------
         c.execute("SELECT DISTINCT substr(date, 1, 4) FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date DESC")
         years_rows = c.fetchall()
         years = [int(row[0]) for row in years_rows if row[0] is not None]
@@ -319,14 +368,19 @@ async def api_dividends_monthly(request: Request, year: int = None):
 
         months_labels = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек']
         actual_data = [actual_by_month[m]["total"] for m in range(1, 13)]
+        declared_data = [declared_by_month[m]["total"] for m in range(1, 13)]
         total_actual = sum(actual_data)
+        total_declared = sum(declared_data)
 
         return JSONResponse({
             "year": year,
             "months": months_labels,
             "actual": actual_data,
+            "declared": declared_data,
             "total_actual": total_actual,
+            "total_declared": total_declared,
             "details_actual": {m: actual_by_month[m]["details"] for m in range(1, 13)},
+            "details_declared": {m: declared_by_month[m]["details"] for m in range(1, 13)},
             "available_years": years
         })
     except Exception as e:
@@ -375,6 +429,23 @@ async def api_sync_full(request: Request):
         })
     except Exception as e:
         logging.error(f"Sync-full error: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post("/api/sync-calendars")
+async def sync_calendars(request: Request):
+    if not check_token(request):
+        raise HTTPException(403)
+    try:
+        from tinkoff_api import fetch_all_dividends, fetch_all_coupons
+        dividends_data = await fetch_all_dividends(bot_session)
+        coupons_data = await fetch_all_coupons(bot_session)
+        return JSONResponse({
+            "status": "ok",
+            "dividends_updated": len(dividends_data),
+            "coupons_updated": len(coupons_data)
+        })
+    except Exception as e:
+        logging.error(f"Calendar sync error: {e}", exc_info=True)
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/api/sector")
