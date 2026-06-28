@@ -7,7 +7,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
   <style>
-    /* ===== ОБЩИЕ СТИЛИ ===== */
+    /* ===== СТИЛИ (без изменений) ===== */
     :root {
       --bg: #121212;
       --surface: #1e1e1e;
@@ -21,9 +21,7 @@
       --radius: 12px;
       --shadow: 0 4px 12px rgba(0,0,0,0.3);
     }
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
     body {
       margin: 0;
       padding: 12px;
@@ -52,247 +50,59 @@
       border-bottom: 3px solid transparent;
       transition: all 0.2s;
     }
-    .tab:hover {
-      color: var(--text);
-    }
-    .tab.active {
-      color: var(--accent);
-      border-bottom-color: var(--accent);
-    }
-    .tab-content {
-      display: none;
-      animation: fadeIn 0.3s ease;
-    }
-    .tab-content.active {
-      display: block;
-    }
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(8px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab-content { display: none; animation: fadeIn 0.3s ease; }
+    .tab-content.active { display: block; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
-    .card {
-      background: var(--surface);
-      border-radius: var(--radius);
-      padding: 16px;
-      margin-bottom: 16px;
-      box-shadow: var(--shadow);
-    }
-    .card-title {
-      font-size: 16px;
-      font-weight: 600;
-      margin-bottom: 12px;
-      color: var(--text);
-    }
+    .card { background: var(--surface); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; box-shadow: var(--shadow); }
+    .card-title { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
 
-    .summary {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-    .summary-item {
-      display: flex;
-      flex-direction: column;
-    }
-    .summary-label {
-      font-size: 11px;
-      color: var(--text-secondary);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    .summary-value {
-      font-size: 24px;
-      font-weight: 700;
-    }
-    .summary-change {
-      font-size: 18px;
-      font-weight: 600;
-    }
+    .summary { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .summary-item { display: flex; flex-direction: column; }
+    .summary-label { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; }
+    .summary-value { font-size: 24px; font-weight: 700; }
+    .summary-change { font-size: 18px; font-weight: 600; }
 
-    .chart-container {
-      width: 100%;
-      max-width: 100%;
-      margin: 0 0 16px 0;
-      height: 280px;
-      position: relative;
-    }
+    .chart-container { width: 100%; max-width: 100%; margin: 0 0 16px 0; height: 280px; position: relative; }
 
-    .table-wrap {
-      overflow-x: auto;
-      margin-bottom: 12px;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 12px;
-    }
-    th, td {
-      padding: 8px 6px;
-      text-align: left;
-      border-bottom: 1px solid var(--border);
-      white-space: nowrap;
-    }
-    th {
-      color: var(--text-secondary);
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.3px;
-    }
-    td {
-      color: var(--text);
-    }
+    .table-wrap { overflow-x: auto; margin-bottom: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { padding: 8px 6px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    th { color: var(--text-secondary); font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; }
+    td { color: var(--text); }
 
-    .form-row {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      align-items: center;
-      margin-bottom: 12px;
-    }
-    .form-row input, .form-row select {
-      flex: 1 1 120px;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 8px 10px;
-      border-radius: 6px;
-      font-size: 13px;
-      min-width: 80px;
-    }
-    .form-row button {
-      background: var(--accent);
-      border: none;
-      color: white;
-      padding: 8px 16px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 13px;
-      transition: background 0.2s;
-      white-space: nowrap;
-    }
-    .form-row button:hover {
-      background: #1976D2;
-    }
-    .btn-success {
-      background: var(--positive) !important;
-    }
-    .btn-success:hover {
-      background: #388E3C !important;
-    }
+    .form-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+    .form-row input, .form-row select { flex: 1 1 120px; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px 10px; border-radius: 6px; font-size: 13px; min-width: 80px; }
+    .form-row button { background: var(--accent); border: none; color: white; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: background 0.2s; white-space: nowrap; }
+    .form-row button:hover { background: #1976D2; }
+    .btn-success { background: var(--positive) !important; }
+    .btn-success:hover { background: #388E3C !important; }
 
-    .settings-tabs {
-      display: flex;
-      border-bottom: 1px solid var(--border);
-      margin-bottom: 16px;
-      background: var(--surface);
-      border-radius: var(--radius) var(--radius) 0 0;
-      padding: 0 8px;
-    }
-    .settings-tab {
-      padding: 10px 16px;
-      cursor: pointer;
-      color: var(--text-secondary);
-      font-size: 12px;
-      border-bottom: 3px solid transparent;
-      transition: all 0.2s;
-    }
-    .settings-tab:hover {
-      color: var(--text);
-    }
-    .settings-tab.active {
-      color: var(--accent);
-      border-bottom-color: var(--accent);
-    }
-    .settings-content {
-      display: none;
-      animation: fadeIn 0.3s ease;
-    }
-    .settings-content.active {
-      display: block;
-    }
+    .settings-tabs { display: flex; border-bottom: 1px solid var(--border); margin-bottom: 16px; background: var(--surface); border-radius: var(--radius) var(--radius) 0 0; padding: 0 8px; }
+    .settings-tab { padding: 10px 16px; cursor: pointer; color: var(--text-secondary); font-size: 12px; border-bottom: 3px solid transparent; transition: all 0.2s; }
+    .settings-tab:hover { color: var(--text); }
+    .settings-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .settings-content { display: none; animation: fadeIn 0.3s ease; }
+    .settings-content.active { display: block; }
 
-    .sync-status {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 8px;
-      background: var(--surface);
-      border-radius: var(--radius);
-      padding: 12px 16px;
-      margin-bottom: 16px;
-      font-size: 12px;
-    }
-    .sync-status button {
-      background: var(--accent);
-      border: none;
-      color: white;
-      padding: 6px 14px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 12px;
-    }
-    .sync-status button:hover {
-      background: #1976D2;
-    }
+    .sync-status { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; background: var(--surface); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px; font-size: 12px; }
+    .sync-status button { background: var(--accent); border: none; color: white; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+    .sync-status button:hover { background: #1976D2; }
 
-    .detail-box {
-      background: var(--surface-light);
-      border-radius: var(--radius);
-      padding: 12px 16px;
-      margin-top: 8px;
-      display: none;
-    }
-    .detail-box.visible {
-      display: block;
-    }
-    .detail-box h4 {
-      margin: 0 0 8px 0;
-      font-size: 14px;
-      color: var(--text);
-    }
-    .detail-box .close-btn {
-      background: var(--negative);
-      border: none;
-      color: white;
-      padding: 4px 12px;
-      border-radius: 6px;
-      cursor: pointer;
-      float: right;
-      font-size: 11px;
-    }
-    .detail-box .close-btn:hover {
-      opacity: 0.8;
-    }
+    .detail-box { background: var(--surface-light); border-radius: var(--radius); padding: 12px 16px; margin-top: 8px; display: none; }
+    .detail-box.visible { display: block; }
+    .detail-box h4 { margin: 0 0 8px 0; font-size: 14px; color: var(--text); }
+    .detail-box .close-btn { background: var(--negative); border: none; color: white; padding: 4px 12px; border-radius: 6px; cursor: pointer; float: right; font-size: 11px; }
+    .detail-box .close-btn:hover { opacity: 0.8; }
+    .detail-box .all-btn { background: var(--accent); border: none; color: white; padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 11px; margin-left: 8px; }
+    .detail-box .all-btn:hover { background: #1976D2; }
 
-    .toast {
-      position: fixed;
-      bottom: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: var(--surface);
-      color: var(--text);
-      padding: 12px 24px;
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-      font-size: 13px;
-      z-index: 999;
-      opacity: 0;
-      transition: opacity 0.3s;
-      pointer-events: none;
-      border: 1px solid var(--border);
-    }
-    .toast.show {
-      opacity: 1;
-    }
-    .toast.success {
-      border-left: 4px solid var(--positive);
-    }
-    .toast.error {
-      border-left: 4px solid var(--negative);
-    }
+    .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--surface); color: var(--text); padding: 12px 24px; border-radius: var(--radius); box-shadow: var(--shadow); font-size: 13px; z-index: 999; opacity: 0; transition: opacity 0.3s; pointer-events: none; border: 1px solid var(--border); }
+    .toast.show { opacity: 1; }
+    .toast.success { border-left: 4px solid var(--positive); }
+    .toast.error { border-left: 4px solid var(--negative); }
 
     @media (max-width: 480px) {
       body { padding: 8px; }
@@ -320,14 +130,8 @@
   <div id="portfolio" class="tab-content active">
     <div class="card">
       <div class="summary">
-        <div class="summary-item">
-          <span class="summary-label">Стоимость портфеля</span>
-          <span class="summary-value" id="totalAmount">—</span>
-        </div>
-        <div class="summary-item">
-          <span class="summary-label">Изменение за день</span>
-          <span class="summary-change" id="dailyChange">—</span>
-        </div>
+        <div class="summary-item"><span class="summary-label">Стоимость портфеля</span><span class="summary-value" id="totalAmount">—</span></div>
+        <div class="summary-item"><span class="summary-label">Изменение за день</span><span class="summary-change" id="dailyChange">—</span></div>
       </div>
     </div>
     <div class="card">
@@ -351,7 +155,7 @@
     </div>
     <div class="card">
       <div class="card-title">Дивиденды и купоны по годам</div>
-      <p style="font-size:11px;color:var(--text-secondary);margin-top:-6px;margin-bottom:12px;">Клик по столбцу — выплаты за год, клик по названию в легенде — все выплаты по активу</p>
+      <p style="font-size:11px;color:var(--text-secondary);margin-top:-6px;margin-bottom:12px;">Клик по столбцу — выплаты за год, затем кнопка "Все выплаты" — все выплаты по активу</p>
       <div class="chart-container" style="height:300px;"><canvas id="dividendChart"></canvas></div>
       <div id="dividendDetails" class="detail-box"></div>
     </div>
@@ -364,7 +168,6 @@
       <span class="settings-tab" onclick="switchSettingsTab('link')">Привязка тикеров</span>
       <span class="settings-tab" onclick="switchSettingsTab('sectors')">Сектора</span>
     </div>
-
     <div id="settings-overrides" class="settings-content active">
       <div class="card">
         <div class="form-row">
@@ -377,7 +180,6 @@
         </div>
       </div>
     </div>
-
     <div id="settings-link" class="settings-content">
       <div class="card">
         <p style="font-size:12px;color:var(--text-secondary);margin-top:0;">Операции с неизвестным тикером. Выберите правильный тикер из списка.</p>
@@ -386,7 +188,6 @@
         </div>
       </div>
     </div>
-
     <div id="settings-sectors" class="settings-content">
       <div class="card">
         <p style="font-size:12px;color:var(--text-secondary);margin-top:0;">Редактирование секторов инструментов. Выберите сектор из списка.</p>
@@ -577,12 +378,6 @@
               labels: {
                 color: '#e0e0e0',
                 font: { size: 10 },
-                onClick: function(e, legendItem, legend) {
-                  const asset = legendItem.text;
-                  console.log('[Клик по легенде] Актив:', asset);
-                  showAllDividendDetails(asset);
-                  // Отключаем стандартное поведение (скрытие серии), чтобы не мешать
-                }
               }
             },
             tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.raw.toLocaleString()}` } }
@@ -595,23 +390,23 @@
           categoryPercentage: 0.9,
           onClick: (event, elements, chart) => {
             console.log('[Клик по графику]');
-            const xScale = chart.scales.x;
-            const xPixel = event.x;
-            const xIndex = Math.round(xScale.getValueForPixel(xPixel));
-            console.log('[xIndex]', xIndex);
-            if (xIndex >= 0 && xIndex < chart.data.labels.length) {
+            // Если клик попал в элемент
+            if (elements.length > 0) {
+              const datasetIndex = elements[0].datasetIndex;
+              const year = chart.data.datasets[datasetIndex].label;
+              const xIndex = elements[0].index;
               const asset = chart.data.labels[xIndex];
-              console.log('[Актив]', asset);
-              let year = null;
-              for (let ds of chart.data.datasets) {
-                if (ds.data[xIndex] > 0) {
-                  year = ds.label;
-                  break;
-                }
-              }
-              if (year) {
-                console.log('[Год]', year);
-                showDividendDetails(year, asset);
+              console.log('[Год]', year, '[Актив]', asset);
+              showDividendDetails(year, asset);
+            } else {
+              // Если клик мимо столбцов – пытаемся определить актив по оси X, но год не определяем
+              const xScale = chart.scales.x;
+              const xPixel = event.x;
+              const xIndex = Math.round(xScale.getValueForPixel(xPixel));
+              if (xIndex >= 0 && xIndex < chart.data.labels.length) {
+                const asset = chart.data.labels[xIndex];
+                console.log('[Актив]', asset, ' – показать все выплаты');
+                showAllDividendDetails(asset);
               }
             }
           }
@@ -639,7 +434,10 @@
         showToast('Нет выплат за этот год', 'info');
         return;
       }
-      let html = `<h4>${asset} за ${year}</h4><button class="close-btn" onclick="closeDividendDetails()">✕</button><div class="table-wrap"><table><thead><tr><th>Дата</th><th>Название</th><th>Сумма</th></tr></thead><tbody>`;
+      let html = `<h4>${asset} за ${year}</h4>`;
+      html += `<button class="close-btn" onclick="closeDividendDetails()">✕</button>`;
+      html += `<button class="all-btn" onclick="showAllDividendDetails('${asset}')">Все выплаты</button>`;
+      html += `<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Название</th><th>Сумма</th></tr></thead><tbody>`;
       data.details.forEach(d => {
         html += `<tr><td>${new Date(d.date).toLocaleDateString()}</td><td>${d.name}</td><td>${d.amount.toLocaleString()}</td></tr>`;
       });
@@ -663,7 +461,8 @@
         showToast('Нет выплат по этому активу', 'info');
         return;
       }
-      let html = `<h4>Все выплаты по ${asset}</h4><button class="close-btn" onclick="closeDividendDetails()">✕</button>`;
+      let html = `<h4>Все выплаты по ${asset}</h4>`;
+      html += `<button class="close-btn" onclick="closeDividendDetails()">✕</button>`;
       if (data.yearly_totals) {
         html += `<div style="margin:8px 0;font-size:12px;color:var(--text-secondary);">`;
         for (const [year, total] of Object.entries(data.yearly_totals)) {
