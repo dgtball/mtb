@@ -4,7 +4,7 @@ import datetime
 import pandas as pd
 import aiohttp
 import db
-from config import ticker_to_name, ticker_to_sector, figi_to_ticker
+from config import ticker_to_name, ticker_to_sector
 from utils import retry
 
 ticker_to_sector = {}
