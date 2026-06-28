@@ -572,6 +572,23 @@ async def portfolio_updater(http_session):
             await asyncio.sleep(60)
 
 # ---------- Объявленные дивиденды и купоны ----------
+
+@app.post("/api/debug-fetch-dividends")
+async def debug_fetch_dividends(request: Request):
+    if not check_token(request):
+        raise HTTPException(403)
+    try:
+        from tinkoff_api import fetch_all_dividends, fetch_all_coupons
+        logging.info("Debug: fetching dividends...")
+        dividends_data = await fetch_all_dividends(bot_session)
+        logging.info(f"Debug: dividends_data = {dividends_data}")
+        coupons_data = await fetch_all_coupons(bot_session)
+        logging.info(f"Debug: coupons_data = {coupons_data}")
+        return JSONResponse({"dividends": dividends_data, "coupons": coupons_data})
+    except Exception as e:
+        logging.error(f"Debug error: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 @app.get("/api/upcoming-payments")
 async def get_upcoming_payments(request: Request, year: int = None, month: int = None):
     if not check_token(request):

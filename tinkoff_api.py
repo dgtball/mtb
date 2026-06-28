@@ -368,3 +368,9 @@ async def fetch_all_coupons(http_session):
                 logging.error(f"Ошибка получения купонов для {pos['ticker']}: {e}")
     
     return result
+    
+async def test_get_dividends(http_session, figi="BBG00475KKY8"):
+    endpoint = "tinkoff.public.invest.api.contract.v1.InstrumentsService/GetDividends"
+    params = {"figi": figi}
+    data = await tinkoff_api_request(http_session, "POST", endpoint, params=params)
+    return data
