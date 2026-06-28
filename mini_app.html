@@ -33,7 +33,6 @@
       font-size: 14px;
       line-height: 1.5;
     }
-    /* ===== ВКЛАДКИ ===== */
     .tabs {
       display: flex;
       border-bottom: 1px solid var(--border);
@@ -72,7 +71,6 @@
       to { opacity: 1; transform: translateY(0); }
     }
 
-    /* ===== КАРТОЧКИ ===== */
     .card {
       background: var(--surface);
       border-radius: var(--radius);
@@ -87,7 +85,6 @@
       color: var(--text);
     }
 
-    /* ===== СТАТИСТИКА (Портфель) ===== */
     .summary {
       display: flex;
       justify-content: space-between;
@@ -114,7 +111,6 @@
       font-weight: 600;
     }
 
-    /* ===== ГРАФИКИ ===== */
     .chart-container {
       width: 100%;
       max-width: 100%;
@@ -123,7 +119,6 @@
       position: relative;
     }
 
-    /* ===== ТАБЛИЦЫ ===== */
     .table-wrap {
       overflow-x: auto;
       margin-bottom: 12px;
@@ -148,25 +143,7 @@
     td {
       color: var(--text);
     }
-    .actions {
-      display: flex;
-      gap: 6px;
-    }
-    .actions button {
-      background: var(--negative);
-      border: none;
-      color: white;
-      padding: 4px 10px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 10px;
-      transition: opacity 0.2s;
-    }
-    .actions button:hover {
-      opacity: 0.8;
-    }
 
-    /* ===== ФОРМЫ ===== */
     .form-row {
       display: flex;
       gap: 8px;
@@ -198,13 +175,6 @@
     .form-row button:hover {
       background: #1976D2;
     }
-    .btn-secondary {
-      background: var(--surface-light) !important;
-      color: var(--text) !important;
-    }
-    .btn-secondary:hover {
-      background: #3a3a3a !important;
-    }
     .btn-success {
       background: var(--positive) !important;
     }
@@ -212,7 +182,6 @@
       background: #388E3C !important;
     }
 
-    /* ===== ПОДВКЛАДКИ НАСТРОЕК ===== */
     .settings-tabs {
       display: flex;
       border-bottom: 1px solid var(--border);
@@ -244,7 +213,6 @@
       display: block;
     }
 
-    /* ===== СИНХРОНИЗАЦИЯ ===== */
     .sync-status {
       display: flex;
       align-items: center;
@@ -270,7 +238,6 @@
       background: #1976D2;
     }
 
-    /* ===== ДЕТАЛИ (выпадающие блоки) ===== */
     .detail-box {
       background: var(--surface-light);
       border-radius: var(--radius);
@@ -286,8 +253,20 @@
       font-size: 14px;
       color: var(--text);
     }
+    .detail-box .close-btn {
+      background: var(--negative);
+      border: none;
+      color: white;
+      padding: 4px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      float: right;
+      font-size: 11px;
+    }
+    .detail-box .close-btn:hover {
+      opacity: 0.8;
+    }
 
-    /* ===== СООБЩЕНИЯ ===== */
     .toast {
       position: fixed;
       bottom: 20px;
@@ -315,7 +294,6 @@
       border-left: 4px solid var(--negative);
     }
 
-    /* ===== АДАПТИВ ===== */
     @media (max-width: 480px) {
       body { padding: 8px; }
       .summary-value { font-size: 20px; }
@@ -330,17 +308,15 @@
 </head>
 <body>
 
-  <!-- ===== TOAST УВЕДОМЛЕНИЯ ===== -->
   <div id="toast" class="toast"></div>
 
-  <!-- ===== ВКЛАДКИ ===== -->
   <div class="tabs">
     <div class="tab active" onclick="switchTab('portfolio')">📊 Портфель</div>
     <div class="tab" onclick="switchTab('dividends')">💰 Выплаты</div>
     <div class="tab" onclick="switchTab('settings')">⚙️ Настройки</div>
   </div>
 
-  <!-- ===== ВКЛАДКА: ПОРТФЕЛЬ ===== -->
+  <!-- Портфель -->
   <div id="portfolio" class="tab-content active">
     <div class="card">
       <div class="summary">
@@ -367,7 +343,7 @@
     </div>
   </div>
 
-  <!-- ===== ВКЛАДКА: ВЫПЛАТЫ ===== -->
+  <!-- Выплаты -->
   <div id="dividends" class="tab-content">
     <div class="sync-status">
       <span>🔄 Последняя синхронизация: <span id="lastSync">—</span></span>
@@ -375,12 +351,13 @@
     </div>
     <div class="card">
       <div class="card-title">Дивиденды и купоны по годам</div>
+      <p style="font-size:11px;color:var(--text-secondary);margin-top:-6px;margin-bottom:12px;">Клик по столбцу — выплаты за год, клик по названию в легенде — все выплаты по активу</p>
       <div class="chart-container" style="height:300px;"><canvas id="dividendChart"></canvas></div>
       <div id="dividendDetails" class="detail-box"></div>
     </div>
   </div>
 
-  <!-- ===== ВКЛАДКА: НАСТРОЙКИ ===== -->
+  <!-- Настройки -->
   <div id="settings" class="tab-content">
     <div class="settings-tabs">
       <span class="settings-tab active" onclick="switchSettingsTab('overrides')">Переименования</span>
@@ -388,7 +365,6 @@
       <span class="settings-tab" onclick="switchSettingsTab('sectors')">Сектора</span>
     </div>
 
-    <!-- Подвкладка: Переименования -->
     <div id="settings-overrides" class="settings-content active">
       <div class="card">
         <div class="form-row">
@@ -402,7 +378,6 @@
       </div>
     </div>
 
-    <!-- Подвкладка: Привязка тикеров -->
     <div id="settings-link" class="settings-content">
       <div class="card">
         <p style="font-size:12px;color:var(--text-secondary);margin-top:0;">Операции с неизвестным тикером. Выберите правильный тикер из списка.</p>
@@ -412,7 +387,6 @@
       </div>
     </div>
 
-    <!-- Подвкладка: Сектора -->
     <div id="settings-sectors" class="settings-content">
       <div class="card">
         <p style="font-size:12px;color:var(--text-secondary);margin-top:0;">Редактирование секторов инструментов. Выберите сектор из списка.</p>
@@ -457,9 +431,7 @@
     document.getElementById(tab).classList.add('active');
     if (tab === 'portfolio') loadPortfolio();
     else if (tab === 'dividends') loadDividends();
-    else if (tab === 'settings') {
-      loadOverrides();
-    }
+    else if (tab === 'settings') loadOverrides();
   }
 
   function switchSettingsTab(tab) {
@@ -487,7 +459,6 @@
         changeEl.style.color = 'var(--text-secondary)';
       }
       allPositions = data.positions || [];
-      // Сектора
       if (data.sectors && data.sectors.length > 0) {
         const totalValue = data.sectors.reduce((sum, s) => sum + s.value, 0);
         const labels = data.sectors.map(s => s.name);
@@ -499,16 +470,12 @@
           type: 'bar',
           data: { labels, datasets: [{ data: values, backgroundColor: '#2196F3', borderRadius: 4 }] },
           options: {
-            responsive: true,
-            maintainAspectRatio: false,
+            responsive: true, maintainAspectRatio: false,
             plugins: {
               legend: { display: false },
               tooltip: { enabled: false },
               datalabels: {
-                anchor: 'end',
-                align: 'top',
-                color: '#e0e0e0',
-                font: { weight: 'bold', size: 10 },
+                anchor: 'end', align: 'top', color: '#e0e0e0', font: { weight: 'bold', size: 10 },
                 formatter: (v, ctx) => percentages[ctx.dataIndex].toFixed(1) + '%'
               }
             },
@@ -533,7 +500,6 @@
           plugins: [ChartDataLabels]
         });
       }
-      // Лидеры
       const gainersBody = document.getElementById('gainersTable');
       const losersBody = document.getElementById('losersTable');
       gainersBody.innerHTML = '';
@@ -606,7 +572,26 @@
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
-            legend: { position: 'bottom', labels: { color: '#e0e0e0', font: { size: 10 } } },
+            legend: {
+              position: 'bottom',
+              labels: {
+                color: '#e0e0e0',
+                font: { size: 10 },
+                // Добавляем обработчик клика по легенде
+                onClick: function(e, legendItem, legend) {
+                  // Получаем название актива (label)
+                  const asset = legendItem.text;
+                  // Вызываем функцию для показа всех выплат по активу
+                  showAllDividendDetails(asset);
+                  // Стандартное поведение (скрыть/показать серию) – сохраняем
+                  const chart = legend.chart;
+                  const index = legendItem.datasetIndex;
+                  const meta = chart.getDatasetMeta(index);
+                  meta.hidden = meta.hidden === null ? !chart.data.datasets[index].hidden : null;
+                  chart.update();
+                }
+              }
+            },
             tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.raw.toLocaleString()}` } }
           },
           scales: {
@@ -644,18 +629,56 @@
     }
   }
 
+  // Детали за конкретный год (клик по столбцу)
   async function showDividendDetails(year, asset) {
     const url = `/api/dividends-yearly?year=${year}&ticker=${encodeURIComponent(asset)}`;
     const data = await apiCall(url);
     const container = document.getElementById('dividendDetails');
     if (!data.details || data.details.length === 0) { container.classList.remove('visible'); return; }
-    let html = `<h4>${asset} за ${year}</h4><div class="table-wrap"><table><thead><tr><th>Дата</th><th>Название</th><th>Сумма</th></tr></thead><tbody>`;
+    let html = `<h4>${asset} за ${year}</h4><button class="close-btn" onclick="closeDividendDetails()">✕</button><div class="table-wrap"><table><thead><tr><th>Дата</th><th>Название</th><th>Сумма</th></tr></thead><tbody>`;
     data.details.forEach(d => {
       html += `<tr><td>${new Date(d.date).toLocaleDateString()}</td><td>${d.name}</td><td>${d.amount.toLocaleString()}</td></tr>`;
     });
     html += '</tbody></table></div>';
     container.innerHTML = html;
     container.classList.add('visible');
+  }
+
+  // Все выплаты по активу (клик по легенде)
+  async function showAllDividendDetails(asset) {
+    try {
+      const url = `/api/dividends-yearly?ticker=${encodeURIComponent(asset)}`;
+      const data = await apiCall(url);
+      const container = document.getElementById('dividendDetails');
+      if (!data.details || data.details.length === 0) {
+        container.classList.remove('visible');
+        showToast('Нет выплат по этому активу', 'info');
+        return;
+      }
+      let html = `<h4>Все выплаты по ${asset}</h4><button class="close-btn" onclick="closeDividendDetails()">✕</button>`;
+      // Итоги по годам
+      if (data.yearly_totals) {
+        html += `<div style="margin:8px 0;font-size:12px;color:var(--text-secondary);">`;
+        for (const [year, total] of Object.entries(data.yearly_totals)) {
+          html += `<span style="margin-right:12px;"><b>${year}:</b> ${total.toLocaleString()} ₽</span>`;
+        }
+        html += `</div>`;
+      }
+      html += `<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Название</th><th>Сумма</th></tr></thead><tbody>`;
+      data.details.forEach(d => {
+        html += `<tr><td>${new Date(d.date).toLocaleDateString()}</td><td>${d.name}</td><td>${d.amount.toLocaleString()}</td></tr>`;
+      });
+      html += '</tbody></table></div>';
+      container.innerHTML = html;
+      container.classList.add('visible');
+    } catch(e) {
+      console.error(e);
+      showToast('Ошибка загрузки деталей', 'error');
+    }
+  }
+
+  function closeDividendDetails() {
+    document.getElementById('dividendDetails').classList.remove('visible');
   }
 
   async function syncOperations() {
@@ -679,11 +702,7 @@
       tbody.innerHTML = '';
       data.forEach(o => {
         const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>${o.ticker}</td>
-          <td>${o.name}</td>
-          <td><button onclick="removeOverride('${o.ticker}')">Удалить</button></td>
-        `;
+        tr.innerHTML = `<td>${o.ticker}</td><td>${o.name}</td><td><button onclick="removeOverride('${o.ticker}')">Удалить</button></td>`;
         tbody.appendChild(tr);
       });
     } catch(e) {
@@ -731,7 +750,6 @@
       }
       const tickers = data.available_tickers || [];
       allTickersList = tickers;
-
       operations.forEach(op => {
         const tr = document.createElement('tr');
         const tdDate = document.createElement('td'); tdDate.textContent = new Date(op.date).toLocaleDateString(); tr.appendChild(tdDate);
