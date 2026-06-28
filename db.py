@@ -302,6 +302,12 @@ def update_instrument_sector(ticker: str, new_sector: str):
 
 # ===== КАЛЕНДАРЬ ДИВИДЕНДОВ =====
 def upsert_dividend_calendar(ticker, figi, dividend_data):
+    # Извлекаем сумму дивиденда (units + nano)
+    dividend_net_obj = dividend_data.get("dividendNet", {})
+    units = float(dividend_net_obj.get("units", 0))
+    nano = float(dividend_net_obj.get("nano", 0)) / 1e9
+    dividend_net = units + nano
+
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         c.execute("""
@@ -314,7 +320,7 @@ def upsert_dividend_calendar(ticker, figi, dividend_data):
             dividend_data.get("declaredDate"),
             dividend_data.get("recordDate"),
             dividend_data.get("paymentDate"),
-            dividend_data.get("dividendNet"),
+            dividend_net,
             dividend_data.get("dividendType")
         ))
         conn.commit()
