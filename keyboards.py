@@ -1,5 +1,5 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
-from config import TINKOFF_TOKEN
+from config import TINKOFF_TOKEN, DOMAIN
 
 def main_keyboard():
     kb = [
