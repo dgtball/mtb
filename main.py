@@ -23,7 +23,8 @@ from services.portfolio import get_portfolio_with_details
 from utils import retry
 
 
-
+# Глобальная переменная для HTTP-сессии (будет установлена в main())
+bot_session = None
 
 # ---------- ЛОГИРОВАНИЕ ----------
 from logging.handlers import TimedRotatingFileHandler
@@ -275,14 +276,17 @@ async def api_dividends_monthly(request: Request, year: int = None):
     if not check_token(request):
         raise HTTPException(403)
     try:
+        from main import bot_session
+        if bot_session is None:
+            return JSONResponse({"error": "HTTP сессия ещё не создана"}, status_code=503)
+
         if year is None:
             year = datetime.datetime.now().year
 
-        # Открываем соединение один раз
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
 
-        # 1. Фактические выплаты за указанный год
+        # 1. Фактические выплаты за год
         c.execute("""SELECT date, ticker, payment, name 
                      FROM operations 
                      WHERE type IN ('Выплата дивидендов', 'Выплата купонов') 
@@ -311,11 +315,8 @@ async def api_dividends_monthly(request: Request, year: int = None):
                 "type": "actual"
             })
 
-        # 2. Прогнозные выплаты (на основе истории)
-        # Получаем портфель, чтобы знать количество акций
+        # 2. Прогнозные выплаты
         from tinkoff_api import get_portfolio_summary
-        # Используем глобальную сессию из main.py (нужно импортировать bot_session)
-        from main import bot_session
         portfolio = await get_portfolio_summary(bot_session)
         if not portfolio:
             portfolio_positions = []
@@ -329,7 +330,6 @@ async def api_dividends_monthly(request: Request, year: int = None):
             if ticker and quantity > 0:
                 portfolio_quantities[ticker] = quantity
 
-        # Получаем историю выплат за последние 3 года (для прогноза)
         three_years_ago = year - 3
         c.execute("""SELECT ticker, date, payment 
                      FROM operations 
@@ -339,7 +339,6 @@ async def api_dividends_monthly(request: Request, year: int = None):
                      ORDER BY date""", (str(three_years_ago),))
         history_rows = c.fetchall()
 
-        # Группируем историю по тикеру и месяцу (независимо от года)
         history_by_ticker_month = {}
         for h in history_rows:
             ticker = h[0]
@@ -353,7 +352,6 @@ async def api_dividends_monthly(request: Request, year: int = None):
                 history_by_ticker_month[ticker][month] = []
             history_by_ticker_month[ticker][month].append(amount)
 
-        # Рассчитываем среднюю выплату за каждый месяц для каждого тикера
         forecast_by_month = {m: {"total": 0.0, "details": []} for m in range(1, 13)}
         for ticker, months_data in history_by_ticker_month.items():
             quantity = portfolio_quantities.get(ticker, 0)
@@ -371,12 +369,10 @@ async def api_dividends_monthly(request: Request, year: int = None):
                         "type": "forecast"
                     })
 
-        # 3. Доступные годы (из операций)
+        # 3. Доступные годы
         c.execute("SELECT DISTINCT substr(date, 1, 4) FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date DESC")
         years_rows = c.fetchall()
         years = [int(row[0]) for row in years_rows if row[0] is not None]
-
-        # Закрываем соединение после всех запросов
         conn.close()
 
         months_labels = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек']
