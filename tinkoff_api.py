@@ -1,9 +1,10 @@
 import logging
 import datetime
 import aiohttp
-from config import TINKOFF_TOKEN, TINKOFF_API_URL, NAME_OVERRIDES, ticker_to_name
 import db
+import sqlite3
 
+from config import TINKOFF_TOKEN, TINKOFF_API_URL, NAME_OVERRIDES, ticker_to_name
 from utils import retry
 
 # Глобальный словарь FIGI → Ticker, заполняется при старте
@@ -213,20 +214,28 @@ async def sync_operations(http_session, from_date=None, force_full=False):
                 from_date = datetime.datetime.now() - datetime.timedelta(days=365*5)
 
         to_date = datetime.datetime.now()
+        # Для отладки: выведем диапазон дат
+        logging.info(f"Запрос операций с {from_date} по {to_date}")
+
         params = {
             "accountId": account_id,
             "from": from_date.strftime("%Y-%m-%dT%H:%M:%S+03:00"),
             "to": to_date.strftime("%Y-%m-%dT%H:%M:%S+03:00"),
             "state": "OPERATION_STATE_EXECUTED"
         }
-        data = await tinkoff_api_request(http_session, "POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetOperations", params=params)
+        # Вызов API с логированием ошибок
+        try:
+            data = await tinkoff_api_request(http_session, "POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetOperations", params=params)
+        except Exception as e:
+            logging.error(f"Ошибка при вызове API операций: {e}")
+            return 0
+
         operations = data.get("operations", [])
         logging.info(f"sync_operations: получено {len(operations)} операций от API")
 
         new_count = 0
         updated_count = 0
         for op in operations:
-            # Определяем тикер
             ticker = op.get("ticker")
             if not ticker:
                 figi = op.get("figi")
@@ -238,11 +247,9 @@ async def sync_operations(http_session, from_date=None, force_full=False):
                 if not ticker:
                     ticker = "Прочие"
 
-            # Пропускаем нерублёвые операции
             if op.get("currency", "RUB").upper() != "RUB":
                 continue
 
-            # Извлекаем сумму с копейками
             payment_obj = op.get("payment", {})
             units = float(payment_obj.get("units", 0))
             nano = float(payment_obj.get("nano", 0)) / 1e9
@@ -253,48 +260,35 @@ async def sync_operations(http_session, from_date=None, force_full=False):
             comm_nano = float(commission_obj.get("nano", 0)) / 1e9
             commission_rub = comm_units + comm_nano
 
-            # Проверяем, существует ли уже запись с таким id
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute("SELECT payment FROM operations WHERE id = ?", (op.get("id"),))
-            existing = c.fetchone()
-            conn.close()
+            # Проверяем, существует ли уже операция
+            existing = None
+            with sqlite3.connect(db.DB_PATH) as conn:
+                c = conn.cursor()
+                c.execute("SELECT id FROM operations WHERE id = ?", (op.get("id"),))
+                row = c.fetchone()
+                if row:
+                    existing = row[0]
 
+            db.insert_operation({
+                "id": op.get("id"),
+                "date": op.get("date"),
+                "type": op.get("type"),
+                "ticker": ticker,
+                "figi": op.get("figi"),
+                "instrument_type": op.get("instrumentType"),
+                "quantity": op.get("quantity"),
+                "payment": payment_rub,
+                "currency": op.get("currency", "RUB").upper(),
+                "commission": commission_rub,
+                "name": op.get("name"),
+            })
             if existing:
-                # Если сумма изменилась – обновляем
-                if abs(existing[0] - payment_rub) > 0.0001:
-                    conn = sqlite3.connect(DB_PATH)
-                    c = conn.cursor()
-                    c.execute("""UPDATE operations SET 
-                                 date = ?, type = ?, ticker = ?, figi = ?, instrument_type = ?, 
-                                 quantity = ?, payment = ?, currency = ?, commission = ?, name = ?
-                                 WHERE id = ?""",
-                              (op.get("date"), op.get("type"), ticker, op.get("figi"),
-                               op.get("instrumentType"), op.get("quantity"), payment_rub,
-                               op.get("currency", "RUB").upper(), commission_rub,
-                               op.get("name"), op.get("id")))
-                    conn.commit()
-                    conn.close()
-                    updated_count += 1
+                updated_count += 1
             else:
-                # Новая запись
-                db.insert_operation({
-                    "id": op.get("id"),
-                    "date": op.get("date"),
-                    "type": op.get("type"),
-                    "ticker": ticker,
-                    "figi": op.get("figi"),
-                    "instrument_type": op.get("instrumentType"),
-                    "quantity": op.get("quantity"),
-                    "payment": payment_rub,
-                    "currency": op.get("currency", "RUB").upper(),
-                    "commission": commission_rub,
-                    "name": op.get("name"),
-                })
                 new_count += 1
 
         logging.info(f"sync_operations finished: добавлено {new_count}, обновлено {updated_count} записей")
-        return new_count + updated_count
+        return new_count
     except Exception as e:
         logging.error(f"Ошибка в sync_operations: {e}", exc_info=True)
         return 0
