@@ -4,7 +4,7 @@ import aiohttp
 from config import TINKOFF_TOKEN, TINKOFF_API_URL, NAME_OVERRIDES, ticker_to_name
 import db
 
-from utils import retr
+from utils import retry
 
 # Глобальный словарь FIGI → Ticker, заполняется при старте
 portfolio_figi_to_ticker = {}
