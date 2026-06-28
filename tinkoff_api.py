@@ -204,9 +204,7 @@ async def sync_operations(http_session, from_date=None, force_full=False):
             logging.warning("sync_operations: не найден account_id")
             return 0
 
-        # Определяем диапазон дат
         if force_full:
-            # При полной синхронизации игнорируем последнюю дату в БД
             from_date = datetime.datetime.now() - datetime.timedelta(days=365*5)
         else:
             if from_date is None:
@@ -219,20 +217,34 @@ async def sync_operations(http_session, from_date=None, force_full=False):
         to_date = datetime.datetime.now()
         logging.info(f"Запрос операций с {from_date} по {to_date}")
 
-        params = {
-            "accountId": account_id,
-            "from": from_date.strftime("%Y-%m-%dT%H:%M:%S+03:00"),
-            "to": to_date.strftime("%Y-%m-%dT%H:%M:%S+03:00"),
-            "state": "OPERATION_STATE_EXECUTED"
-        }
+        all_operations = []
+        page_token = None
+        page_count = 0
+        while True:
+            params = {
+                "accountId": account_id,
+                "from": from_date.strftime("%Y-%m-%dT%H:%M:%S+03:00"),
+                "to": to_date.strftime("%Y-%m-%dT%H:%M:%S+03:00"),
+                "state": "OPERATION_STATE_EXECUTED",
+                "limit": 100  # можно увеличить до 1000
+            }
+            if page_token:
+                params["pageToken"] = page_token
 
-        data = await tinkoff_api_request(http_session, "POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetOperations", params=params)
-        operations = data.get("operations", [])
-        logging.info(f"sync_operations: получено {len(operations)} операций от API")
+            data = await tinkoff_api_request(http_session, "POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetOperations", params=params)
+            operations = data.get("operations", [])
+            all_operations.extend(operations)
+            page_count += 1
+            logging.info(f"Получена страница {page_count}, операций на странице: {len(operations)}, всего собрано: {len(all_operations)}")
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+
+        logging.info(f"sync_operations: получено {len(all_operations)} операций от API за {page_count} страниц")
 
         new_count = 0
         updated_count = 0
-        for op in operations:
+        for op in all_operations:
             ticker = op.get("ticker")
             if not ticker:
                 figi = op.get("figi")
@@ -257,7 +269,6 @@ async def sync_operations(http_session, from_date=None, force_full=False):
             comm_nano = float(commission_obj.get("nano", 0)) / 1e9
             commission_rub = comm_units + comm_nano
 
-            # Проверяем, существует ли уже запись
             with sqlite3.connect(db.DB_PATH) as conn:
                 c = conn.cursor()
                 c.execute("SELECT id FROM operations WHERE id = ?", (op.get("id"),))
