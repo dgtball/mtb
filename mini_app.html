@@ -725,11 +725,17 @@
             borderRadius: 4,
           },
           {
-            label: 'Объявленные выплаты',
+            label: 'Объявлены (реестр открыт)',
             data: data.declared,
             backgroundColor: '#FFC107', // жёлтый
             borderRadius: 4,
-          }
+          },
+		  {
+			label: 'Ожидаются (реестр закрыт)',
+			data: data.declared_after,
+			backgroundColor: '#9C27B0', // фиолетовый
+			borderRadius: 4,
+		   }
         ]
       },
       options: {
