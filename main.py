@@ -456,7 +456,7 @@ async def api_sync_full(request: Request):
         logging.error(f"Sync-full error: {e}", exc_info=True)
         return JSONResponse({"error": str(e)}, status_code=500)
 
-@@app.post("/api/sync-calendars")
+@app.post("/api/sync-calendars")
 async def sync_calendars(request: Request):
     if not check_token(request):
         raise HTTPException(403)
