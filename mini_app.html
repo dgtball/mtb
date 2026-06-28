@@ -383,6 +383,18 @@
       loadOverrides();
     }
   }
+   // ============================================================
+  // 4. ПЕРЕКЛЮЧЕНИЕ ПОДВКЛАДОК НАСТРОЙКИ
+  // ============================================================
+  function switchSettingsTab(tab) {
+  document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.settings-content').forEach(c => c.classList.remove('active'));
+  document.querySelector(`.settings-tab[onclick="switchSettingsTab('${tab}')"]`).classList.add('active');
+  document.getElementById(`settings-${tab}`).classList.add('active');
+  if (tab === 'overrides') loadOverrides();
+  else if (tab === 'link') loadUntickedOperations();
+  else if (tab === 'sectors') loadSectors();
+}
 
   // ============================================================
   // 4. ПЕРЕКЛЮЧЕНИЕ ПОДВКЛАДОК ВЫПЛАТ
