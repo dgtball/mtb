@@ -521,11 +521,11 @@ async def main():
     config = uvicorn.Config(app, host="0.0.0.0", port=PORT, log_level="warning")
     server = uvicorn.Server(config)
     logging.info(f"✅ FastAPI сервер запущен на порту {PORT}")
-try:
-    await server.serve()
-finally:
-    await bot_session.close()
-    logging.info("✅ HTTP сессия закрыта")
+    try:
+        await server.serve()
+    finally:
+        await bot_session.close()
+        logging.info("✅ HTTP сессия закрыта")
 
 if __name__ == "__main__":
     asyncio.run(main())
