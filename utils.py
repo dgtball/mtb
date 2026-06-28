@@ -1,5 +1,6 @@
 import datetime
 import pandas as pd
+import db
 from tabulate import tabulate
 from config import NAME_OVERRIDES
 
@@ -157,5 +158,15 @@ def build_table_universal(df, title, headers, data_columns):
         table_data.append(row_data)
     table = tabulate(table_data, headers=headers, tablefmt="simple", numalign="right", stralign="left")
     return f"<b>{title}</b>\n<pre>{table}</pre>\n"
+    
+# ---------- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ПОРТФЕЛЯ ----------
+def get_portfolio_change_str():
+    today = datetime.date.today().isoformat()
+    snapshot = db.get_daily_snapshot(today)
+    current = db.get_portfolio_value()
+    if snapshot is None or current is None or snapshot == 0:
+        return ""
+    change = (current - snapshot) / snapshot * 100
+    return f"💼 Портфель: {change:+.2f}% за день\n"
     
     

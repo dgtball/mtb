@@ -9,7 +9,7 @@ from aiogram.fsm.context import FSMContext
 from config import MY_CHAT_ID, TOP_N
 from utils import (
     get_moscow_time, get_local_time, is_weekend, get_session_status,
-    get_week_number, get_month_name_ru, build_table_universal
+    get_week_number, get_month_name_ru, build_table_universal, get_portfolio_change_str
 )
 import db
 from moex_api import (
@@ -17,6 +17,7 @@ from moex_api import (
     get_moex_index_info, get_top_movers, calc_period_change
 )
 from keyboards import main_keyboard
+from services.tops import get_top_data
 
 # ---------- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ----------
 _http_session = None
@@ -29,16 +30,6 @@ def set_http_session(session):
 def set_bot(bot_instance):
     global _bot
     _bot = bot_instance
-
-# ---------- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ПОРТФЕЛЯ ----------
-def get_portfolio_change_str():
-    today = datetime.date.today().isoformat()
-    snapshot = db.get_daily_snapshot(today)
-    current = db.get_portfolio_value()
-    if snapshot is None or current is None or snapshot == 0:
-        return ""
-    change = (current - snapshot) / snapshot * 100
-    return f"💼 Портфель: {change:+.2f}% за день\n"
 
 # ---------- ФОРМАТИРОВАНИЕ ----------
 def format_message(gainers, losers, index_info, update_time, session_status, portfolio_change_str=""):
@@ -78,57 +69,37 @@ def format_historical_table(gainers, losers, period, from_date_dt, till_date_dt)
 async def send_top(message: types.Message, period: str = 'day'):
     loading_msg = await message.answer("⏳ Загружаю данные...")
     try:
-        if period == 'day':
-            shares_df = await get_market_data(_http_session)
-            gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
-            if gainers.empty and losers.empty:
-                await loading_msg.delete()
-                session_status = get_session_status(time_offset=1)
-                await message.answer(f"📌 {session_status}\nДанные обновятся в рабочее время.")
-                return
-            index_info = await get_moex_index_info(_http_session)
+        gainers, losers, index_info, session_status, update_time, portfolio_line = await get_top_data(period, _http_session)
+        if period == 'day' and gainers.empty and losers.empty:
+            await loading_msg.delete()
             session_status = get_session_status(time_offset=1)
-            update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
-            portfolio_line = get_portfolio_change_str()
+            await message.answer(f"📌 {session_status}\nДанные обновятся в рабочее время.")
+            return
+        if period != 'day' and gainers.empty and losers.empty:
+            await loading_msg.delete()
+            await message.answer(f"Нет данных за {period}.")
+            return
+
+        if period == 'day':
             text = format_message(gainers, losers, index_info, update_time, session_status, portfolio_line)
-            await message.answer(text, parse_mode="HTML")
         else:
+            # Форматируем исторический топ
             now = get_moscow_time()
             if period == 'week':
                 start = now - datetime.timedelta(days=now.weekday())
                 from_date = start
-                from_date_str = start.strftime("%Y-%m-%d")
                 period_name_short = 'week'
             else:
                 start = now.replace(day=1)
                 from_date = start
-                from_date_str = start.strftime("%Y-%m-%d")
                 period_name_short = 'month'
             till_date = now
-            till_date_str = now.strftime("%Y-%m-%d")
-            df = await get_historical_shares(_http_session, from_date_str, till_date_str)
-            if df.empty:
-                await loading_msg.delete()
-                await message.answer(f"Нет данных за {period}.")
-                return
-            changes = calc_period_change(df)
-            shares_all = await get_market_data(_http_session)
-            if not shares_all.empty:
-                mask = (shares_all['LISTLEVEL'] < 3) & (shares_all['SECTYPE'].isin(['1', '2']))
-                allowed_tickers = shares_all[mask]['SECID'].unique()
-                changes = changes[changes['SECID'].isin(allowed_tickers)]
-                names = shares_all[mask][['SECID', 'SHORTNAME']].drop_duplicates('SECID')
-                changes = changes.merge(names, on='SECID', how='left')
-            positive = changes[changes['CHANGE_PCT'] > 0]
-            negative = changes[changes['CHANGE_PCT'] < 0]
-            gainers = positive.nlargest(TOP_N, 'CHANGE_PCT') if not positive.empty else pd.DataFrame()
-            losers = negative.nsmallest(TOP_N, 'CHANGE_PCT') if not negative.empty else pd.DataFrame()
             text = format_historical_table(gainers, losers, period_name_short, from_date, till_date)
-            await message.answer(text, parse_mode="HTML")
         await loading_msg.delete()
+        await message.answer(text, parse_mode="HTML")
     except Exception as e:
         await loading_msg.delete()
-        logging.error(f"❌ Ошибка в send_top (period={period}): {e}", exc_info=True)
+        logging.error(f"Ошибка в send_top: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка при загрузке данных: {e}")
 
 # ---------- ОБРАБОТЧИКИ ----------

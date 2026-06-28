@@ -14,9 +14,11 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
+
 from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION, TINKOFF_TOKEN, SECTOR_NAMES, MINI_APP_SECRET, NAME_OVERRIDES, ticker_to_name, DB_PATH, WEBHOOK_URL, SECTOR_NAMES
 from moex_api import load_instrument_names, ticker_to_sector
 from handlers import register_handlers, set_http_session, set_bot
+from services.portfolio import get_portfolio_with_details
 
 # ---------- ЛОГИРОВАНИЕ ----------
 from logging.handlers import TimedRotatingFileHandler
@@ -103,85 +105,10 @@ async def api_portfolio(request: Request):
     if not check_token(request):
         raise HTTPException(status_code=403, detail="Forbidden")
     try:
-        from tinkoff_api import get_portfolio_summary
-        from moex_api import get_market_data
-        from utils import smart_price
-
-        data = await get_portfolio_summary(bot_session)
+        data = await get_portfolio_with_details(bot_session)
         if not data:
             return JSONResponse({"error": "Нет данных"}, status_code=404)
-
-        market_df = await get_market_data(bot_session)
-        ticker_change = {}
-        if not market_df.empty and 'SECID' in market_df.columns and 'LAST' in market_df.columns and 'OPEN' in market_df.columns:
-            for _, row in market_df.iterrows():
-                secid = row['SECID']
-                last = row['LAST']
-                open_price = row['OPEN']
-                if isinstance(last, (int, float)) and isinstance(open_price, (int, float)) and open_price != 0:
-                    change = ((last - open_price) / open_price) * 100
-                    ticker_change[secid] = change
-
-        total_amount = data["total_amount"]
-        positions = []
-        portfolio_equities = []
-
-        for pos in data["positions"]:
-            ticker = pos["ticker"]
-            sector_name = db.get_sector(ticker)
-            value = pos["quantity"] * pos["price"]
-            share = (value / total_amount * 100) if total_amount > 0 else 0
-
-            avg_formatted = smart_price(pos["avg_price"])
-
-            positions.append({
-                "ticker": ticker,
-                "name": pos["name"] or pos["ticker"],  # если name None, подставляем тикер
-                "price_formatted": smart_price(pos["price"]),
-                "avg_price_formatted": avg_formatted,
-                "value": value,
-                "yield_pct": pos["pos_yield_pct"],
-                "sector": sector_name,
-                "share": round(share, 1),
-            })
-
-            if sector_name and sector_name not in ("Прочие", "Фонд", "Облигации"):
-                change = ticker_change.get(ticker)
-                pct = change if change is not None else pos["pos_yield_pct"]
-                portfolio_equities.append({
-                    "name": pos["name"],
-                    "price_formatted": smart_price(pos["price"]),
-                    "change_pct": pct,
-                })
-
-        gainers_list = [p for p in portfolio_equities if p["change_pct"] > 0]
-        losers_list = [p for p in portfolio_equities if p["change_pct"] < 0]
-        gainers_list.sort(key=lambda x: x["change_pct"], reverse=True)
-        losers_list.sort(key=lambda x: x["change_pct"])
-
-        portfolio_gainers = gainers_list[:5]
-        portfolio_losers = losers_list[:5]
-
-        sectors = {}
-        for p in positions:
-            sec = p["sector"]
-            sectors[sec] = sectors.get(sec, 0) + p["value"]
-        sector_list = [{"name": k, "value": v} for k, v in sectors.items()]
-
-        daily_change_pct = None
-        today = datetime.date.today().isoformat()
-        snapshot = db.get_daily_snapshot(today)
-        if snapshot is not None and snapshot > 0:
-            daily_change_pct = (total_amount - snapshot) / snapshot * 100
-
-        return JSONResponse({
-            "total_amount": total_amount,
-            "daily_change_pct": daily_change_pct,
-            "positions": positions,
-            "sectors": sector_list,
-            "portfolio_gainers": portfolio_gainers,
-            "portfolio_losers": portfolio_losers,
-        })
+        return JSONResponse(data)
     except Exception as e:
         logging.error(f"API portfolio: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)

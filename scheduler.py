@@ -2,13 +2,14 @@ import asyncio
 import datetime
 import logging
 import pandas as pd
+import db
 from aiogram import Bot
 
-import db
 from handlers import format_message, format_historical_table, get_portfolio_change_str
 from moex_api import get_market_data, get_moex_index_info, get_top_movers, get_historical_shares, calc_period_change
 from utils import get_moscow_time, get_local_time, get_session_status, last_trading_day
-from config import MY_CHAT_ID, TOP_N, TINKOFF_TOKEN  # добавили импорт TINKOFF_TOKEN
+from config import MY_CHAT_ID, TOP_N, TINKOFF_TOKEN
+from services.tops import get_top_data
 
 _bot = None
 _http_session = None
@@ -30,68 +31,33 @@ def is_portfolio_update_allowed():
     global portfolio_update_allowed
     return portfolio_update_allowed
 
-# ---------- ФУНКЦИИ ОТПРАВКИ ТОПОВ ----------
-async def send_weekly_top():
+# ---------- ФУНКЦИИ ОТПРАВКИ ТОПОВ НЕДЕЛИ И МЕСЯЦА ----------
+async def send_periodic_top(period: str):
+    """period: 'week' или 'month'"""
     try:
         now = get_moscow_time()
-        start = now - datetime.timedelta(days=now.weekday())
-        from_date = start
-        from_date_str = start.strftime("%Y-%m-%d")
-        till_date = now
-        till_date_str = now.strftime("%Y-%m-%d")
-        df = await get_historical_shares(_http_session, from_date_str, till_date_str)
-        if df.empty:
-            return
-        changes = calc_period_change(df)
-        shares_all = await get_market_data(_http_session)
-        if not shares_all.empty:
-            mask = (shares_all['LISTLEVEL'] < 3) & (shares_all['SECTYPE'].isin(['1', '2']))
-            allowed_tickers = shares_all[mask]['SECID'].unique()
-            changes = changes[changes['SECID'].isin(allowed_tickers)]
-            names = shares_all[mask][['SECID', 'SHORTNAME']].drop_duplicates('SECID')
-            changes = changes.merge(names, on='SECID', how='left')
-        positive = changes[changes['CHANGE_PCT'] > 0]
-        negative = changes[changes['CHANGE_PCT'] < 0]
-        gainers = positive.nlargest(TOP_N, 'CHANGE_PCT') if not positive.empty else pd.DataFrame()
-        losers = negative.nsmallest(TOP_N, 'CHANGE_PCT') if not negative.empty else pd.DataFrame()
+        gainers, losers, _, _, _, _ = await get_top_data(period, _http_session)
         if gainers.empty and losers.empty:
             return
-        text = format_historical_table(gainers, losers, 'week', from_date, till_date)
+        # Формируем заголовок
+        if period == 'week':
+            start = now - datetime.timedelta(days=now.weekday())
+            title = f"📅 Топ за неделю #{start.isocalendar()[1]}"
+            period_str = f"Период: {start.strftime('%d/%m/%y')} – {now.strftime('%d/%m/%y')}"
+        else:
+            start = now.replace(day=1)
+            month_name = ['Января','Февраля','Марта','Апреля','Мая','Июня','Июля','Августа','Сентября','Октября','Ноября','Декабря'][start.month-1]
+            title = f"🗓️ Топ {month_name}"
+            period_str = f"Период: {start.strftime('%d/%m/%y')} – {now.strftime('%d/%m/%y')}"
+        text = f"{title}\n{period_str}\n\n"
+        if not gainers.empty:
+            text += build_table_universal(gainers, "📈 Рост", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
+        if not losers.empty:
+            text += build_table_universal(losers, "📉 Падение", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
         await _bot.send_message(MY_CHAT_ID, text, parse_mode="HTML")
-        logging.info("Еженедельный топ недели отправлен")
+        logging.info(f"Еженедельный/ежемесячный топ ({period}) отправлен")
     except Exception as e:
-        logging.error(f"Ошибка отправки еженедельного топа: {e}")
-
-async def send_monthly_top():
-    try:
-        now = get_moscow_time()
-        start = now.replace(day=1)
-        from_date = start
-        from_date_str = start.strftime("%Y-%m-%d")
-        till_date = now
-        till_date_str = now.strftime("%Y-%m-%d")
-        df = await get_historical_shares(_http_session, from_date_str, till_date_str)
-        if df.empty:
-            return
-        changes = calc_period_change(df)
-        shares_all = await get_market_data(_http_session)
-        if not shares_all.empty:
-            mask = (shares_all['LISTLEVEL'] < 3) & (shares_all['SECTYPE'].isin(['1', '2']))
-            allowed_tickers = shares_all[mask]['SECID'].unique()
-            changes = changes[changes['SECID'].isin(allowed_tickers)]
-            names = shares_all[mask][['SECID', 'SHORTNAME']].drop_duplicates('SECID')
-            changes = changes.merge(names, on='SECID', how='left')
-        positive = changes[changes['CHANGE_PCT'] > 0]
-        negative = changes[changes['CHANGE_PCT'] < 0]
-        gainers = positive.nlargest(TOP_N, 'CHANGE_PCT') if not positive.empty else pd.DataFrame()
-        losers = negative.nsmallest(TOP_N, 'CHANGE_PCT') if not negative.empty else pd.DataFrame()
-        if gainers.empty and losers.empty:
-            return
-        text = format_historical_table(gainers, losers, 'month', from_date, till_date)
-        await _bot.send_message(MY_CHAT_ID, text, parse_mode="HTML")
-        logging.info("Ежемесячный топ месяца отправлен")
-    except Exception as e:
-        logging.error(f"Ошибка отправки ежемесячного топа: {e}")
+        logging.error(f"Ошибка отправки топа {period}: {e}")
 
 # ---------- ФУНКЦИЯ ОБНОВЛЕНИЯ КЭША ИНСТРУМЕНТОВ ----------
 async def refresh_instruments_cache():
@@ -203,14 +169,14 @@ async def scheduler_loop():
             # Пятница после 23:50
             if weekday == 4 and hour == 23 and minute >= 50:
                 if last_week_sent_date != today:
-                    await send_weekly_top()
+                    await send_periodic_top('week')
                     last_week_sent_date = today
 
             # Последний торговый день месяца после 23:50
             last_trade_day = last_trading_day(today)
             if today == last_trade_day and hour == 23 and minute >= 51:
                 if last_month_sent_date != today:
-                    await send_monthly_top()
+                    await send_periodic_top('month')
                     last_month_sent_date = today
 
             await asyncio.sleep(5)
