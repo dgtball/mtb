@@ -224,7 +224,9 @@ async def sync_operations(http_session, from_date=None, force_full=False):
         logging.info(f"sync_operations: получено {len(operations)} операций от API")
 
         new_count = 0
+        updated_count = 0
         for op in operations:
+            # Определяем тикер
             ticker = op.get("ticker")
             if not ticker:
                 figi = op.get("figi")
@@ -240,7 +242,7 @@ async def sync_operations(http_session, from_date=None, force_full=False):
             if op.get("currency", "RUB").upper() != "RUB":
                 continue
 
-            # ✅ Извлекаем сумму с копейками
+            # Извлекаем сумму с копейками
             payment_obj = op.get("payment", {})
             units = float(payment_obj.get("units", 0))
             nano = float(payment_obj.get("nano", 0)) / 1e9
@@ -251,23 +253,48 @@ async def sync_operations(http_session, from_date=None, force_full=False):
             comm_nano = float(commission_obj.get("nano", 0)) / 1e9
             commission_rub = comm_units + comm_nano
 
-            db.insert_operation({
-                "id": op.get("id"),
-                "date": op.get("date"),  # сохраняем дату из API, а не текущую!
-                "type": op.get("type"),
-                "ticker": ticker,
-                "figi": op.get("figi"),
-                "instrument_type": op.get("instrumentType"),
-                "quantity": op.get("quantity"),
-                "payment": payment_rub,
-                "currency": op.get("currency", "RUB").upper(),
-                "commission": commission_rub,
-                "name": op.get("name"),
-            })
-            new_count += 1
+            # Проверяем, существует ли уже запись с таким id
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute("SELECT payment FROM operations WHERE id = ?", (op.get("id"),))
+            existing = c.fetchone()
+            conn.close()
 
-        logging.info(f"sync_operations finished: добавлено {new_count} новых записей")
-        return new_count
+            if existing:
+                # Если сумма изменилась – обновляем
+                if abs(existing[0] - payment_rub) > 0.0001:
+                    conn = sqlite3.connect(DB_PATH)
+                    c = conn.cursor()
+                    c.execute("""UPDATE operations SET 
+                                 date = ?, type = ?, ticker = ?, figi = ?, instrument_type = ?, 
+                                 quantity = ?, payment = ?, currency = ?, commission = ?, name = ?
+                                 WHERE id = ?""",
+                              (op.get("date"), op.get("type"), ticker, op.get("figi"),
+                               op.get("instrumentType"), op.get("quantity"), payment_rub,
+                               op.get("currency", "RUB").upper(), commission_rub,
+                               op.get("name"), op.get("id")))
+                    conn.commit()
+                    conn.close()
+                    updated_count += 1
+            else:
+                # Новая запись
+                db.insert_operation({
+                    "id": op.get("id"),
+                    "date": op.get("date"),
+                    "type": op.get("type"),
+                    "ticker": ticker,
+                    "figi": op.get("figi"),
+                    "instrument_type": op.get("instrumentType"),
+                    "quantity": op.get("quantity"),
+                    "payment": payment_rub,
+                    "currency": op.get("currency", "RUB").upper(),
+                    "commission": commission_rub,
+                    "name": op.get("name"),
+                })
+                new_count += 1
+
+        logging.info(f"sync_operations finished: добавлено {new_count}, обновлено {updated_count} записей")
+        return new_count + updated_count
     except Exception as e:
         logging.error(f"Ошибка в sync_operations: {e}", exc_info=True)
         return 0
