@@ -7,7 +7,7 @@ from aiogram import Bot
 import db
 from handlers import format_message, format_historical_table, get_portfolio_change_str
 from moex_api import get_market_data, get_moex_index_info, get_top_movers, get_historical_shares, calc_period_change
-from utils import get_moscow_time, get_local_time, get_session_status
+from utils import get_moscow_time, get_local_time, get_session_status, last_trading_day
 from config import MY_CHAT_ID, TOP_N, TINKOFF_TOKEN  # добавили импорт TINKOFF_TOKEN
 
 _bot = None
@@ -105,7 +105,7 @@ async def refresh_instruments_cache():
 
 # ---------- ОСНОВНОЙ ЦИКЛ ПЛАНИРОВЩИКА ----------
 async def scheduler_loop():
-    global _active_day_message_id, portfolio_update_allowed
+    global _active_day_message_id, portfolio_update_allowed, _snapshot_saved_for_date
     last_week_sent_date = None
     last_month_sent_date = None
     day_update_interval = 30
@@ -120,8 +120,8 @@ async def scheduler_loop():
             hour = now.hour
             minute = now.minute
 
-            # Вечерний снэпшот портфеля (после 23:50)
-            if hour == 23 and minute >= 59:
+            # Вечерний снэпшот портфеля (после 23:50) – только один раз за день
+            if hour == 23 and minute >= 50:
                 tomorrow = today + datetime.timedelta(days=1)
                 tomorrow_str = tomorrow.isoformat()
                 if _snapshot_saved_for_date != tomorrow_str:

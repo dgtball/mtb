@@ -17,6 +17,19 @@ def get_local_time():
 def is_weekend():
     now = get_moscow_time()
     return now.weekday() in (5, 6)
+    
+def last_trading_day(today):
+    """
+    Возвращает последний торговый день месяца (пн–пт).
+    today – объект datetime.date.
+    """
+    if today.month == 12:
+        last_day = datetime.date(today.year + 1, 1, 1) - datetime.timedelta(days=1)
+    else:
+        last_day = datetime.date(today.year, today.month + 1, 1) - datetime.timedelta(days=1)
+    while last_day.weekday() >= 5:  # суббота (5) или воскресенье (6)
+        last_day -= datetime.timedelta(days=1)
+    return last_day
 
 # ---------- СТАТУС СЕССИИ ----------
 def get_session_status(no_trading_weekends=None, time_offset=0):
@@ -144,3 +157,5 @@ def build_table_universal(df, title, headers, data_columns):
         table_data.append(row_data)
     table = tabulate(table_data, headers=headers, tablefmt="simple", numalign="right", stralign="left")
     return f"<b>{title}</b>\n<pre>{table}</pre>\n"
+    
+    
