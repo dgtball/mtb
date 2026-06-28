@@ -490,7 +490,7 @@ async def main():
     scheduler.set_bot(bot)
     scheduler.set_http_session(bot_session)
 
-    await load_instrument_names(bot_session, force=True)
+    await load_instrument_names(bot_session)
     register_handlers(dp)
 
     await bot.set_webhook(WEBHOOK_URL)
@@ -521,8 +521,9 @@ async def main():
     config = uvicorn.Config(app, host="0.0.0.0", port=PORT, log_level="warning")
     server = uvicorn.Server(config)
     logging.info(f"✅ FastAPI сервер запущен на порту {PORT}")
+try:
     await server.serve()
-
+finally:
     await bot_session.close()
     logging.info("✅ HTTP сессия закрыта")
 
