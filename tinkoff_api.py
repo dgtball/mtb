@@ -219,29 +219,29 @@ async def sync_operations(http_session, from_date=None, force_full=False):
 
         all_operations = []
         page_token = None
-        page_count = 0
         while True:
             params = {
                 "accountId": account_id,
                 "from": from_date.strftime("%Y-%m-%dT%H:%M:%S+03:00"),
                 "to": to_date.strftime("%Y-%m-%dT%H:%M:%S+03:00"),
                 "state": "OPERATION_STATE_EXECUTED",
-                "limit": 100  # можно увеличить до 1000
+                "limit": 1000,
             }
             if page_token:
-                params["pageToken"] = page_token
+                params["page_token"] = page_token
 
             data = await tinkoff_api_request(http_session, "POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetOperations", params=params)
             operations = data.get("operations", [])
             all_operations.extend(operations)
-            page_count += 1
-            logging.info(f"Получена страница {page_count}, операций на странице: {len(operations)}, всего собрано: {len(all_operations)}")
-            page_token = data.get("nextPageToken")
-            if not page_token:
+            logging.info(f"Получена страница, операций на странице: {len(operations)}, всего собрано: {len(all_operations)}")
+            # Проверяем наличие следующей страницы
+            next_page_token = data.get("next_page_token")
+            if not next_page_token or not operations:
                 break
+            page_token = next_page_token
 
-        logging.info(f"sync_operations: получено {len(all_operations)} операций от API за {page_count} страниц")
-
+        operations = all_operations
+        logging.info(f"sync_operations: получено {len(operations)} операций от API")
         new_count = 0
         updated_count = 0
         for op in all_operations:
