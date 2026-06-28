@@ -2,22 +2,24 @@ import logging
 import asyncio
 import datetime
 import pandas as pd
+import db
 from aiogram import types, Bot
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
 from config import MY_CHAT_ID, TOP_N
+from keyboards import main_keyboard
+from services.tops import get_top_data
 from utils import (
     get_moscow_time, get_local_time, is_weekend, get_session_status,
-    get_week_number, get_month_name_ru, build_table_universal, get_portfolio_change_str
+    get_week_number, get_month_name_ru, build_table_universal, 
+    get_portfolio_change_str, retry
 )
-import db
 from moex_api import (
     get_market_data, get_historical_shares, get_historical_close,
     get_moex_index_info, get_top_movers, calc_period_change
 )
-from keyboards import main_keyboard
-from services.tops import get_top_data
+
 
 # ---------- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ----------
 _http_session = None

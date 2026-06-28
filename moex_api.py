@@ -3,12 +3,14 @@ import asyncio
 import datetime
 import pandas as pd
 import aiohttp
-import db  # <-- добавить
-from config import ticker_to_name
+import db
+from config import ticker_to_name, ticker_to_sector, figi_to_ticker
+from utils import retry
 
 ticker_to_sector = {}
 figi_to_ticker = {}
 
+@retry(max_attempts=3, delay=2, backoff=2)
 async def load_instrument_names(http_session, force=False):
     global ticker_to_name, ticker_to_sector, figi_to_ticker
     
@@ -118,7 +120,8 @@ async def load_instrument_names(http_session, force=False):
             figi_to_ticker[inst['figi']] = inst['ticker']
 
     logging.info(f"✅ Обновлено {len(instruments)} инструментов из MOEX")
-    
+
+@retry(max_attempts=3, delay=1, backoff=1.5)    
 async def get_market_data(http_session):
     url = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=marketdata,securities"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -159,6 +162,7 @@ async def get_market_data(http_session):
             await asyncio.sleep(2)
     return pd.DataFrame()
 
+@retry(max_attempts=3, delay=1, backoff=1.5)
 async def get_historical_shares(http_session, from_date, till_date):
     url = f"https://iss.moex.com/iss/history/engines/stock/markets/shares/boards/TQBR/securities.json?from={from_date}&till={till_date}&iss.meta=off&iss.only=history"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -192,6 +196,7 @@ async def get_historical_close(http_session, ticker, target_date):
     ticker_data = ticker_data.sort_values('TRADEDATE')
     return ticker_data.iloc[-1]['CLOSE']
 
+@retry(max_attempts=3, delay=1, backoff=1.5)
 async def get_moex_index_info(http_session):
     url = "https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX.json?iss.meta=off"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}

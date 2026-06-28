@@ -6,8 +6,9 @@ import datetime
 import asyncio
 import aiohttp
 import sqlite3
-import db
 import uvicorn
+import db
+
 import scheduler
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -15,10 +16,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION, TINKOFF_TOKEN, SECTOR_NAMES, MINI_APP_SECRET, NAME_OVERRIDES, ticker_to_name, DB_PATH, WEBHOOK_URL, SECTOR_NAMES
+from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION, TINKOFF_TOKEN, SECTOR_NAMES, MINI_APP_SECRET, NAME_OVERRIDES, ticker_to_name, DB_PATH, WEBHOOK_URL, DATA_DIR
 from moex_api import load_instrument_names, ticker_to_sector
 from handlers import register_handlers, set_http_session, set_bot
 from services.portfolio import get_portfolio_with_details
+from utils import retry
+
+
 
 
 # ---------- ЛОГИРОВАНИЕ ----------
@@ -52,6 +56,11 @@ logging.basicConfig(
 logging.getLogger('aiogram.event').setLevel(logging.WARNING)
 logging.getLogger('aiohttp.access').setLevel(logging.WARNING)
 logging.getLogger('aiohttp.client').setLevel(logging.WARNING)
+
+# ---------- ПРОВЕРКА DATA_DIR ----------
+if not os.path.exists(os.getenv('DATA_DIR', '/app/data')):
+    os.makedirs(os.getenv('DATA_DIR', '/app/data'), exist_ok=True)
+    logging.info(f"📁 Создана директория данных: {os.getenv('DATA_DIR', '/app/data')}")
 
 # ---------- ИНИЦИАЛИЗАЦИЯ ----------
 if not API_TOKEN:
@@ -96,10 +105,14 @@ async def health():
 
 @app.get("/mini-app")
 async def mini_app(request: Request):
-    with open("mini_app.html", "r", encoding="utf-8") as f:
-        html = f.read()
-    html = html.replace("MINI_APP_TOKEN_PLACEHOLDER", MINI_APP_SECRET)
-    return HTMLResponse(content=html)
+    try:
+        with open("mini_app.html", "r", encoding="utf-8") as f:
+            html = f.read()
+        html = html.replace("MINI_APP_TOKEN_PLACEHOLDER", MINI_APP_SECRET)
+        return HTMLResponse(content=html)
+    except FileNotFoundError:
+        logging.error("❌ mini_app.html не найден")
+        return HTMLResponse("<h1>Ошибка: mini_app.html не найден</h1>", status_code=404)
 
 @app.get("/api/portfolio")
 async def api_portfolio(request: Request):
@@ -338,9 +351,6 @@ async def get_unticked_operations(request: Request):
             })
         
         # 2. Собираем все возможные тикеры для выпадающего списка:
-        #    - из instruments
-        #    - из name_overrides
-        #    - из операций (где ticker не NULL и не 'Прочие')
         tickers_set = set()
         c.execute("SELECT ticker FROM instruments")
         for row in c.fetchall():
@@ -418,6 +428,7 @@ async def main():
     scheduler.set_bot(bot)
     scheduler.set_http_session(bot_session)
 
+    # Загружаем инструменты из кэша или MOEX (с retry)
     await load_instrument_names(bot_session)
     register_handlers(dp)
 

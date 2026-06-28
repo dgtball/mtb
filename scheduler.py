@@ -2,22 +2,22 @@ import asyncio
 import datetime
 import logging
 import pandas as pd
-import db
 from aiogram import Bot
+import db
 
-from handlers import format_message, format_historical_table, get_portfolio_change_str
+from handlers import format_message, format_historical_table
 from moex_api import get_market_data, get_moex_index_info, get_top_movers, get_historical_shares, calc_period_change
-from utils import get_moscow_time, get_local_time, get_session_status, last_trading_day
+from utils import get_moscow_time, get_local_time, get_session_status, last_trading_day, get_portfolio_change_str
 from config import MY_CHAT_ID, TOP_N, TINKOFF_TOKEN
 from services.tops import get_top_data
+
+# ---------- Глобальные переменные ----------
 
 _bot = None
 _http_session = None
 _active_day_message_id = None
 _snapshot_saved_for_date = None
-
-# Новый флаг: разрешено ли автообновление портфеля (только днём)
-portfolio_update_allowed = False
+portfolio_update_allowed = False # Новый флаг: разрешено ли автообновление портфеля (только днём)
 
 def set_bot(bot: Bot):
     global _bot

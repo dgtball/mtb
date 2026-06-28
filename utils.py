@@ -1,8 +1,33 @@
 import datetime
+import logging
+import asyncio
+from functools import wraps
 import pandas as pd
-import db
 from tabulate import tabulate
-from config import NAME_OVERRIDES
+from config import NAME_OVERRIDES, DOMAIN
+import db
+
+# ===== ДЕКОРАТОР RETRY =====
+def retry(max_attempts=3, delay=2, backoff=2, exceptions=(Exception,)):
+    """
+    Декоратор для повторных попыток при вызове асинхронной функции.
+    """
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    return await func(*args, **kwargs)
+                except exceptions as e:
+                    if attempt == max_attempts:
+                        logging.error(f"❌ {func.__name__} failed after {max_attempts} attempts: {e}")
+                        raise
+                    wait = delay * (backoff ** (attempt - 1))
+                    logging.warning(f"🔄 Retry {attempt}/{max_attempts} for {func.__name__} after {wait}s: {e}")
+                    await asyncio.sleep(wait)
+            return None
+        return wrapper
+    return decorator
 
 # ---------- ВРЕМЯ ----------
 def get_moscow_time():
@@ -18,19 +43,6 @@ def get_local_time():
 def is_weekend():
     now = get_moscow_time()
     return now.weekday() in (5, 6)
-    
-def last_trading_day(today):
-    """
-    Возвращает последний торговый день месяца (пн–пт).
-    today – объект datetime.date.
-    """
-    if today.month == 12:
-        last_day = datetime.date(today.year + 1, 1, 1) - datetime.timedelta(days=1)
-    else:
-        last_day = datetime.date(today.year, today.month + 1, 1) - datetime.timedelta(days=1)
-    while last_day.weekday() >= 5:  # суббота (5) или воскресенье (6)
-        last_day -= datetime.timedelta(days=1)
-    return last_day
 
 # ---------- СТАТУС СЕССИИ ----------
 def get_session_status(no_trading_weekends=None, time_offset=0):
@@ -122,20 +134,17 @@ def build_table_universal(df, title, headers, data_columns):
         return ""
     table_data = []
     for _, row in df.iterrows():
-        secid = row.get('SECID', '')          # <-- тикер для переопределения
+        secid = row.get('SECID', '')
         row_data = []
         for col in data_columns:
             val = row.get(col, "")
             if col == 'SHORTNAME':
                 original = str(val)
-                # Автоматическая очистка названия (убираем ' ао', ' ап', начальную 'i')
                 clean_val = original
                 if clean_val.endswith(' ао') or clean_val.endswith(' ап'):
-                    clean_val = clean_val[:-3]  # убираем последние 3 символа (пробел + 2 буквы)
+                    clean_val = clean_val[:-3]
                 if clean_val.startswith('i') and len(clean_val) > 1 and clean_val[1].isalpha():
-                    # убираем начальную 'i', только если за ней идёт буква (кириллица или латиница)
                     clean_val = clean_val[1:]
-                # Применяем переопределение: сначала ищем по тикеру, потом по очищенному названию
                 display = NAME_OVERRIDES.get(secid, clean_val)
                 if display == clean_val:
                     display = NAME_OVERRIDES.get(clean_val, clean_val)
@@ -158,8 +167,22 @@ def build_table_universal(df, title, headers, data_columns):
         table_data.append(row_data)
     table = tabulate(table_data, headers=headers, tablefmt="simple", numalign="right", stralign="left")
     return f"<b>{title}</b>\n<pre>{table}</pre>\n"
-    
-# ---------- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ПОРТФЕЛЯ ----------
+
+# ---------- ПОСЛЕДНИЙ ТОРГОВЫЙ ДЕНЬ МЕСЯЦА ----------
+def last_trading_day(today):
+    """
+    Возвращает последний торговый день месяца (пн–пт).
+    today – объект datetime.date.
+    """
+    if today.month == 12:
+        last_day = datetime.date(today.year + 1, 1, 1) - datetime.timedelta(days=1)
+    else:
+        last_day = datetime.date(today.year, today.month + 1, 1) - datetime.timedelta(days=1)
+    while last_day.weekday() >= 5:  # суббота (5) или воскресенье (6)
+        last_day -= datetime.timedelta(days=1)
+    return last_day
+
+# ---------- СТРОКА ПОРТФЕЛЯ ----------
 def get_portfolio_change_str():
     today = datetime.date.today().isoformat()
     snapshot = db.get_daily_snapshot(today)
@@ -168,5 +191,3 @@ def get_portfolio_change_str():
         return ""
     change = (current - snapshot) / snapshot * 100
     return f"💼 Портфель: {change:+.2f}% за день\n"
-    
-    

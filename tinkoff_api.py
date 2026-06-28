@@ -4,9 +4,12 @@ import aiohttp
 from config import TINKOFF_TOKEN, TINKOFF_API_URL, NAME_OVERRIDES, ticker_to_name
 import db
 
+from utils import retr
+
 # Глобальный словарь FIGI → Ticker, заполняется при старте
 portfolio_figi_to_ticker = {}
 
+@retry(max_attempts=3, delay=2, backoff=2)
 async def tinkoff_api_request(http_session, method: str, endpoint: str, params: dict = None) -> dict:
     if not TINKOFF_TOKEN:
         raise ValueError("Токен TITN не задан")
@@ -24,16 +27,19 @@ async def tinkoff_api_request(http_session, method: str, endpoint: str, params: 
         data = await resp.json()
         return data
 
+@retry(max_attempts=2, delay=1, backoff=1.5)
 async def get_accounts(http_session) -> list:
     params = {"status": "ACCOUNT_STATUS_OPEN"}
     data = await tinkoff_api_request(http_session, "POST", "tinkoff.public.invest.api.contract.v1.UsersService/GetAccounts", params=params)
     return data.get("accounts", [])
 
+@retry(max_attempts=2, delay=1, backoff=1.5)
 async def get_portfolio_data(http_session, account_id: str) -> dict:
     params = {"accountId": account_id}
     data = await tinkoff_api_request(http_session, "POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetPortfolio", params=params)
     return data
-
+    
+@retry(max_attempts=3, delay=2, backoff=2)
 async def get_portfolio_summary(http_session):
     try:
         accounts = await get_accounts(http_session)
@@ -167,6 +173,7 @@ async def build_figi_map(http_session):
     except Exception as e:
         logging.error(f"Ошибка build_figi_map: {e}")
 
+@retry(max_attempts=3, delay=2, backoff=2)
 async def sync_operations(http_session, from_date=None):
     """Синхронизирует операции из T-Invest API в БД. Возвращает количество новых операций."""
     logging.info("sync_operations started")

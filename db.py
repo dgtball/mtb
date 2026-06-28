@@ -1,55 +1,36 @@
 import sqlite3
 import logging
+from contextlib import closing
 from config import DB_PATH, NAME_OVERRIDES, ticker_to_name
 
 # ---------- ИНИЦИАЛИЗАЦИЯ ----------
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
+    with sqlite3.connect(DB_PATH) as conn:
     c = conn.cursor()
-    
     # Таблица переопределений названий
     c.execute('''CREATE TABLE IF NOT EXISTS name_overrides
-                 (ticker TEXT PRIMARY KEY, display_name TEXT)''')
-    
+                (ticker TEXT PRIMARY KEY, display_name TEXT)''')   
     # Таблица состояния портфеля (снапшоты, текущая стоимость)
     c.execute('''CREATE TABLE IF NOT EXISTS portfolio_state
-                 (key TEXT PRIMARY KEY, value REAL)''')
-    
+                (key TEXT PRIMARY KEY, value REAL)''')
     # Старая таблица секторов (для обратной совместимости)
     c.execute('''CREATE TABLE IF NOT EXISTS sectors
-                 (ticker TEXT PRIMARY KEY, sector_name TEXT)''')
-    
+                (ticker TEXT PRIMARY KEY, sector_name TEXT)''')  
     # Таблица операций (выплаты, сделки)
     c.execute('''CREATE TABLE IF NOT EXISTS operations
-                 (id TEXT PRIMARY KEY,
-                  date TEXT NOT NULL,
-                  type TEXT NOT NULL,
-                  ticker TEXT,
-                  figi TEXT,
-                  instrument_type TEXT,
-                  quantity INTEGER,
-                  payment REAL,
-                  currency TEXT,
-                  commission REAL,
-                  name TEXT)''')
+                (id TEXT PRIMARY KEY, date TEXT NOT NULL,
+                type TEXT NOT NULL, ticker TEXT, figi TEXT,
+                instrument_type TEXT, quantity INTEGER, payment REAL,
+                currency TEXT, commission REAL, name TEXT)''')
     c.execute('CREATE INDEX IF NOT EXISTS idx_operations_date ON operations(date)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_operations_type ON operations(type)')
-    
     # Новая таблица инструментов (кэш MOEX)
-    c.execute('''CREATE TABLE IF NOT EXISTS instruments (
-        ticker TEXT PRIMARY KEY,
-        name TEXT,
-        sector TEXT,
-        figi TEXT,
-        instrument_type TEXT,
-        updated_at TIMESTAMP
-    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS instruments 
+                (ticker TEXT PRIMARY KEY, name TEXT,sector TEXT,
+                figi TEXT, instrument_type TEXT, updated_at TIMESTAMP)''')
     c.execute('CREATE INDEX IF NOT EXISTS idx_instruments_figi ON instruments(figi)')
-    
     conn.commit()
-    conn.close()
-    logging.info(f"✅ База данных инициализирована: {DB_PATH}")
-    
+    logging.info(f"✅ База данных инициализирована: {DB_PATH}") 
     seed_overrides()
     seed_sectors()
     migrate_sectors_to_instruments()
@@ -61,7 +42,7 @@ def seed_overrides():
         ("DELI", "Делимобиль"),
         # ... (ваш текущий список)
     ]
-    conn = sqlite3.connect(DB_PATH)
+    with sqlite3.connect(DB_PATH) as conn:
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM name_overrides")
     if c.fetchone()[0] == 0:
@@ -73,7 +54,6 @@ def seed_overrides():
             c.execute("INSERT OR IGNORE INTO name_overrides (ticker, display_name) VALUES (?, ?)", (ticker, display_name))
         conn.commit()
         logging.info("✅ Новые переопределения добавлены в БД")
-    conn.close()
 
 # ---------- СЕКТОРА (старая таблица, для обратной совместимости) ----------
 def seed_sectors():
@@ -123,19 +103,18 @@ def seed_sectors():
         "GLRX": "Стройка",
         "AFLT": "Транспорт",
     }
-    conn = sqlite3.connect(DB_PATH)
+    with sqlite3.connect(DB_PATH) as conn:
     c = conn.cursor()
     inserted = 0
     for ticker, sector in initial_sectors.items():
         c.execute("INSERT OR REPLACE INTO sectors (ticker, sector_name) VALUES (?, ?)", (ticker, sector))
         inserted += 1
     conn.commit()
-    conn.close()
     logging.info(f"✅ Сектора обновлены ({inserted} шт.)")
 
 # ---------- МИГРАЦИЯ СТАРЫХ СЕКТОРОВ В НОВУЮ ТАБЛИЦУ ----------
 def migrate_sectors_to_instruments():
-    conn = sqlite3.connect(DB_PATH)
+    with sqlite3.connect(DB_PATH) as conn:
     c = conn.cursor()
     # Переносим все записи из sectors в instruments (если их там ещё нет)
     c.execute("SELECT ticker, sector_name FROM sectors")
@@ -143,12 +122,11 @@ def migrate_sectors_to_instruments():
     for ticker, sector in rows:
         c.execute("INSERT OR IGNORE INTO instruments (ticker, sector, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)", (ticker, sector))
     conn.commit()
-    conn.close()
     logging.info(f"✅ Перенесено {len(rows)} секторов в instruments")
 
 # ---------- ОПЕРАЦИИ ----------
 def insert_operation(op):
-    conn = sqlite3.connect(DB_PATH)
+    with sqlite3.connect(DB_PATH) as conn:
     c = conn.cursor()
     c.execute('''INSERT OR IGNORE INTO operations
                  (id, date, type, ticker, figi, instrument_type, quantity, payment, currency, commission, name)
@@ -158,14 +136,12 @@ def insert_operation(op):
                op.get('payment'), op.get('currency'), op.get('commission'),
                op.get('name')))
     conn.commit()
-    conn.close()
 
 def get_personal_dividends():
-    conn = sqlite3.connect(DB_PATH)
+    with sqlite3.connect(DB_PATH) as conn:
     c = conn.cursor()
     c.execute("SELECT date, ticker, payment FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date")
     rows = c.fetchall()
-    conn.close()
     result = []
     for r in rows:
         ticker = r[1]
@@ -181,36 +157,32 @@ def get_personal_dividends():
     return result
     
 def get_last_dividends(limit=10):
-    conn = sqlite3.connect(DB_PATH)
+    with sqlite3.connect(DB_PATH) as conn:
     c = conn.cursor()
     c.execute("SELECT date, ticker, payment FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date DESC LIMIT ?", (limit,))
     rows = c.fetchall()
-    conn.close()
     return [{"date": r[0], "ticker": r[1], "amount": r[2]} for r in rows]
 
 def get_last_operation_date():
-    conn = sqlite3.connect(DB_PATH)
+    with sqlite3.connect(DB_PATH) as conn:
     c = conn.cursor()
     c.execute("SELECT MAX(date) FROM operations")
     row = c.fetchone()
-    conn.close()
     return row[0] if row else None
 
 # ---------- СОСТОЯНИЕ ПОРТФЕЛЯ ----------
 def _get_state(key: str) -> float | None:
-    conn = sqlite3.connect(DB_PATH)
+    with sqlite3.connect(DB_PATH) as conn:
     c = conn.cursor()
     c.execute("SELECT value FROM portfolio_state WHERE key = ?", (key,))
     row = c.fetchone()
-    conn.close()
     return float(row[0]) if row else None
 
 def _set_state(key: str, value: float):
-    conn = sqlite3.connect(DB_PATH)
+    with sqlite3.connect(DB_PATH) as conn:
     c = conn.cursor()
     c.execute("INSERT OR REPLACE INTO portfolio_state (key, value) VALUES (?, ?)", (key, value))
     conn.commit()
-    conn.close()
 
 def set_portfolio_value(value: float):
     _set_state("last_total_value", value)
@@ -226,53 +198,48 @@ def get_daily_snapshot(date_str: str) -> float | None:
 
 # ---------- УПРАВЛЕНИЕ ПЕРЕОПРЕДЕЛЕНИЯМИ ----------
 def load_name_overrides():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT ticker, display_name FROM name_overrides")
-    rows = c.fetchall()
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT ticker, display_name FROM name_overrides")
+        rows = c.fetchall()
     NAME_OVERRIDES.clear()
     for ticker, display_name in rows:
         NAME_OVERRIDES[ticker] = display_name
     logging.info(f"✅ Загружено {len(NAME_OVERRIDES)} переопределений названий")
 
 def set_name_override(ticker: str, display_name: str):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO name_overrides (ticker, display_name) VALUES (?, ?)", (ticker, display_name))
-    conn.commit()
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO name_overrides (ticker, display_name) VALUES (?, ?)", (ticker, display_name))
+        conn.commit()
     load_name_overrides()
 
 def remove_name_override(ticker: str):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("DELETE FROM name_overrides WHERE ticker = ?", (ticker,))
-    conn.commit()
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM name_overrides WHERE ticker = ?", (ticker,))
+        conn.commit()
     load_name_overrides()
 
 # ---------- НОВАЯ ТАБЛИЦА INSTRUMENTS ----------
 def get_instrument(ticker: str) -> dict | None:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT ticker, name, sector, figi, instrument_type, updated_at FROM instruments WHERE ticker = ?", (ticker,))
-    row = c.fetchone()
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT ticker, name, sector, figi, instrument_type, updated_at FROM instruments WHERE ticker = ?", (ticker,))
+        row = c.fetchone()
     if row:
         return {"ticker": row[0], "name": row[1], "sector": row[2], "figi": row[3], "instrument_type": row[4], "updated_at": row[5]}
     return None
 
 def get_all_instruments():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT ticker, name, sector, figi, instrument_type, updated_at FROM instruments")
-    rows = c.fetchall()
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT ticker, name, sector, figi, instrument_type, updated_at FROM instruments")
+        rows = c.fetchall()
     return [{"ticker": r[0], "name": r[1], "sector": r[2], "figi": r[3], "instrument_type": r[4], "updated_at": r[5]} for r in rows]
 
 def upsert_instrument(ticker: str, name: str = None, sector: str = None, figi: str = None, instrument_type: str = None):
-    conn = sqlite3.connect(DB_PATH)
+    with sqlite3.connect(DB_PATH) as conn:
     c = conn.cursor()
     # Если сектор не указан, пытаемся взять из старой таблицы sectors
     if sector is None:
@@ -307,28 +274,21 @@ def upsert_instrument(ticker: str, name: str = None, sector: str = None, figi: s
                  VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)''',
               (ticker, name, sector, figi, instrument_type))
     conn.commit()
-    conn.close()
 
 def update_instrument_sector(ticker: str, new_sector: str):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("UPDATE instruments SET sector = ?, updated_at = CURRENT_TIMESTAMP WHERE ticker = ?", (new_sector, ticker))
-    conn.commit()
-    conn.close()
-    # также обновляем в старой таблице sectors для совместимости
-    c.execute("INSERT OR REPLACE INTO sectors (ticker, sector_name) VALUES (?, ?)", (ticker, new_sector))
-    conn.commit()
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("UPDATE instruments SET sector = ?, updated_at = CURRENT_TIMESTAMP WHERE ticker = ?", (new_sector, ticker))
+        c.execute("INSERT OR REPLACE INTO sectors (ticker, sector_name) VALUES (?, ?)", (ticker, new_sector))
+        conn.commit()
 
 # ---------- СЕКТОРА (обновленная функция) ----------
 def get_sector(ticker: str) -> str:
     inst = get_instrument(ticker)
     if inst and inst['sector']:
         return inst['sector']
-    # fallback на старую таблицу sectors
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT sector_name FROM sectors WHERE ticker = ?", (ticker,))
-    row = c.fetchone()
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT sector_name FROM sectors WHERE ticker = ?", (ticker,))
+        row = c.fetchone()
     return row[0] if row else "Прочие"
