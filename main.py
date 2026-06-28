@@ -278,6 +278,7 @@ async def api_dividends_monthly(request: Request, year: int = None):
         if year is None:
             year = datetime.datetime.now().year
 
+        # Открываем соединение один раз
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
 
@@ -313,13 +314,14 @@ async def api_dividends_monthly(request: Request, year: int = None):
         # 2. Прогнозные выплаты (на основе истории)
         # Получаем портфель, чтобы знать количество акций
         from tinkoff_api import get_portfolio_summary
+        # Используем глобальную сессию из main.py (нужно импортировать bot_session)
+        from main import bot_session
         portfolio = await get_portfolio_summary(bot_session)
         if not portfolio:
             portfolio_positions = []
         else:
             portfolio_positions = portfolio.get("positions", [])
 
-        # Строим словарь {ticker: quantity}
         portfolio_quantities = {}
         for pos in portfolio_positions:
             ticker = pos["ticker"]
@@ -336,7 +338,6 @@ async def api_dividends_monthly(request: Request, year: int = None):
                        AND substr(date, 1, 4) >= ? 
                      ORDER BY date""", (str(three_years_ago),))
         history_rows = c.fetchall()
-        conn.close()
 
         # Группируем историю по тикеру и месяцу (независимо от года)
         history_by_ticker_month = {}
@@ -370,18 +371,19 @@ async def api_dividends_monthly(request: Request, year: int = None):
                         "type": "forecast"
                     })
 
-        # Формируем ответ
+        # 3. Доступные годы (из операций)
+        c.execute("SELECT DISTINCT substr(date, 1, 4) FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date DESC")
+        years_rows = c.fetchall()
+        years = [int(row[0]) for row in years_rows if row[0] is not None]
+
+        # Закрываем соединение после всех запросов
+        conn.close()
+
         months_labels = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек']
         actual_data = [actual_by_month[m]["total"] for m in range(1, 13)]
         forecast_data = [forecast_by_month[m]["total"] for m in range(1, 13)]
         total_actual = sum(actual_data)
         total_forecast = sum(forecast_data)
-
-        # Доступные годы (из операций)
-        c = conn.cursor()
-        c.execute("SELECT DISTINCT substr(date, 1, 4) FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date DESC")
-        years = [int(row[0]) for row in c.fetchall() if row[0] is not None]
-        conn.close()
 
         return JSONResponse({
             "year": year,
@@ -404,7 +406,24 @@ async def api_sync_status(request: Request):
         raise HTTPException(status_code=403, detail="Forbidden")
     last_date = db.get_last_operation_date()
     return JSONResponse({"last_sync": last_date})
-    
+
+@app.post("/api/sync")
+async def api_sync(request: Request):
+    if not check_token(request):
+        raise HTTPException(403)
+    try:
+        from tinkoff_api import sync_operations
+        new_count = await sync_operations(bot_session)
+        now_moscow = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3)).isoformat()
+        return JSONResponse({
+            "status": "ok",
+            "new_operations": new_count,
+            "last_sync": now_moscow
+        })
+    except Exception as e:
+        logging.error(f"Sync error: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 @app.post("/api/sector")
 async def set_sector(request: Request):
     if not check_token(request):
