@@ -785,8 +785,11 @@
     });
 
     const totalLabel = document.getElementById('totalYearLabel');
-    totalLabel.style.display = 'block';
-    totalLabel.textContent = `💰 Итого за ${year}: фактические ${data.total_actual.toFixed(2)} ₽, объявленные ${data.total_declared.toFixed(2)} ₽`;
+	totalLabel.style.display = 'block';
+	totalLabel.textContent = 
+	  `💰 Итого за ${year}: фактические ${data.total_actual.toFixed(2)} ₽, ` +
+	  `объявленные (реестр открыт) ${data.total_before.toFixed(2)} ₽, ` +
+	  `ожидаемые (реестр закрыт) ${data.total_after.toFixed(2)} ₽`;
 
     const syncStatus = await apiCall('/api/sync-status');
     if (syncStatus.last_sync) {
@@ -803,29 +806,38 @@
   let html = `<h4>${month}</h4>`;
   html += `<button class="close-btn" onclick="document.getElementById('monthlyDetails').classList.remove('visible')">✕</button>`;
   html += `<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Актив</th><th>Тип</th><th>Сумма</th></tr></thead><tbody>`;
+  
+  // Сортируем по дате (от новых к старым)
   details.sort((a, b) => {
     if (a.date && b.date) return new Date(b.date) - new Date(a.date);
     return 0;
   });
+  
   details.forEach(d => {
     const dateStr = d.date ? new Date(d.date).toLocaleDateString() : '—';
     let typeLabel = '';
     let color = '';
+    
     if (d.type === 'actual') {
       typeLabel = 'Факт';
       color = 'var(--accent)';
-    } else if (d.type === 'declared_dividend') {
-      typeLabel = 'Объявл. див.';
+    } else if (d.type === 'declared_dividend_before') {
+      typeLabel = 'Объявл. див. (реестр открыт)';
       color = '#FFC107';
+    } else if (d.type === 'declared_dividend_after') {
+      typeLabel = 'Ожидание див. (реестр закрыт)';
+      color = '#9C27B0';
     } else if (d.type === 'declared_coupon') {
       typeLabel = 'Объявл. купон';
       color = '#FFC107';
     } else {
-      typeLabel = d.type;
+      typeLabel = d.type || 'Неизвестно';
       color = 'var(--text-secondary)';
     }
+    
     html += `<tr><td>${dateStr}</td><td>${d.name}</td><td style="color:${color}">${typeLabel}</td><td>${d.amount.toFixed(2)}</td></tr>`;
   });
+  
   html += '</tbody></table></div>';
   container.innerHTML = html;
   container.classList.add('visible');

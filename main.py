@@ -273,8 +273,10 @@ async def api_dividends_yearly(request: Request, year: int = None, ticker: str =
 
 @app.get("/api/dividends-monthly")
 async def api_dividends_monthly(request: Request, year: int = None):
+    logging.info(f"Запрос /api/dividends-monthly для года {year}")
     if not check_token(request):
         raise HTTPException(403)
+    logging.info(f"Запрос /api/dividends-monthly для года {year}")  # <-- здесь
     try:
         if year is None:
             year = datetime.datetime.now().year

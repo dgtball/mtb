@@ -352,6 +352,12 @@ def get_dividend_calendar(ticker=None, year=None, month=None):
 
 # ===== КАЛЕНДАРЬ КУПОНОВ =====
 def upsert_coupon_calendar(ticker, figi, coupon_data):
+    # Извлекаем сумму купона (payOneBond – объект)
+    pay_obj = coupon_data.get("payOneBond", {})
+    units = float(pay_obj.get("units", 0))
+    nano = float(pay_obj.get("nano", 0)) / 1e9
+    coupon_value = units + nano
+
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         c.execute("""
@@ -362,9 +368,9 @@ def upsert_coupon_calendar(ticker, figi, coupon_data):
             ticker,
             figi,
             coupon_data.get("couponDate"),
-            coupon_data.get("couponValue"),
-            coupon_data.get("currency"),
-            coupon_data.get("recordDate")
+            coupon_value,
+            coupon_data.get("currency", "RUB"),
+            coupon_data.get("fixDate")  # или coupon_data.get("recordDate") – проверьте документацию
         ))
         conn.commit()
 
