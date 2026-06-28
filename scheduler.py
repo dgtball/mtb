@@ -13,6 +13,7 @@ from config import MY_CHAT_ID, TOP_N, TINKOFF_TOKEN  # добавили импо
 _bot = None
 _http_session = None
 _active_day_message_id = None
+_snapshot_saved_for_date = None
 
 # Новый флаг: разрешено ли автообновление портфеля (только днём)
 portfolio_update_allowed = False
@@ -120,12 +121,18 @@ async def scheduler_loop():
             minute = now.minute
 
             # Вечерний снэпшот портфеля (после 23:50)
-            if hour == 23 and minute >= 50:
+            if hour == 23 and minute >= 59:
                 tomorrow = today + datetime.timedelta(days=1)
-                current = db.get_portfolio_value()
-                if current is not None:
-                    db.set_daily_snapshot(tomorrow.isoformat(), current)
-                    logging.info(f"Снэпшот портфеля сохранён на {tomorrow.isoformat()}: {current:.2f}")
+                tomorrow_str = tomorrow.isoformat()
+                if _snapshot_saved_for_date != tomorrow_str:
+                    current = db.get_portfolio_value()
+                    if current is not None:
+                        db.set_daily_snapshot(tomorrow_str, current)
+                        _snapshot_saved_for_date = tomorrow_str
+                        logging.info(f"Снэпшот портфеля сохранён на {tomorrow_str}: {current:.2f}")
+                # Не спать, продолжить цикл – но можно сделать небольшой sleep, чтобы не проверять каждые 5 секунд
+                await asyncio.sleep(60)  # после 23:50 проверяем раз в минуту
+                continue
 
             # Окно 06:50 – 00:50 МСК
             start_minutes = 6*60 + 50
@@ -200,9 +207,8 @@ async def scheduler_loop():
                     last_week_sent_date = today
 
             # Последний торговый день месяца после 23:50
-            from utils import last_trading_day
             last_trade_day = last_trading_day(today)
-            if today == last_trade_day and hour == 23 and minute >= 50:
+            if today == last_trade_day and hour == 23 and minute >= 51:
                 if last_month_sent_date != today:
                     await send_monthly_top()
                     last_month_sent_date = today
