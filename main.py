@@ -359,6 +359,24 @@ async def api_sync(request: Request):
         logging.error(f"Sync error: {e}", exc_info=True)
         return JSONResponse({"error": str(e)}, status_code=500)
 
+@app.post("/api/sync-full")
+async def api_sync_full(request: Request):
+    if not check_token(request):
+        raise HTTPException(403)
+    try:
+        from tinkoff_api import sync_operations
+        new_count = await sync_operations(bot_session, force_full=True)
+        now_moscow = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3)).isoformat()
+        return JSONResponse({
+            "status": "ok",
+            "new_operations": new_count,
+            "last_sync": now_moscow,
+            "full": True
+        })
+    except Exception as e:
+        logging.error(f"Sync-full error: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 @app.post("/api/sector")
 async def set_sector(request: Request):
     if not check_token(request):

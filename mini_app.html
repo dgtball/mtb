@@ -764,7 +764,7 @@
     });
     details.forEach(d => {
       const dateStr = d.date ? new Date(d.date).toLocaleDateString() : '—';
-      html += `<tr><td>${dateStr}</td><td>${d.name}</td><td>${d.amount.toLocaleString()}</td></tr>`;
+      html += `<tr><td>${dateStr}</td><td>${d.name}</td><td>${d.amount.toFixed(2)}</td></tr>`;
     });
     html += '</tbody></table></div>';
     container.innerHTML = html;

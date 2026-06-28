@@ -192,8 +192,6 @@ async def build_figi_map(http_session):
 
 @retry(max_attempts=3, delay=2, backoff=2)
 async def sync_operations(http_session, from_date=None, force_full=False):
-    if force_full:
-        from_date = None
     logging.info("sync_operations started")
     try:
         accounts = await get_accounts(http_session)
@@ -205,6 +203,8 @@ async def sync_operations(http_session, from_date=None, force_full=False):
             logging.warning("sync_operations: не найден account_id")
             return 0
 
+        if force_full:
+            from_date = None
         if from_date is None:
             last_date = db.get_last_operation_date()
             if last_date:
@@ -236,23 +236,24 @@ async def sync_operations(http_session, from_date=None, force_full=False):
                 if not ticker:
                     ticker = "Прочие"
 
+            # Пропускаем нерублёвые операции
             if op.get("currency", "RUB").upper() != "RUB":
                 continue
 
-            # Извлечение суммы с копейками
-            payment = op.get("payment", {})
-            units = float(payment.get("units", 0))
-            nano = float(payment.get("nano", 0)) / 1e9
+            # ✅ Извлекаем сумму с копейками
+            payment_obj = op.get("payment", {})
+            units = float(payment_obj.get("units", 0))
+            nano = float(payment_obj.get("nano", 0)) / 1e9
             payment_rub = units + nano
 
-            commission = op.get("commission", {})
-            comm_units = float(commission.get("units", 0))
-            comm_nano = float(commission.get("nano", 0)) / 1e9
+            commission_obj = op.get("commission", {})
+            comm_units = float(commission_obj.get("units", 0))
+            comm_nano = float(commission_obj.get("nano", 0)) / 1e9
             commission_rub = comm_units + comm_nano
 
             db.insert_operation({
                 "id": op.get("id"),
-                "date": datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S+03:00"),
+                "date": op.get("date"),  # сохраняем дату из API, а не текущую!
                 "type": op.get("type"),
                 "ticker": ticker,
                 "figi": op.get("figi"),
