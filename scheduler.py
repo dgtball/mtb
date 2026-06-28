@@ -69,6 +69,32 @@ async def refresh_instruments_cache():
     except Exception as e:
         logging.error(f"❌ Ошибка обновления справочника: {e}")
 
+# ---------- ФУНКЦИЯ ОБНОВЛЕНИЯ КАЛЕНДАРЯ ДИВИДЕНДОВ ---------        
+async def refresh_dividend_calendar():
+    logging.info("🔄 Обновление календаря дивидендов")
+    try:
+        from tinkoff_api import fetch_all_dividends
+        data = await fetch_all_dividends(_http_session)
+        for ticker, info in data.items():
+            for div in info["dividends"]:
+                db.upsert_dividend_calendar(ticker, info["figi"], div)
+        logging.info(f"✅ Календарь дивидендов обновлён для {len(data)} инструментов")
+    except Exception as e:
+        logging.error(f"❌ Ошибка обновления календаря дивидендов: {e}")
+
+# ---------- ФУНКЦИЯ ОБНОВЛЕНИЯ КАЛЕНДАРЯ КУПОНОВ ---------          
+async def refresh_coupon_calendar():
+    logging.info("🔄 Обновление календаря купонов")
+    try:
+        from tinkoff_api import fetch_all_coupons
+        data = await fetch_all_coupons(_http_session)
+        for ticker, info in data.items():
+            for coupon in info["coupons"]:
+                db.upsert_coupon_calendar(ticker, info["figi"], coupon)
+        logging.info(f"✅ Календарь купонов обновлён для {len(data)} облигаций")
+    except Exception as e:
+        logging.error(f"❌ Ошибка обновления календаря купонов: {e}")
+
 # ---------- ОСНОВНОЙ ЦИКЛ ПЛАНИРОВЩИКА ----------
 async def scheduler_loop():
     global _active_day_message_id, portfolio_update_allowed, _snapshot_saved_for_date
@@ -165,6 +191,14 @@ async def scheduler_loop():
             # Ежедневное обновление кэша инструментов в 03:00
             if hour == 3 and minute == 0:
                 asyncio.create_task(refresh_instruments_cache())
+            
+            # Ежедневное обновление календаря купонов в 02:30    
+            if hour == 2 and minute == 30:
+                asyncio.create_task(refresh_coupon_calendar())
+                
+            # Ежедневное обновление календаря дивидендов в 02:00    
+            if hour == 2 and minute == 00:
+                asyncio.create_task(refresh_dividend_calendar())
 
             # Пятница после 23:50
             if weekday == 4 and hour == 23 and minute >= 50:

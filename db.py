@@ -29,6 +29,24 @@ def init_db():
                     (ticker TEXT PRIMARY KEY, name TEXT,sector TEXT,
                     figi TEXT, instrument_type TEXT, updated_at TIMESTAMP)''')
         c.execute('CREATE INDEX IF NOT EXISTS idx_instruments_figi ON instruments(figi)')
+        # Новая таблица для календаря дивидендов
+        c.execute('''CREATE TABLE IF NOT EXISTS dividend_calendar (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT NOT NULL,
+            figi TEXT NOT NULL, declared_date TEXT, record_date TEXT,
+            payment_date TEXT, dividend_net REAL, dividend_type TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(ticker, declared_date, payment_date))''')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_dividend_calendar_ticker ON dividend_calendar(ticker)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_dividend_calendar_payment_date ON dividend_calendar(payment_date)')
+        
+        # Новая таблица для календаря купонов
+        c.execute('''CREATE TABLE IF NOT EXISTS coupon_calendar (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT NOT NULL,
+            figi TEXT NOT NULL, coupon_date TEXT, coupon_value REAL,
+            coupon_currency TEXT, record_date TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(ticker, coupon_date))''')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_coupon_calendar_ticker ON coupon_calendar(ticker)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_coupon_calendar_coupon_date ON coupon_calendar(coupon_date)')      
         conn.commit()
     logging.info(f"✅ База данных инициализирована: {DB_PATH}") 
     seed_overrides()
@@ -281,6 +299,104 @@ def update_instrument_sector(ticker: str, new_sector: str):
         c.execute("UPDATE instruments SET sector = ?, updated_at = CURRENT_TIMESTAMP WHERE ticker = ?", (new_sector, ticker))
         c.execute("INSERT OR REPLACE INTO sectors (ticker, sector_name) VALUES (?, ?)", (ticker, new_sector))
         conn.commit()
+
+# ===== КАЛЕНДАРЬ ДИВИДЕНДОВ =====
+def upsert_dividend_calendar(ticker, figi, dividend_data):
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("""
+            INSERT OR REPLACE INTO dividend_calendar 
+            (ticker, figi, declared_date, record_date, payment_date, dividend_net, dividend_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            ticker,
+            figi,
+            dividend_data.get("declaredDate"),
+            dividend_data.get("recordDate"),
+            dividend_data.get("paymentDate"),
+            dividend_data.get("dividendNet"),
+            dividend_data.get("dividendType")
+        ))
+        conn.commit()
+
+def get_dividend_calendar(ticker=None, year=None, month=None):
+    """Получить календарь дивидендов с фильтрацией."""
+    query = "SELECT ticker, figi, declared_date, record_date, payment_date, dividend_net, dividend_type FROM dividend_calendar"
+    params = []
+    conditions = []
+    if ticker:
+        conditions.append("ticker = ?")
+        params.append(ticker)
+    if year and month:
+        conditions.append("strftime('%Y', payment_date) = ? AND strftime('%m', payment_date) = ?")
+        params.extend([str(year), f"{month:02d}"])
+    elif year:
+        conditions.append("strftime('%Y', payment_date) = ?")
+        params.append(str(year))
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY payment_date DESC"
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute(query, params)
+        rows = c.fetchall()
+    return [{
+        "ticker": r[0],
+        "figi": r[1],
+        "declared_date": r[2],
+        "record_date": r[3],
+        "payment_date": r[4],
+        "dividend_net": r[5],
+        "dividend_type": r[6]
+    } for r in rows]
+
+# ===== КАЛЕНДАРЬ КУПОНОВ =====
+def upsert_coupon_calendar(ticker, figi, coupon_data):
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("""
+            INSERT OR REPLACE INTO coupon_calendar 
+            (ticker, figi, coupon_date, coupon_value, coupon_currency, record_date)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            ticker,
+            figi,
+            coupon_data.get("couponDate"),
+            coupon_data.get("couponValue"),
+            coupon_data.get("currency"),
+            coupon_data.get("recordDate")
+        ))
+        conn.commit()
+
+def get_coupon_calendar(ticker=None, year=None, month=None):
+    """Получить календарь купонов с фильтрацией."""
+    query = "SELECT ticker, figi, coupon_date, coupon_value, coupon_currency, record_date FROM coupon_calendar"
+    params = []
+    conditions = []
+    if ticker:
+        conditions.append("ticker = ?")
+        params.append(ticker)
+    if year and month:
+        conditions.append("strftime('%Y', coupon_date) = ? AND strftime('%m', coupon_date) = ?")
+        params.extend([str(year), f"{month:02d}"])
+    elif year:
+        conditions.append("strftime('%Y', coupon_date) = ?")
+        params.append(str(year))
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY coupon_date DESC"
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute(query, params)
+        rows = c.fetchall()
+    return [{
+        "ticker": r[0],
+        "figi": r[1],
+        "coupon_date": r[2],
+        "coupon_value": r[3],
+        "coupon_currency": r[4],
+        "record_date": r[5]
+    } for r in rows]
 
 # ---------- СЕКТОРА (обновленная функция) ----------
 def get_sector(ticker: str) -> str:

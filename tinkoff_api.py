@@ -300,3 +300,71 @@ async def sync_operations(http_session, from_date=None, force_full=False):
     except Exception as e:
         logging.error(f"Ошибка в sync_operations: {e}", exc_info=True)
         return 0
+
+
+# Календарь дивидендных выплат/купонов     
+async def get_dividends_for_instrument(http_session, figi: str):
+    endpoint = "tinkoff.public.invest.api.contract.v1.InstrumentsService/GetDividends"
+    params = {"figi": figi}
+    data = await tinkoff_api_request(http_session, "POST", endpoint, params=params)
+    return data.get("dividends", [])
+
+"""Получить дивидендные календари для всех акций в портфеле."""    
+async def fetch_all_dividends(http_session):
+    """Получить дивидендные календари для всех акций в портфеле."""
+    portfolio = await get_portfolio_summary(http_session)
+    if not portfolio:
+        return {}
+    
+    result = {}
+    for pos in portfolio.get("positions", []):
+        # Берём только акции
+        if pos.get("type_display") == "Акции" and pos.get("figi"):
+            figi = pos["figi"]
+            try:
+                dividends = await get_dividends_for_instrument(http_session, figi)
+                if dividends:
+                    result[pos["ticker"]] = {
+                        "figi": figi,
+                        "name": pos["name"],
+                        "dividends": dividends
+                    }
+            except Exception as e:
+                logging.error(f"Ошибка получения дивидендов для {pos['ticker']}: {e}")
+    
+    return result
+
+async def get_coupons_for_instrument(http_session, figi: str):
+    """
+    Получить календарь купонных выплат по облигации.
+    Возвращает список объявленных купонов.
+    """
+    endpoint = "tinkoff.public.invest.api.contract.v1.InstrumentsService/GetBondCoupons"
+    params = {"figi": figi}
+    data = await tinkoff_api_request(http_session, "POST", endpoint, params=params)
+    return data.get("events", [])  # в ответе поле events, содержащее массив купонов
+
+
+async def fetch_all_coupons(http_session):
+    """Получить купонные календари для всех облигаций в портфеле."""
+    portfolio = await get_portfolio_summary(http_session)
+    if not portfolio:
+        return {}
+    
+    result = {}
+    for pos in portfolio.get("positions", []):
+        # Берём только облигации
+        if pos.get("type_display") == "Облигации" and pos.get("figi"):
+            figi = pos["figi"]
+            try:
+                coupons = await get_coupons_for_instrument(http_session, figi)
+                if coupons:
+                    result[pos["ticker"]] = {
+                        "figi": figi,
+                        "name": pos["name"],
+                        "coupons": coupons
+                    }
+            except Exception as e:
+                logging.error(f"Ошибка получения купонов для {pos['ticker']}: {e}")
+    
+    return result
