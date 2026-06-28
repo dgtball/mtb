@@ -788,8 +788,8 @@
       totalLabel.style.display = 'block';
       totalLabel.textContent = 
         `💰 Итого за ${year}: фактические ${data.total_actual.toFixed(2)} ₽, ` +
-        `объявленные (реестр открыт) ${data.total_before.toFixed(2)} ₽, ` +
-        `ожидаемые (реестр закрыт) ${data.total_after.toFixed(2)} ₽`;
+        `объявленные ${data.total_before.toFixed(2)} ₽, ` +
+        `ожидаемые ${data.total_after.toFixed(2)} ₽`;
 
       const syncStatus = await apiCall('/api/sync-status');
       if (syncStatus.last_sync) {
