@@ -12,7 +12,6 @@ import scheduler
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 
@@ -21,9 +20,6 @@ from moex_api import load_instrument_names, ticker_to_sector
 from handlers import register_handlers, set_http_session, set_bot
 from services.portfolio import get_portfolio_with_details
 
-
-# ... создание app ...
-app.mount("/static", StaticFiles(directory="static"), name="static
 
 # ---------- ЛОГИРОВАНИЕ ----------
 from logging.handlers import TimedRotatingFileHandler
