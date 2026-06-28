@@ -276,17 +276,13 @@ async def api_dividends_monthly(request: Request, year: int = None):
     if not check_token(request):
         raise HTTPException(403)
     try:
-        from main import bot_session
-        if bot_session is None:
-            return JSONResponse({"error": "HTTP сессия ещё не создана"}, status_code=503)
-
         if year is None:
             year = datetime.datetime.now().year
 
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
 
-        # 1. Фактические выплаты за год
+        # Фактические выплаты за указанный год
         c.execute("""SELECT date, ticker, payment, name 
                      FROM operations 
                      WHERE type IN ('Выплата дивидендов', 'Выплата купонов') 
@@ -294,7 +290,7 @@ async def api_dividends_monthly(request: Request, year: int = None):
                        AND date LIKE ? 
                      ORDER BY date""", (f"{year}%",))
         rows = c.fetchall()
-        
+
         actual_by_month = {m: {"total": 0.0, "details": []} for m in range(1, 13)}
         for r in rows:
             date_str = r[0]
@@ -315,61 +311,7 @@ async def api_dividends_monthly(request: Request, year: int = None):
                 "type": "actual"
             })
 
-        # 2. Прогнозные выплаты
-        from tinkoff_api import get_portfolio_summary
-        portfolio = await get_portfolio_summary(bot_session)
-        if not portfolio:
-            portfolio_positions = []
-        else:
-            portfolio_positions = portfolio.get("positions", [])
-
-        portfolio_quantities = {}
-        for pos in portfolio_positions:
-            ticker = pos["ticker"]
-            quantity = pos["quantity"]
-            if ticker and quantity > 0:
-                portfolio_quantities[ticker] = quantity
-
-        three_years_ago = year - 3
-        c.execute("""SELECT ticker, date, payment 
-                     FROM operations 
-                     WHERE type IN ('Выплата дивидендов', 'Выплата купонов') 
-                       AND currency = 'RUB' 
-                       AND substr(date, 1, 4) >= ? 
-                     ORDER BY date""", (str(three_years_ago),))
-        history_rows = c.fetchall()
-
-        history_by_ticker_month = {}
-        for h in history_rows:
-            ticker = h[0]
-            if ticker is None or ticker == "Прочие":
-                continue
-            month = int(h[1][5:7])
-            amount = h[2]
-            if ticker not in history_by_ticker_month:
-                history_by_ticker_month[ticker] = {}
-            if month not in history_by_ticker_month[ticker]:
-                history_by_ticker_month[ticker][month] = []
-            history_by_ticker_month[ticker][month].append(amount)
-
-        forecast_by_month = {m: {"total": 0.0, "details": []} for m in range(1, 13)}
-        for ticker, months_data in history_by_ticker_month.items():
-            quantity = portfolio_quantities.get(ticker, 0)
-            if quantity == 0:
-                continue
-            for month, amounts in months_data.items():
-                avg_amount = sum(amounts) / len(amounts) if amounts else 0
-                if avg_amount > 0:
-                    forecast_amount = avg_amount * quantity
-                    forecast_by_month[month]["total"] += forecast_amount
-                    forecast_by_month[month]["details"].append({
-                        "ticker": ticker,
-                        "name": NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker),
-                        "amount": forecast_amount,
-                        "type": "forecast"
-                    })
-
-        # 3. Доступные годы
+        # Доступные годы
         c.execute("SELECT DISTINCT substr(date, 1, 4) FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date DESC")
         years_rows = c.fetchall()
         years = [int(row[0]) for row in years_rows if row[0] is not None]
@@ -377,19 +319,14 @@ async def api_dividends_monthly(request: Request, year: int = None):
 
         months_labels = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек']
         actual_data = [actual_by_month[m]["total"] for m in range(1, 13)]
-        forecast_data = [forecast_by_month[m]["total"] for m in range(1, 13)]
         total_actual = sum(actual_data)
-        total_forecast = sum(forecast_data)
 
         return JSONResponse({
             "year": year,
             "months": months_labels,
             "actual": actual_data,
-            "forecast": forecast_data,
             "total_actual": total_actual,
-            "total_forecast": total_forecast,
             "details_actual": {m: actual_by_month[m]["details"] for m in range(1, 13)},
-            "details_forecast": {m: forecast_by_month[m]["details"] for m in range(1, 13)},
             "available_years": years
         })
     except Exception as e:
