@@ -50,6 +50,7 @@ NO_TRADING_WEEKENDS_2026 = [
 # Глобальный словарь имён инструментов из MOEX (загружается в runtime)
 ticker_to_name = {}
 ticker_to_sector = {}
+figi_to_ticker = {}
 
 # ---------- СПРАВОЧНИК СЕКТОРОВ MOEX ----------
 SECTOR_NAMES = {
