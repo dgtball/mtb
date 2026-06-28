@@ -7,7 +7,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
   <style>
-    /* ===== СТИЛИ (без изменений) ===== */
+    /* ===== ОБЩИЕ СТИЛИ ===== */
     :root {
       --bg: #121212;
       --surface: #1e1e1e;
@@ -20,6 +20,7 @@
       --border: #333;
       --radius: 12px;
       --shadow: 0 4px 12px rgba(0,0,0,0.3);
+      --purple: #9C27B0;
     }
     * { box-sizing: border-box; }
     body {
@@ -104,6 +105,26 @@
     .toast.success { border-left: 4px solid var(--positive); }
     .toast.error { border-left: 4px solid var(--negative); }
 
+    /* Кнопки переключения режима */
+    .mode-btn {
+      background: var(--surface-light);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.2s;
+    }
+    .mode-btn.active {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }
+    .mode-btn:hover:not(.active) {
+      background: var(--surface);
+    }
+
     @media (max-width: 480px) {
       body { padding: 8px; }
       .summary-value { font-size: 20px; }
@@ -113,6 +134,7 @@
       .settings-tab { font-size: 10px; padding: 8px 10px; }
       .card { padding: 12px; }
       .chart-container { height: 200px; }
+      .mode-btn { font-size: 10px; padding: 4px 10px; }
     }
   </style>
 </head>
@@ -154,9 +176,23 @@
       <button onclick="syncOperations()">Синхронизировать</button>
     </div>
     <div class="card">
-      <div class="card-title">Дивиденды и купоны по годам</div>
-      <p style="font-size:11px;color:var(--text-secondary);margin-top:-6px;margin-bottom:12px;">Клик по столбцу — выплаты за год, затем кнопка "Все выплаты" — все выплаты по активу</p>
+      <div class="card-title">Дивиденды и купоны</div>
+      <!-- Переключатель режимов -->
+      <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap; align-items:center;">
+        <button id="mode-yearly" class="mode-btn active" onclick="setDividendMode('yearly')">📊 По годам</button>
+        <button id="mode-monthly" class="mode-btn" onclick="setDividendMode('monthly')">📅 По месяцам</button>
+        <span id="year-selector-container" style="display:none; margin-left:8px;">
+          <label style="color:var(--text-secondary); font-size:12px;">Год: </label>
+          <select id="monthly-year-select" onchange="loadMonthlyDividends()" style="background:var(--bg);color:var(--text);border:1px solid var(--border);padding:4px 8px;border-radius:6px;"></select>
+        </span>
+      </div>
+      <!-- Подсказка -->
+      <p id="dividend-hint" style="font-size:11px;color:var(--text-secondary);margin-top:-6px;margin-bottom:12px;">Клик по столбцу — детализация</p>
+      <!-- Контейнер для графика -->
       <div class="chart-container" style="height:300px;"><canvas id="dividendChart"></canvas></div>
+      <!-- Итоги за год (для месячного режима) -->
+      <div id="totalYearLabel" style="margin-top:8px; font-size:14px; font-weight:bold; color:var(--text); display:none;"></div>
+      <!-- Блок деталей -->
       <div id="dividendDetails" class="detail-box"></div>
     </div>
   </div>
@@ -200,10 +236,11 @@
 
 <script>
   const API_TOKEN = 'MINI_APP_TOKEN_PLACEHOLDER';
-  let sectorChart, dividendChart;
+  let sectorChart, dividendChart, monthlyChart;
   let allPositions = [];
   let allTickersList = [];
   let sectorsList = [];
+  let dividendMode = 'yearly';
 
   // ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====
   async function apiCall(endpoint, method = 'GET', body = null) {
@@ -231,7 +268,11 @@
     document.querySelectorAll('.tab')[map[tab]].classList.add('active');
     document.getElementById(tab).classList.add('active');
     if (tab === 'portfolio') loadPortfolio();
-    else if (tab === 'dividends') loadDividends();
+    else if (tab === 'dividends') {
+      // При переключении на вкладку показываем текущий режим
+      if (dividendMode === 'yearly') loadDividends();
+      else loadMonthlyDividends();
+    }
     else if (tab === 'settings') loadOverrides();
   }
 
@@ -343,6 +384,7 @@
       const data = await apiCall('/api/dividends-yearly');
       const ctx = document.getElementById('dividendChart').getContext('2d');
       if (dividendChart) dividendChart.destroy();
+      if (monthlyChart) { monthlyChart.destroy(); monthlyChart = null; }
 
       if (!data.years || data.years.length === 0) {
         return;
@@ -375,10 +417,7 @@
           plugins: {
             legend: {
               position: 'bottom',
-              labels: {
-                color: '#e0e0e0',
-                font: { size: 10 },
-              }
+              labels: { color: '#e0e0e0', font: { size: 10 } }
             },
             tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.raw.toLocaleString()}` } }
           },
@@ -389,29 +428,28 @@
           barPercentage: 0.9,
           categoryPercentage: 0.9,
           onClick: (event, elements, chart) => {
-            console.log('[Клик по графику]');
-            // Если клик попал в элемент
             if (elements.length > 0) {
               const datasetIndex = elements[0].datasetIndex;
               const year = chart.data.datasets[datasetIndex].label;
               const xIndex = elements[0].index;
               const asset = chart.data.labels[xIndex];
-              console.log('[Год]', year, '[Актив]', asset);
               showDividendDetails(year, asset);
             } else {
-              // Если клик мимо столбцов – пытаемся определить актив по оси X, но год не определяем
               const xScale = chart.scales.x;
               const xPixel = event.x;
               const xIndex = Math.round(xScale.getValueForPixel(xPixel));
               if (xIndex >= 0 && xIndex < chart.data.labels.length) {
                 const asset = chart.data.labels[xIndex];
-                console.log('[Актив]', asset, ' – показать все выплаты');
                 showAllDividendDetails(asset);
               }
             }
           }
         }
       });
+
+      // Скрываем итоговую надпись для годового режима
+      document.getElementById('totalYearLabel').style.display = 'none';
+      document.getElementById('dividend-hint').textContent = 'Клик по столбцу — выплаты за год, клик по названию в легенде — все выплаты по активу';
 
       const syncStatus = await apiCall('/api/sync-status');
       if (syncStatus.last_sync) {
@@ -424,7 +462,6 @@
   }
 
   async function showDividendDetails(year, asset) {
-    console.log('[showDividendDetails] year:', year, 'asset:', asset);
     const url = `/api/dividends-yearly?year=${year}&ticker=${encodeURIComponent(asset)}`;
     try {
       const data = await apiCall(url);
@@ -451,7 +488,6 @@
   }
 
   async function showAllDividendDetails(asset) {
-    console.log('[showAllDividendDetails] asset:', asset);
     const url = `/api/dividends-yearly?ticker=${encodeURIComponent(asset)}`;
     try {
       const data = await apiCall(url);
@@ -493,11 +529,174 @@
       if (res.last_sync) {
         document.getElementById('lastSync').textContent = new Date(res.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
       }
-      loadDividends();
+      // Перезагружаем текущий режим
+      if (dividendMode === 'yearly') loadDividends();
+      else loadMonthlyDividends();
       showToast('Синхронизация выполнена успешно', 'success');
     } catch(e) {
       showToast('Ошибка синхронизации', 'error');
     }
+  }
+
+  // ===== ПЕРЕКЛЮЧЕНИЕ РЕЖИМОВ ВЫПЛАТ =====
+  function setDividendMode(mode) {
+    dividendMode = mode;
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('mode-' + mode).classList.add('active');
+    const selector = document.getElementById('year-selector-container');
+    if (mode === 'monthly') {
+      selector.style.display = 'inline-block';
+      document.getElementById('dividend-hint').textContent = 'Клик по столбцу — список выплат за месяц';
+      loadMonthlyDividends();
+    } else {
+      selector.style.display = 'none';
+      document.getElementById('totalYearLabel').style.display = 'none';
+      document.getElementById('dividend-hint').textContent = 'Клик по столбцу — выплаты за год, клик по названию в легенде — все выплаты по активу';
+      loadDividends();
+    }
+  }
+
+  // ===== МЕСЯЧНЫЙ ГРАФИК =====
+  async function loadMonthlyDividends() {
+    const yearSelect = document.getElementById('monthly-year-select');
+    let year = yearSelect.value;
+    if (!year) {
+      // Загружаем доступные годы
+      try {
+        const data = await apiCall('/api/dividends-monthly');
+        yearSelect.innerHTML = '';
+        data.available_years.forEach(y => {
+          const opt = document.createElement('option');
+          opt.value = y;
+          opt.textContent = y;
+          yearSelect.appendChild(opt);
+        });
+        year = data.available_years[0] || new Date().getFullYear();
+        yearSelect.value = year;
+      } catch(e) {
+        showToast('Ошибка загрузки списка годов', 'error');
+        return;
+      }
+    }
+
+    try {
+      const data = await apiCall(`/api/dividends-monthly?year=${year}`);
+      // Обновим список годов, если он пуст (на случай, если не было годов)
+      if (yearSelect.options.length === 0) {
+        data.available_years.forEach(y => {
+          const opt = document.createElement('option');
+          opt.value = y;
+          opt.textContent = y;
+          yearSelect.appendChild(opt);
+        });
+        yearSelect.value = year;
+      }
+
+      const ctx = document.getElementById('dividendChart').getContext('2d');
+      if (dividendChart) { dividendChart.destroy(); dividendChart = null; }
+      if (monthlyChart) { monthlyChart.destroy(); monthlyChart = null; }
+
+      monthlyChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: data.months,
+          datasets: [
+            {
+              label: 'Фактические выплаты',
+              data: data.actual,
+              backgroundColor: '#2196F3',
+              borderRadius: 4,
+            },
+            {
+              label: 'Прогнозные выплаты',
+              data: data.forecast,
+              backgroundColor: '#9C27B0',
+              borderRadius: 4,
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: { color: '#e0e0e0', font: { size: 10 } }
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  return context.dataset.label + ': ' + context.raw.toLocaleString() + ' ₽';
+                }
+              }
+            },
+            datalabels: {
+              anchor: 'end',
+              align: 'top',
+              color: '#e0e0e0',
+              font: { weight: 'bold', size: 9 },
+              formatter: function(value) {
+                return value > 0 ? value.toLocaleString() : '';
+              }
+            }
+          },
+          scales: {
+            x: { stacked: true, ticks: { color: '#9e9e9e' }, grid: { display: false } },
+            y: { stacked: true, ticks: { color: '#9e9e9e', callback: v => v.toLocaleString() }, grid: { color: '#333' } }
+          },
+          onClick: (event, elements, chart) => {
+            if (elements.length > 0) {
+              const index = elements[0].index;
+              const month = chart.data.labels[index];
+              const monthNum = index + 1;
+              const actualDetails = data.details_actual[monthNum] || [];
+              const forecastDetails = data.details_forecast[monthNum] || [];
+              const allDetails = [...actualDetails, ...forecastDetails];
+              if (allDetails.length > 0) {
+                showMonthlyDetails(month, allDetails);
+              }
+            }
+          }
+        },
+        plugins: [ChartDataLabels]
+      });
+
+      // Показываем итоги за год
+      const totalLabel = document.getElementById('totalYearLabel');
+      totalLabel.style.display = 'block';
+      totalLabel.textContent = `💰 Итого за ${year}: фактические ${data.total_actual.toLocaleString()} ₽, прогнозные ${data.total_forecast.toLocaleString()} ₽`;
+
+      // Обновляем статус синхронизации (если нужно)
+      const syncStatus = await apiCall('/api/sync-status');
+      if (syncStatus.last_sync) {
+        document.getElementById('lastSync').textContent = new Date(syncStatus.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+      }
+    } catch(e) {
+      console.error(e);
+      showToast('Ошибка загрузки данных по месяцам', 'error');
+    }
+  }
+
+  // ===== ДЕТАЛИЗАЦИЯ МЕСЯЧНОГО ГРАФИКА =====
+  function showMonthlyDetails(month, details) {
+    const container = document.getElementById('dividendDetails');
+    let html = `<h4>${month} ${new Date().getFullYear()}</h4>`;
+    html += `<button class="close-btn" onclick="closeDividendDetails()">✕</button>`;
+    html += `<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Актив</th><th>Тип</th><th>Сумма</th></tr></thead><tbody>`;
+    // Сортируем по дате (от новых к старым)
+    details.sort((a,b) => {
+      if (a.date && b.date) return new Date(b.date) - new Date(a.date);
+      return 0;
+    });
+    details.forEach(d => {
+      const dateStr = d.date ? new Date(d.date).toLocaleDateString() : '—';
+      const typeLabel = d.type === 'actual' ? 'Факт' : 'Прогноз';
+      const color = d.type === 'actual' ? 'var(--accent)' : 'var(--purple)';
+      html += `<tr><td>${dateStr}</td><td>${d.name}</td><td style="color:${color}">${typeLabel}</td><td>${d.amount.toLocaleString()}</td></tr>`;
+    });
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+    container.classList.add('visible');
   }
 
   // ===== НАСТРОЙКИ: Переименования =====
@@ -667,6 +866,9 @@
   // ===== ИНИЦИАЛИЗАЦИЯ =====
   window.onload = function() {
     loadPortfolio();
+    // Устанавливаем режим по умолчанию
+    setDividendMode('yearly');
+    // Загружаем статус синхронизации
     apiCall('/api/sync-status').then(data => {
       if (data.last_sync) {
         document.getElementById('lastSync').textContent = new Date(data.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
