@@ -1,0 +1,308 @@
+:root {
+  --bg: #121212;
+  --surface: #1e1e1e;
+  --surface-light: #2a2a2a;
+  --text: #e0e0e0;
+  --text-secondary: #9e9e9e;
+  --accent: #2196F3;
+  --positive: #4caf50;
+  --negative: #f44336;
+  --border: #333;
+  --radius: 12px;
+  --shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  padding: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+/* ===== ВКЛАДКИ ===== */
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+  background: var(--surface);
+  border-radius: var(--radius) var(--radius) 0 0;
+  padding: 0 8px;
+}
+.tab {
+  flex: 1;
+  text-align: center;
+  padding: 14px 8px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-size: 13px;
+  border-bottom: 3px solid transparent;
+  transition: all 0.2s;
+}
+.tab:hover {
+  color: var(--text);
+}
+.tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.tab-content {
+  display: none;
+  animation: fadeIn 0.3s ease;
+}
+.tab-content.active {
+  display: block;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+/* ===== КАРТОЧКИ ===== */
+.card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow);
+}
+.card-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--text);
+}
+/* ===== СТАТИСТИКА (Портфель) ===== */
+.summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.summary-item {
+  display: flex;
+  flex-direction: column;
+}
+.summary-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.summary-value {
+  font-size: 24px;
+  font-weight: 700;
+}
+.summary-change {
+  font-size: 18px;
+  font-weight: 600;
+}
+/* ===== ГРАФИКИ ===== */
+.chart-container {
+  width: 100%;
+  max-width: 100%;
+  margin: 0 0 16px 0;
+  height: 280px;
+  position: relative;
+}
+/* ===== ТАБЛИЦЫ ===== */
+.table-wrap {
+  overflow-x: auto;
+  margin-bottom: 12px;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+th, td {
+  padding: 8px 6px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+th {
+  color: var(--text-secondary);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+td {
+  color: var(--text);
+}
+.actions {
+  display: flex;
+  gap: 6px;
+}
+.actions button {
+  background: var(--negative);
+  border: none;
+  color: white;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 10px;
+  transition: opacity 0.2s;
+}
+.actions button:hover {
+  opacity: 0.8;
+}
+/* ===== ФОРМЫ ===== */
+.form-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.form-row input, .form-row select {
+  flex: 1 1 120px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  min-width: 80px;
+}
+.form-row button {
+  background: var(--accent);
+  border: none;
+  color: white;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.2s;
+  white-space: nowrap;
+}
+.form-row button:hover {
+  background: #1976D2;
+}
+.btn-secondary {
+  background: var(--surface-light) !important;
+  color: var(--text) !important;
+}
+.btn-secondary:hover {
+  background: #3a3a3a !important;
+}
+.btn-success {
+  background: var(--positive) !important;
+}
+.btn-success:hover {
+  background: #388E3C !important;
+}
+/* ===== ПОДВКЛАДКИ НАСТРОЕК ===== */
+.settings-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+  background: var(--surface);
+  border-radius: var(--radius) var(--radius) 0 0;
+  padding: 0 8px;
+}
+.settings-tab {
+  padding: 10px 16px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 12px;
+  border-bottom: 3px solid transparent;
+  transition: all 0.2s;
+}
+.settings-tab:hover {
+  color: var(--text);
+}
+.settings-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.settings-content {
+  display: none;
+  animation: fadeIn 0.3s ease;
+}
+.settings-content.active {
+  display: block;
+}
+/* ===== СИНХРОНИЗАЦИЯ ===== */
+.sync-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  font-size: 12px;
+}
+.sync-status button {
+  background: var(--accent);
+  border: none;
+  color: white;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.sync-status button:hover {
+  background: #1976D2;
+}
+/* ===== ДЕТАЛИ (выпадающие блоки) ===== */
+.detail-box {
+  background: var(--surface-light);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-top: 8px;
+  display: none;
+}
+.detail-box.visible {
+  display: block;
+}
+.detail-box h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: var(--text);
+}
+/* ===== СООБЩЕНИЯ (TOAST) ===== */
+.toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface);
+  color: var(--text);
+  padding: 12px 24px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  z-index: 999;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+  border: 1px solid var(--border);
+}
+.toast.show {
+  opacity: 1;
+}
+.toast.success {
+  border-left: 4px solid var(--positive);
+}
+.toast.error {
+  border-left: 4px solid var(--negative);
+}
+/* ===== АДАПТИВ ===== */
+@media (max-width: 480px) {
+  body { padding: 8px; }
+  .summary-value { font-size: 20px; }
+  .summary-change { font-size: 16px; }
+  .form-row input, .form-row select { flex: 1 1 100%; }
+  .tab { font-size: 11px; padding: 10px 4px; }
+  .settings-tab { font-size: 10px; padding: 8px 10px; }
+  .card { padding: 12px; }
+  .chart-container { height: 200px; }
+}
