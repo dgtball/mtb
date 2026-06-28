@@ -387,17 +387,17 @@
   // 4. ПЕРЕКЛЮЧЕНИЕ ПОДВКЛАДОК НАСТРОЙКИ
   // ============================================================
   function switchSettingsTab(tab) {
-  document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.settings-content').forEach(c => c.classList.remove('active'));
-  document.querySelector(`.settings-tab[onclick="switchSettingsTab('${tab}')"]`).classList.add('active');
-  document.getElementById(`settings-${tab}`).classList.add('active');
-  if (tab === 'overrides') loadOverrides();
-  else if (tab === 'link') loadUntickedOperations();
-  else if (tab === 'sectors') loadSectors();
-}
+    document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.settings-content').forEach(c => c.classList.remove('active'));
+    document.querySelector(`.settings-tab[onclick="switchSettingsTab('${tab}')"]`).classList.add('active');
+    document.getElementById(`settings-${tab}`).classList.add('active');
+    if (tab === 'overrides') loadOverrides();
+    else if (tab === 'link') loadUntickedOperations();
+    else if (tab === 'sectors') loadSectors();
+  }
 
   // ============================================================
-  // 4. ПЕРЕКЛЮЧЕНИЕ ПОДВКЛАДОК ВЫПЛАТ
+  // 5. ПЕРЕКЛЮЧЕНИЕ ПОДВКЛАДОК ВЫПЛАТ
   // ============================================================
   function switchDividendSubtab(subtab) {
     currentDividendSubtab = subtab;
@@ -413,7 +413,7 @@
   }
 
   // ============================================================
-  // 5. ПОРТФЕЛЬ
+  // 6. ПОРТФЕЛЬ
   // ============================================================
   async function loadPortfolio() {
     try {
@@ -511,7 +511,7 @@
   }
 
   // ============================================================
-  // 6. ВЫПЛАТЫ: ГОДОВОЙ ГРАФИК
+  // 7. ВЫПЛАТЫ: ГОДОВОЙ ГРАФИК
   // ============================================================
   async function loadDividends() {
     try {
@@ -653,198 +653,197 @@
   }
 
   // ============================================================
-  // 7. ВЫПЛАТЫ: МЕСЯЧНЫЙ ГРАФИК
+  // 8. ВЫПЛАТЫ: МЕСЯЧНЫЙ ГРАФИК
   // ============================================================
-  
   async function loadMonthlyDividends() {
-  const yearSelect = document.getElementById('monthly-year-select');
-  let year = yearSelect.value;
+    const yearSelect = document.getElementById('monthly-year-select');
+    let year = yearSelect.value;
 
-  try {
-    if (!year || yearSelect.options.length === 0) {
-      const data = await apiCall('/api/dividends-monthly');
+    try {
+      if (!year || yearSelect.options.length === 0) {
+        const data = await apiCall('/api/dividends-monthly');
+        if (data.error) {
+          showToast('Ошибка загрузки данных: ' + data.error, 'error');
+          return;
+        }
+        yearSelect.innerHTML = '';
+        if (data.available_years && data.available_years.length > 0) {
+          data.available_years.forEach(y => {
+            const opt = document.createElement('option');
+            opt.value = y;
+            opt.textContent = y;
+            yearSelect.appendChild(opt);
+          });
+          year = data.available_years[0];
+          yearSelect.value = year;
+        } else {
+          year = new Date().getFullYear();
+          const opt = document.createElement('option');
+          opt.value = year;
+          opt.textContent = year;
+          yearSelect.appendChild(opt);
+          yearSelect.value = year;
+        }
+      }
+
+      const data = await apiCall(`/api/dividends-monthly?year=${year}`);
       if (data.error) {
         showToast('Ошибка загрузки данных: ' + data.error, 'error');
         return;
       }
-      yearSelect.innerHTML = '';
+
       if (data.available_years && data.available_years.length > 0) {
+        const currentValues = Array.from(yearSelect.options).map(opt => opt.value);
         data.available_years.forEach(y => {
-          const opt = document.createElement('option');
-          opt.value = y;
-          opt.textContent = y;
-          yearSelect.appendChild(opt);
+          if (!currentValues.includes(String(y))) {
+            const opt = document.createElement('option');
+            opt.value = y;
+            opt.textContent = y;
+            yearSelect.appendChild(opt);
+          }
         });
-        year = data.available_years[0];
-        yearSelect.value = year;
-      } else {
-        year = new Date().getFullYear();
-        const opt = document.createElement('option');
-        opt.value = year;
-        opt.textContent = year;
-        yearSelect.appendChild(opt);
-        yearSelect.value = year;
-      }
-    }
-
-    const data = await apiCall(`/api/dividends-monthly?year=${year}`);
-    if (data.error) {
-      showToast('Ошибка загрузки данных: ' + data.error, 'error');
-      return;
-    }
-
-    if (data.available_years && data.available_years.length > 0) {
-      const currentValues = Array.from(yearSelect.options).map(opt => opt.value);
-      data.available_years.forEach(y => {
-        if (!currentValues.includes(String(y))) {
-          const opt = document.createElement('option');
-          opt.value = y;
-          opt.textContent = y;
-          yearSelect.appendChild(opt);
+        if (!data.available_years.includes(Number(year))) {
+          year = data.available_years[0];
+          yearSelect.value = year;
+          return loadMonthlyDividends();
         }
-      });
-      if (!data.available_years.includes(Number(year))) {
-        year = data.available_years[0];
-        yearSelect.value = year;
-        return loadMonthlyDividends();
       }
-    }
 
-    const ctx = document.getElementById('dividendChartMonthly').getContext('2d');
-    if (dividendChartMonthly) dividendChartMonthly.destroy();
+      const ctx = document.getElementById('dividendChartMonthly').getContext('2d');
+      if (dividendChartMonthly) dividendChartMonthly.destroy();
 
-    dividendChartMonthly = new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels: data.months,
-        datasets: [
-          {
-            label: 'Фактические выплаты',
-            data: data.actual,
-            backgroundColor: '#2196F3',
-            borderRadius: 4,
-          },
-          {
-            label: 'Объявлены (реестр открыт)',
-            data: data.declared,
-            backgroundColor: '#FFC107', // жёлтый
-            borderRadius: 4,
-          },
-		  {
-			label: 'Ожидаются (реестр закрыт)',
-			data: data.declared_after,
-			backgroundColor: '#9C27B0', // фиолетовый
-			borderRadius: 4,
-		   }
-        ]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            position: 'bottom',
-            labels: { color: '#e0e0e0', font: { size: 10 } }
-          },
-          tooltip: {
-            callbacks: {
-              label: function(context) {
-                return context.dataset.label + ': ' + context.raw.toFixed(2) + ' ₽';
+      dividendChartMonthly = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: data.months,
+          datasets: [
+            {
+              label: 'Фактические выплаты',
+              data: data.actual,
+              backgroundColor: '#2196F3',
+              borderRadius: 4,
+            },
+            {
+              label: 'Объявлены (реестр открыт)',
+              data: data.declared_before_record,   // ИСПРАВЛЕНО
+              backgroundColor: '#FFC107',
+              borderRadius: 4,
+            },
+            {
+              label: 'Ожидаются (реестр закрыт)',
+              data: data.declared_after_record,    // ИСПРАВЛЕНО
+              backgroundColor: '#9C27B0',
+              borderRadius: 4,
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: { color: '#e0e0e0', font: { size: 10 } }
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  return context.dataset.label + ': ' + context.raw.toFixed(2) + ' ₽';
+                }
+              }
+            },
+            datalabels: {
+              anchor: 'end',
+              align: 'top',
+              color: '#e0e0e0',
+              font: { weight: 'bold', size: 9 },
+              formatter: function(value) {
+                return value > 0 ? value.toFixed(2) : '';
               }
             }
           },
-          datalabels: {
-            anchor: 'end',
-            align: 'top',
-            color: '#e0e0e0',
-            font: { weight: 'bold', size: 9 },
-            formatter: function(value) {
-              return value > 0 ? value.toFixed(2) : '';
+          scales: {
+            x: { stacked: true, ticks: { color: '#9e9e9e' }, grid: { display: false } },
+            y: { stacked: true, ticks: { color: '#9e9e9e', callback: v => v.toFixed(2) }, grid: { color: '#333' } }
+          },
+          onClick: (event, elements, chart) => {
+            if (elements.length > 0) {
+              const index = elements[0].index;
+              const month = chart.data.labels[index];
+              const monthNum = index + 1;
+              const actualDetails = data.details_actual[monthNum] || [];
+              const declaredBeforeDetails = data.details_declared_before[monthNum] || [];
+              const declaredAfterDetails = data.details_declared_after[monthNum] || [];
+              const allDetails = [...actualDetails, ...declaredBeforeDetails, ...declaredAfterDetails];
+              if (allDetails.length > 0) {
+                showMonthlyDetails(month, allDetails);
+              }
             }
           }
         },
-        scales: {
-          x: { stacked: true, ticks: { color: '#9e9e9e' }, grid: { display: false } },
-          y: { stacked: true, ticks: { color: '#9e9e9e', callback: v => v.toFixed(2) }, grid: { color: '#333' } }
-        },
-        onClick: (event, elements, chart) => {
-          if (elements.length > 0) {
-            const index = elements[0].index;
-            const month = chart.data.labels[index];
-            const monthNum = index + 1;
-            const actualDetails = data.details_actual[monthNum] || [];
-            const declaredDetails = data.details_declared[monthNum] || [];
-            const allDetails = [...actualDetails, ...declaredDetails];
-            if (allDetails.length > 0) {
-              showMonthlyDetails(month, allDetails);
-            }
-          }
-        }
-      },
-      plugins: [ChartDataLabels]
-    });
+        plugins: [ChartDataLabels]
+      });
 
-    const totalLabel = document.getElementById('totalYearLabel');
-	totalLabel.style.display = 'block';
-	totalLabel.textContent = 
-	  `💰 Итого за ${year}: фактические ${data.total_actual.toFixed(2)} ₽, ` +
-	  `объявленные (реестр открыт) ${data.total_before.toFixed(2)} ₽, ` +
-	  `ожидаемые (реестр закрыт) ${data.total_after.toFixed(2)} ₽`;
+      const totalLabel = document.getElementById('totalYearLabel');
+      totalLabel.style.display = 'block';
+      totalLabel.textContent = 
+        `💰 Итого за ${year}: фактические ${data.total_actual.toFixed(2)} ₽, ` +
+        `объявленные (реестр открыт) ${data.total_before.toFixed(2)} ₽, ` +
+        `ожидаемые (реестр закрыт) ${data.total_after.toFixed(2)} ₽`;
 
-    const syncStatus = await apiCall('/api/sync-status');
-    if (syncStatus.last_sync) {
-      document.getElementById('lastSync').textContent = new Date(syncStatus.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+      const syncStatus = await apiCall('/api/sync-status');
+      if (syncStatus.last_sync) {
+        document.getElementById('lastSync').textContent = new Date(syncStatus.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+      }
+    } catch (e) {
+      console.error(e);
+      showToast('Ошибка загрузки данных по месяцам', 'error');
     }
-  } catch (e) {
-    console.error(e);
-    showToast('Ошибка загрузки данных по месяцам', 'error');
   }
-}
-  
+
   function showMonthlyDetails(month, details) {
-  const container = document.getElementById('monthlyDetails');
-  let html = `<h4>${month}</h4>`;
-  html += `<button class="close-btn" onclick="document.getElementById('monthlyDetails').classList.remove('visible')">✕</button>`;
-  html += `<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Актив</th><th>Тип</th><th>Сумма</th></tr></thead><tbody>`;
-  
-  // Сортируем по дате (от новых к старым)
-  details.sort((a, b) => {
-    if (a.date && b.date) return new Date(b.date) - new Date(a.date);
-    return 0;
-  });
-  
-  details.forEach(d => {
-    const dateStr = d.date ? new Date(d.date).toLocaleDateString() : '—';
-    let typeLabel = '';
-    let color = '';
+    const container = document.getElementById('monthlyDetails');
+    let html = `<h4>${month}</h4>`;
+    html += `<button class="close-btn" onclick="document.getElementById('monthlyDetails').classList.remove('visible')">✕</button>`;
+    html += `<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Актив</th><th>Тип</th><th>Сумма</th></tr></thead><tbody>`;
     
-    if (d.type === 'actual') {
-      typeLabel = 'Факт';
-      color = 'var(--accent)';
-    } else if (d.type === 'declared_dividend_before') {
-      typeLabel = 'Объявл. див. (реестр открыт)';
-      color = '#FFC107';
-    } else if (d.type === 'declared_dividend_after') {
-      typeLabel = 'Ожидание див. (реестр закрыт)';
-      color = '#9C27B0';
-    } else if (d.type === 'declared_coupon') {
-      typeLabel = 'Объявл. купон';
-      color = '#FFC107';
-    } else {
-      typeLabel = d.type || 'Неизвестно';
-      color = 'var(--text-secondary)';
-    }
+    details.sort((a, b) => {
+      if (a.date && b.date) return new Date(b.date) - new Date(a.date);
+      return 0;
+    });
     
-    html += `<tr><td>${dateStr}</td><td>${d.name}</td><td style="color:${color}">${typeLabel}</td><td>${d.amount.toFixed(2)}</td></tr>`;
-  });
-  
-  html += '</tbody></table></div>';
-  container.innerHTML = html;
-  container.classList.add('visible');
-}
+    details.forEach(d => {
+      const dateStr = d.date ? new Date(d.date).toLocaleDateString() : '—';
+      let typeLabel = '';
+      let color = '';
+      
+      if (d.type === 'actual') {
+        typeLabel = 'Факт';
+        color = 'var(--accent)';
+      } else if (d.type === 'declared_dividend_before') {
+        typeLabel = 'Объявл. див. (реестр открыт)';
+        color = '#FFC107';
+      } else if (d.type === 'declared_dividend_after') {
+        typeLabel = 'Ожидание див. (реестр закрыт)';
+        color = '#9C27B0';
+      } else if (d.type === 'declared_coupon') {
+        typeLabel = 'Объявл. купон';
+        color = '#FFC107';
+      } else {
+        typeLabel = d.type || 'Неизвестно';
+        color = 'var(--text-secondary)';
+      }
+      
+      html += `<tr><td>${dateStr}</td><td>${d.name}</td><td style="color:${color}">${typeLabel}</td><td>${d.amount.toFixed(2)}</td></tr>`;
+    });
+    
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+    container.classList.add('visible');
+  }
 
   // ============================================================
-  // 8. СИНХРОНИЗАЦИЯ
+  // 9. СИНХРОНИЗАЦИЯ
   // ============================================================
   async function syncOperations() {
     try {
@@ -860,9 +859,9 @@
     }
   }
 
-  // ============================================================
-  // 9. НАСТРОЙКИ: ПЕРЕИМЕНОВАНИЯ
-  // ============================================================
+// ============================================================
+// 10. НАСТРОЙКИ: ПЕРЕИМЕНОВАНИЯ
+// ============================================================
   async function loadOverrides() {
     try {
       const data = await apiCall('/api/overrides');
@@ -905,9 +904,6 @@
     }
   }
 
-  // ============================================================
-  // 10. НАСТРОЙКИ: ПРИВЯЗКА ТИКЕРОВ
-  // ============================================================
   async function loadUntickedOperations() {
     try {
       const data = await apiCall('/api/operations/unticked');
@@ -982,9 +978,6 @@
     }
   }
 
-  // ============================================================
-  // 11. НАСТРОЙКИ: СЕКТОРА
-  // ============================================================
   async function loadSectors() {
     try {
       if (sectorsList.length === 0) {
@@ -1047,9 +1040,9 @@
     }
   }
 
-  // ============================================================
-  // 12. ИНИЦИАЛИЗАЦИЯ
-  // ============================================================
+// ============================================================
+// 11. ИНИЦИАЛИЗАЦИЯ
+// ============================================================
   window.onload = function() {
     loadPortfolio();
     switchDividendSubtab('yearly');

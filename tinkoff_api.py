@@ -9,6 +9,7 @@ from utils import retry
 
 # Глобальный словарь FIGI → Ticker, заполняется при старте
 portfolio_figi_to_ticker = {}
+EXTRA_FIGI_MAP = {}
 
 @retry(max_attempts=3, delay=2, backoff=2)
 async def tinkoff_api_request(http_session, method: str, endpoint: str, params: dict = None) -> dict:
