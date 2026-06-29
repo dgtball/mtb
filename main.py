@@ -298,7 +298,7 @@ async def api_dividends_monthly(request: Request, year: int = None):
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
 
-        # ---------- 2. Фактические выплаты ----------
+        # ---------- 2. Фактические выплаты (из операций) ----------
         c.execute("""SELECT date, ticker, payment, name 
                      FROM operations 
                      WHERE type IN ('Выплата дивидендов', 'Выплата купонов') 
@@ -327,7 +327,8 @@ async def api_dividends_monthly(request: Request, year: int = None):
                 "type": "actual"
             })
 
-        # ---------- 3. Объявленные дивиденды ----------
+        # ---------- 3. Объявленные дивиденды (из календаря) ----------
+        # Только будущие выплаты (payment_date > сегодня)
         c.execute("""
             SELECT ticker, payment_date, record_date, dividend_net
             FROM dividend_calendar
@@ -371,7 +372,7 @@ async def api_dividends_monthly(request: Request, year: int = None):
                     "type": "declared_dividend_after"
                 })
 
-        # ---------- 4. Объявленные купоны ----------
+        # ---------- 4. Объявленные купоны (из календаря купонов) ----------
         c.execute("""
             SELECT ticker, coupon_date, coupon_value, record_date
             FROM coupon_calendar
@@ -412,7 +413,8 @@ async def api_dividends_monthly(request: Request, year: int = None):
                     "type": "declared_coupon_after"
                 })
 
-        # ---------- 5. Прогнозные выплаты ----------
+        # ---------- 5. Прогнозные дивиденды (из таблицы forecast) ----------
+        # Прогнозы хранятся в пересчёте на 1 акцию
         c.execute("""
             SELECT ticker, forecast_amount, forecast_month, forecast_year
             FROM dividend_forecast
@@ -421,15 +423,20 @@ async def api_dividends_monthly(request: Request, year: int = None):
         forecast_rows = c.fetchall()
 
         forecast_by_month = {m: {"total": 0.0, "details": []} for m in range(1, 13)}
+
         for row in forecast_rows:
             ticker = row[0]
-            amount = row[1]
+            forecast_per_share = row[1]
             month = row[2]
-            if amount > 0:
+            if forecast_per_share > 0:
+                quantity = portfolio_quantities.get(ticker, 0)
+                if quantity == 0:
+                    continue
+                amount = forecast_per_share * quantity
                 name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
                 forecast_by_month[month]["total"] += amount
                 forecast_by_month[month]["details"].append({
-                    "date": f"{year}-{month:02d}-01",
+                    "date": f"{year}-{month:02d}-01",  # приблизительная дата (начало месяца)
                     "ticker": ticker,
                     "name": name,
                     "amount": amount,
@@ -437,16 +444,16 @@ async def api_dividends_monthly(request: Request, year: int = None):
                 })
 
         # ---------- 6. Доступные годы ----------
+        # Берём годы из операций
         c.execute("SELECT DISTINCT substr(date, 1, 4) FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date DESC")
         years_rows = c.fetchall()
-        years = [int(row[0]) for row in years_rows if row[0] is not None]
-        # Добавляем текущий и следующий год для прогнозов
-        current_year = datetime.datetime.now().year
-        if current_year not in years:
-            years.append(current_year)
-        if current_year + 1 not in years:
-            years.append(current_year + 1)
-        years.sort(reverse=True)
+        years_from_ops = [int(row[0]) for row in years_rows if row[0] is not None]
+
+        # Добавляем годы из прогнозов
+        c.execute("SELECT DISTINCT forecast_year FROM dividend_forecast WHERE forecast_amount > 0")
+        forecast_years = [int(row[0]) for row in c.fetchall() if row[0] is not None]
+        all_years = sorted(set(years_from_ops + forecast_years), reverse=True)
+
         conn.close()
 
         months_labels = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек']
@@ -454,6 +461,7 @@ async def api_dividends_monthly(request: Request, year: int = None):
         before_data = [declared_before_record[m]["total"] for m in range(1, 13)]
         after_data = [declared_after_record[m]["total"] for m in range(1, 13)]
         forecast_data = [forecast_by_month[m]["total"] for m in range(1, 13)]
+
         total_actual = sum(actual_data)
         total_before = sum(before_data)
         total_after = sum(after_data)
@@ -474,7 +482,7 @@ async def api_dividends_monthly(request: Request, year: int = None):
             "details_declared_before": {m: declared_before_record[m]["details"] for m in range(1, 13)},
             "details_declared_after": {m: declared_after_record[m]["details"] for m in range(1, 13)},
             "details_forecast": {m: forecast_by_month[m]["details"] for m in range(1, 13)},
-            "available_years": years
+            "available_years": all_years
         })
     except Exception as e:
         logging.error(f"Error in /api/dividends-monthly: {e}", exc_info=True)
