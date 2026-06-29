@@ -80,6 +80,18 @@
     .form-row button:hover { background: #1976D2; }
     .btn-success { background: var(--positive) !important; }
     .btn-success:hover { background: #388E3C !important; }
+	.btn-primary {
+	  background: var(--accent);
+	  border: none;
+	  color: white;
+	  padding: 8px 16px;
+	  border-radius: 6px;
+	  cursor: pointer;
+	  font-size: 13px;
+	  transition: background 0.2s;
+	  white-space: nowrap;
+	}
+	.btn-primary:hover {background: #1976D2;}	
 
     .settings-tabs {
       display: flex;
@@ -288,9 +300,10 @@
   <!-- Настройки -->
   <div id="settings" class="tab-content">
     <div class="settings-tabs">
-      <span class="settings-tab active" onclick="switchSettingsTab('overrides')">Переименования</span>
-      <span class="settings-tab" onclick="switchSettingsTab('link')">Привязка тикеров</span>
+      <span class="settings-tab active" onclick="switchSettingsTab('overrides')">Тикеры</span>
+      <span class="settings-tab" onclick="switchSettingsTab('link')">Привязка</span>
       <span class="settings-tab" onclick="switchSettingsTab('sectors')">Сектора</span>
+	  <span class="settings-tab" onclick="switchSettingsTab('sync')">Синхронизация</span>
     </div>
 
     <div id="settings-overrides" class="settings-content active">
@@ -323,6 +336,27 @@
         </div>
       </div>
     </div>
+	<div id="settings-sync" class="settings-content">
+	  <div class="card">
+		<div class="card-title">Синхронизация</div>
+		<div style="display:flex; flex-direction:column; gap:12px;">
+		  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+			<button class="btn-success" onclick="syncCalendars()" style="padding:10px 20px; font-size:14px;">🔄 Обновить календарь выплат</button>
+			<span style="font-size:12px; color:var(--text-secondary);">(дивиденды и купоны из API)</span>
+		  </div>
+		  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+			<button class="btn-primary" onclick="syncOperationsManual()" style="padding:10px 20px; font-size:14px; background:var(--accent); border:none; color:white; border-radius:6px; cursor:pointer;">📥 Обновить операции</button>
+			<span style="font-size:12px; color:var(--text-secondary);">(загрузить новые операции)</span>
+		  </div>
+		  <div style="margin-top:8px; font-size:12px; color:var(--text-secondary);">
+			<span>Последняя синхронизация операций: <span id="lastSyncSettings">—</span></span>
+		  </div>
+		  <div style="font-size:12px; color:var(--text-secondary);">
+			<span>Последнее обновление календаря: <span id="lastCalendarSync">—</span></span>
+		  </div>
+		</div>
+	  </div>
+	</div>
   </div>
 
 <script>
@@ -392,9 +426,20 @@
     document.querySelector(`.settings-tab[onclick="switchSettingsTab('${tab}')"]`).classList.add('active');
     document.getElementById(`settings-${tab}`).classList.add('active');
     if (tab === 'overrides') loadOverrides();
-    else if (tab === 'link') loadUntickedOperations();
-    else if (tab === 'sectors') loadSectors();
+	else if (tab === 'link') loadUntickedOperations();
+	else if (tab === 'sectors') loadSectors();
+	else if (tab === 'sync') {
+	// загружаем статусы синхронизации
+	apiCall('/api/sync-status').then(data => {
+		if (data.last_sync) {
+			document.getElementById('lastSyncSettings').textContent = new Date(data.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+		}
+	}).catch(() => {});
+	// для календаря – показываем текущее время последней синхронизации (можно хранить в БД, но пока просто текущее)
+	document.getElementById('lastCalendarSync').textContent = '—';
+	// если хотите хранить дату последней синхронизации календаря, можно добавить поле в БД или просто показывать текущее время после вызова
   }
+}
 
   // ============================================================
   // 5. ПЕРЕКЛЮЧЕНИЕ ПОДВКЛАДОК ВЫПЛАТ
@@ -844,19 +889,54 @@
   // 9. СИНХРОНИЗАЦИЯ
   // ============================================================
   async function syncOperations() {
-    try {
-      const res = await apiCall('/api/sync', 'POST');
-      if (res.last_sync) {
-        document.getElementById('lastSync').textContent = new Date(res.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
-      }
-      if (currentDividendSubtab === 'yearly') loadDividends();
-      else loadMonthlyDividends();
-      showToast('Синхронизация выполнена успешно', 'success');
-    } catch (e) {
-      showToast('Ошибка синхронизации', 'error');
-    }
+	try {
+	  const res = await apiCall('/api/sync', 'POST');
+	  if (res.last_sync) {
+		document.getElementById('lastSync').textContent = new Date(res.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+	  }
+	  if (currentDividendSubtab === 'yearly') loadDividends();
+	  else loadMonthlyDividends();
+	  showToast('Синхронизация выполнена успешно', 'success');
+	} catch (e) {
+	  showToast('Ошибка синхронизации', 'error');
+	}
   }
-
+  async function syncCalendars() {
+  try {
+	showToast('Обновление календаря...', 'info');
+	const res = await apiCall('/api/sync-calendars', 'POST');
+	if (res.status === 'ok') {
+	  showToast(`Календарь обновлён: дивидендов ${res.dividends_updated}, купонов ${res.coupons_updated}`, 'success');
+	  // обновляем статус
+	  document.getElementById('lastCalendarSync').textContent = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+	  // перезагружаем выплаты, если они активны
+	  if (currentDividendSubtab === 'monthly') loadMonthlyDividends();
+	  else loadDividends();
+	} else {
+	  showToast('Ошибка обновления календаря', 'error');
+	}
+  } catch (e) {
+	showToast('Ошибка синхронизации календаря', 'error');
+  }
+}
+	async function syncOperationsManual() {
+	  try {
+		showToast('Синхронизация операций...', 'info');
+		const res = await apiCall('/api/sync', 'POST');
+		if (res.status === 'ok') {
+		  showToast(`Операции синхронизированы (${res.new_operations} новых)`, 'success');
+		  document.getElementById('lastSyncSettings').textContent = new Date(res.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+		  // перезагружаем выплаты, если они активны
+		  if (currentDividendSubtab === 'monthly') loadMonthlyDividends();
+		  else loadDividends();
+		} else {
+		  showToast('Ошибка синхронизации операций', 'error');
+		}
+	  } catch (e) {
+		showToast('Ошибка синхронизации операций', 'error');
+	  }
+	}
+	
 // ============================================================
 // 10. НАСТРОЙКИ: ПЕРЕИМЕНОВАНИЯ
 // ============================================================

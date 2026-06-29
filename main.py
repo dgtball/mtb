@@ -361,7 +361,7 @@ async def api_dividends_monthly(request: Request, year: int = None):
                 # реестр открыт – объявлены
                 declared_before_record[month]["total"] += amount
                 declared_before_record[month]["details"].append({
-                    "date": payment_date,  # показываем дату выплаты в деталях
+                    "date": record_date,  # показываем дату закрытия в деталях
                     "ticker": ticker,
                     "name": name,
                     "amount": amount,

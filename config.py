@@ -1,7 +1,7 @@
 import os
 
 # ---------- ВЕРСИЯ ----------
-VERSION = "3.7.6"
+VERSION = "3.7.7"
 # ---------- ТОКЕНЫ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
 TINKOFF_TOKEN = os.getenv("TITN")
