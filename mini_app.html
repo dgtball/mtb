@@ -59,6 +59,7 @@
 
     .card { background: var(--surface); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; box-shadow: var(--shadow); }
     .card-title { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
+    .card-title-flex { display: flex; justify-content: space-between; align-items: center; }
 
     .summary { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
     .summary-item { display: flex; flex-direction: column; }
@@ -80,18 +81,8 @@
     .form-row button:hover { background: #1976D2; }
     .btn-success { background: var(--positive) !important; }
     .btn-success:hover { background: #388E3C !important; }
-	.btn-primary {
-	  background: var(--accent);
-	  border: none;
-	  color: white;
-	  padding: 8px 16px;
-	  border-radius: 6px;
-	  cursor: pointer;
-	  font-size: 13px;
-	  transition: background 0.2s;
-	  white-space: nowrap;
-	}
-	.btn-primary:hover {background: #1976D2;}	
+    .btn-danger { background: var(--negative) !important; }
+    .btn-danger:hover { background: #d32f2f !important; }
 
     .settings-tabs {
       display: flex;
@@ -114,59 +105,16 @@
     .settings-content { display: none; animation: fadeIn 0.3s ease; }
     .settings-content.active { display: block; }
 
-    .sync-status {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 8px;
-      background: var(--surface);
-      border-radius: var(--radius);
-      padding: 12px 16px;
-      margin-bottom: 16px;
-      font-size: 12px;
-    }
-    .sync-status button {
-      background: var(--accent);
-      border: none;
-      color: white;
-      padding: 6px 14px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 12px;
-    }
+    .sync-status { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; background: var(--surface); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px; font-size: 12px; }
+    .sync-status button { background: var(--accent); border: none; color: white; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; }
     .sync-status button:hover { background: #1976D2; }
 
-    .detail-box {
-      background: var(--surface-light);
-      border-radius: var(--radius);
-      padding: 12px 16px;
-      margin-top: 8px;
-      display: none;
-    }
+    .detail-box { background: var(--surface-light); border-radius: var(--radius); padding: 12px 16px; margin-top: 8px; display: none; }
     .detail-box.visible { display: block; }
     .detail-box h4 { margin: 0 0 8px 0; font-size: 14px; color: var(--text); }
-    .detail-box .close-btn {
-      background: var(--negative);
-      border: none;
-      color: white;
-      padding: 4px 12px;
-      border-radius: 6px;
-      cursor: pointer;
-      float: right;
-      font-size: 11px;
-    }
+    .detail-box .close-btn { background: var(--negative); border: none; color: white; padding: 4px 12px; border-radius: 6px; cursor: pointer; float: right; font-size: 11px; }
     .detail-box .close-btn:hover { opacity: 0.8; }
-    .detail-box .all-btn {
-      background: var(--accent);
-      border: none;
-      color: white;
-      padding: 4px 12px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 11px;
-      margin-left: 8px;
-    }
+    .detail-box .all-btn { background: var(--accent); border: none; color: white; padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 11px; margin-left: 8px; }
     .detail-box .all-btn:hover { background: #1976D2; }
 
     .toast {
@@ -190,7 +138,6 @@
     .toast.success { border-left: 4px solid var(--positive); }
     .toast.error { border-left: 4px solid var(--negative); }
 
-    /* Подвкладки выплат */
     .dividend-subtabs {
       display: flex;
       border-bottom: 1px solid var(--border);
@@ -208,9 +155,15 @@
       color: var(--accent);
       border-bottom-color: var(--accent);
     }
-    .dividend-container {
-      display: block;
-    }
+    .dividend-container { display: block; }
+
+    .sync-btn-group { display: flex; gap: 10px; flex-wrap: wrap; }
+    .sync-btn { padding: 8px 20px; border: none; border-radius: 6px; color: white; font-size: 13px; cursor: pointer; transition: opacity 0.2s; }
+    .sync-btn:hover { opacity: 0.85; }
+    .sync-btn.primary { background: var(--accent); }
+    .sync-btn.success { background: var(--positive); }
+    .toggle-btn { background: var(--surface-light); color: var(--text); border: 1px solid var(--border); padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+    .toggle-btn:hover { background: var(--surface); }
 
     @media (max-width: 480px) {
       body { padding: 8px; }
@@ -264,61 +217,68 @@
     </div>
     <div class="card">
       <div class="card-title">Дивиденды и купоны</div>
-
-      <!-- Подвкладки -->
       <div class="dividend-subtabs">
         <span class="dividend-subtab active" onclick="switchDividendSubtab('yearly')">📊 По годам</span>
         <span class="dividend-subtab" onclick="switchDividendSubtab('monthly')">📅 По месяцам</span>
       </div>
-
-      <!-- Годовой график -->
       <div id="yearly-dividend-container" class="dividend-container">
-        <p id="yearly-hint" style="font-size:11px;color:var(--text-secondary);margin-top:-6px;margin-bottom:12px;">
-          Клик по столбцу — выплаты за год, клик по названию в легенде — все выплаты по активу
-        </p>
+        <p id="yearly-hint" style="font-size:11px;color:var(--text-secondary);margin-top:-6px;margin-bottom:12px;">Клик по столбцу — выплаты за год, клик по названию в легенде — все выплаты по активу</p>
         <div class="chart-container" style="height:300px;"><canvas id="dividendChartYearly"></canvas></div>
         <div id="dividendDetails" class="detail-box"></div>
       </div>
-
-      <!-- Месячный график -->
       <div id="monthly-dividend-container" class="dividend-container" style="display:none;">
         <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap;">
           <label style="color:var(--text-secondary); font-size:12px;">Год: </label>
           <select id="monthly-year-select" onchange="loadMonthlyDividends()" style="background:var(--bg);color:var(--text);border:1px solid var(--border);padding:4px 8px;border-radius:6px;"></select>
         </div>
-        <p id="monthly-hint" style="font-size:11px;color:var(--text-secondary);margin-top:-6px;margin-bottom:12px;">
-          Клик по столбцу — список выплат за месяц
-        </p>
+        <p id="monthly-hint" style="font-size:11px;color:var(--text-secondary);margin-top:-6px;margin-bottom:12px;">Клик по столбцу — список выплат за месяц</p>
         <div class="chart-container" style="height:300px;"><canvas id="dividendChartMonthly"></canvas></div>
         <div id="totalYearLabel" style="margin-top:8px; font-size:14px; font-weight:bold; color:var(--text);"></div>
         <div id="monthlyDetails" class="detail-box"></div>
       </div>
-
     </div>
   </div>
 
   <!-- Настройки -->
   <div id="settings" class="tab-content">
     <div class="settings-tabs">
-      <span class="settings-tab active" onclick="switchSettingsTab('overrides')">Тикеры</span>
-      <span class="settings-tab" onclick="switchSettingsTab('link')">Привязка</span>
-      <span class="settings-tab" onclick="switchSettingsTab('sectors')">Сектора</span>
-	  <span class="settings-tab" onclick="switchSettingsTab('sync')">Синхронизация</span>
+      <span class="settings-tab active" onclick="switchSettingsTab('management')">⚙️ Управление</span>
+      <span class="settings-tab" onclick="switchSettingsTab('link')">🔗 Привязка тикеров</span>
+      <span class="settings-tab" onclick="switchSettingsTab('sectors')">📂 Сектора</span>
     </div>
 
-    <div id="settings-overrides" class="settings-content active">
+    <!-- Подвкладка: Управление (синхронизация + переименования) -->
+    <div id="settings-management" class="settings-content active">
+      <!-- Блок синхронизации -->
       <div class="card">
+        <div class="card-title">🔄 Синхронизация</div>
+        <div class="sync-btn-group">
+          <button onclick="syncOperations()" class="sync-btn primary">Синхронизировать операции</button>
+          <button onclick="syncCalendars()" class="sync-btn success">Синхронизировать календари</button>
+        </div>
+        <div id="syncStatus" style="margin-top:10px; font-size:12px; color:var(--text-secondary);"></div>
+      </div>
+
+      <!-- Блок переименований -->
+      <div class="card">
+        <div class="card-title card-title-flex">
+          <span>✏️ Переименования активов</span>
+          <button onclick="toggleOverridesTable()" class="toggle-btn" id="toggleOverridesBtn">Показать названия</button>
+        </div>
         <div class="form-row">
           <input type="text" id="newTicker" placeholder="Тикер (например, SBER)">
           <input type="text" id="newName" placeholder="Новое название (например, Сбербанк)">
           <button onclick="addOverride()">➕ Добавить</button>
         </div>
-        <div class="table-wrap">
-          <table><thead><tr><th>Тикер</th><th>Название</th><th></th></tr></thead><tbody id="overridesTable"></tbody></table>
+        <div id="overridesTableWrapper" style="display:none;">
+          <div class="table-wrap">
+            <table><thead><tr><th>Тикер</th><th>Название</th><th></th></tr></thead><tbody id="overridesTable"></tbody></table>
+          </div>
         </div>
       </div>
     </div>
 
+    <!-- Подвкладка: Привязка тикеров -->
     <div id="settings-link" class="settings-content">
       <div class="card">
         <p style="font-size:12px;color:var(--text-secondary);margin-top:0;">Операции с неизвестным тикером. Выберите правильный тикер из списка.</p>
@@ -328,6 +288,7 @@
       </div>
     </div>
 
+    <!-- Подвкладка: Сектора -->
     <div id="settings-sectors" class="settings-content">
       <div class="card">
         <p style="font-size:12px;color:var(--text-secondary);margin-top:0;">Редактирование секторов инструментов. Выберите сектор из списка.</p>
@@ -336,27 +297,6 @@
         </div>
       </div>
     </div>
-	<div id="settings-sync" class="settings-content">
-	  <div class="card">
-		<div class="card-title">Синхронизация</div>
-		<div style="display:flex; flex-direction:column; gap:12px;">
-		  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-			<button class="btn-success" onclick="syncCalendars()" style="padding:10px 20px; font-size:14px;">🔄 Обновить календарь выплат</button>
-			<span style="font-size:12px; color:var(--text-secondary);">(дивиденды и купоны из API)</span>
-		  </div>
-		  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-			<button class="btn-primary" onclick="syncOperationsManual()" style="padding:10px 20px; font-size:14px; background:var(--accent); border:none; color:white; border-radius:6px; cursor:pointer;">📥 Обновить операции</button>
-			<span style="font-size:12px; color:var(--text-secondary);">(загрузить новые операции)</span>
-		  </div>
-		  <div style="margin-top:8px; font-size:12px; color:var(--text-secondary);">
-			<span>Последняя синхронизация операций: <span id="lastSyncSettings">—</span></span>
-		  </div>
-		  <div style="font-size:12px; color:var(--text-secondary);">
-			<span>Последнее обновление календаря: <span id="lastCalendarSync">—</span></span>
-		  </div>
-		</div>
-	  </div>
-	</div>
   </div>
 
 <script>
@@ -413,11 +353,11 @@
       if (currentDividendSubtab === 'yearly') loadDividends();
       else loadMonthlyDividends();
     } else if (tab === 'settings') {
-      // По умолчанию показываем переименования (активная подвкладка)
-      loadOverrides();
+      loadManagement();
     }
   }
-   // ============================================================
+
+  // ============================================================
   // 4. ПЕРЕКЛЮЧЕНИЕ ПОДВКЛАДОК НАСТРОЙКИ
   // ============================================================
   function switchSettingsTab(tab) {
@@ -425,21 +365,10 @@
     document.querySelectorAll('.settings-content').forEach(c => c.classList.remove('active'));
     document.querySelector(`.settings-tab[onclick="switchSettingsTab('${tab}')"]`).classList.add('active');
     document.getElementById(`settings-${tab}`).classList.add('active');
-    if (tab === 'overrides') loadOverrides();
-	else if (tab === 'link') loadUntickedOperations();
-	else if (tab === 'sectors') loadSectors();
-	else if (tab === 'sync') {
-	// загружаем статусы синхронизации
-	apiCall('/api/sync-status').then(data => {
-		if (data.last_sync) {
-			document.getElementById('lastSyncSettings').textContent = new Date(data.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
-		}
-	}).catch(() => {});
-	// для календаря – показываем текущее время последней синхронизации (можно хранить в БД, но пока просто текущее)
-	document.getElementById('lastCalendarSync').textContent = '—';
-	// если хотите хранить дату последней синхронизации календаря, можно добавить поле в БД или просто показывать текущее время после вызова
+    if (tab === 'management') loadManagement();
+    else if (tab === 'link') loadUntickedOperations();
+    else if (tab === 'sectors') loadSectors();
   }
-}
 
   // ============================================================
   // 5. ПЕРЕКЛЮЧЕНИЕ ПОДВКЛАДОК ВЫПЛАТ
@@ -450,11 +379,8 @@
     document.querySelector(`.dividend-subtab[onclick="switchDividendSubtab('${subtab}')"]`).classList.add('active');
     document.getElementById('yearly-dividend-container').style.display = (subtab === 'yearly') ? 'block' : 'none';
     document.getElementById('monthly-dividend-container').style.display = (subtab === 'monthly') ? 'block' : 'none';
-    if (subtab === 'yearly') {
-      loadDividends();
-    } else {
-      loadMonthlyDividends();
-    }
+    if (subtab === 'yearly') loadDividends();
+    else loadMonthlyDividends();
   }
 
   // ============================================================
@@ -564,9 +490,7 @@
       const ctx = document.getElementById('dividendChartYearly').getContext('2d');
       if (dividendChartYearly) dividendChartYearly.destroy();
 
-      if (!data.years || data.years.length === 0) {
-        return;
-      }
+      if (!data.years || data.years.length === 0) { return; }
 
       const years = data.years;
       const assetSet = new Set();
@@ -593,10 +517,7 @@
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
-            legend: {
-              position: 'bottom',
-              labels: { color: '#e0e0e0', font: { size: 10 } }
-            },
+            legend: { position: 'bottom', labels: { color: '#e0e0e0', font: { size: 10 } } },
             tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.raw.toLocaleString()}` } }
           },
           scales: {
@@ -762,49 +683,23 @@
         data: {
           labels: data.months,
           datasets: [
-            {
-              label: 'Факт',
-              data: data.actual,
-              backgroundColor: '#2196F3',
-              borderRadius: 4,
-            },
-            {
-              label: 'Объявлены',
-              data: data.declared_before_record,   // ИСПРАВЛЕНО
-              backgroundColor: '#FFC107',
-              borderRadius: 4,
-            },
-            {
-              label: 'Ожидаемые',
-              data: data.declared_after_record,    // ИСПРАВЛЕНО
-              backgroundColor: '#9C27B0',
-              borderRadius: 4,
-            }
+            { label: 'Факт', data: data.actual, backgroundColor: '#2196F3', borderRadius: 4 },
+            { label: 'Объявлены', data: data.declared_before_record, backgroundColor: '#FFC107', borderRadius: 4 },
+            { label: 'Ожидаемые', data: data.declared_after_record, backgroundColor: '#9C27B0', borderRadius: 4 }
           ]
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
-            legend: {
-              position: 'bottom',
-              labels: { color: '#e0e0e0', font: { size: 10 } }
-            },
-            tooltip: {
-              callbacks: {
-                label: function(context) {
-                  return context.dataset.label + ': ' + context.raw.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ₽';
-                }
-              }
-            },
+            legend: { position: 'bottom', labels: { color: '#e0e0e0', font: { size: 10 } } },
+            tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.raw.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2})}` } },
             datalabels: {
               anchor: 'end',
               align: 'top',
               color: '#e0e0e0',
               font: { weight: 'bold', size: 9 },
-              formatter: function(value) {
-                return value > 0 ? value.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '';
-              }
+              formatter: value => value > 0 ? value.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : ''
             }
           },
           scales: {
@@ -820,21 +715,19 @@
               const declaredBeforeDetails = data.details_declared_before[monthNum] || [];
               const declaredAfterDetails = data.details_declared_after[monthNum] || [];
               const allDetails = [...actualDetails, ...declaredBeforeDetails, ...declaredAfterDetails];
-              if (allDetails.length > 0) {
-                showMonthlyDetails(month, allDetails);
-              }
+              if (allDetails.length > 0) showMonthlyDetails(month, allDetails);
             }
           }
         },
         plugins: [ChartDataLabels]
       });
 
-		const totalLabel = document.getElementById('totalYearLabel');
-		totalLabel.style.display = 'block';
-		totalLabel.textContent = 
-		  `💰 Итого за ${year}: факт: ${data.total_actual.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2})} , ` +
-		  `объявленны: ${data.total_before.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2})}, ` +
-		  `ожидаем: ${data.total_after.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+      const totalLabel = document.getElementById('totalYearLabel');
+      totalLabel.style.display = 'block';
+      totalLabel.textContent = 
+        `💰 Итого за ${year}: фактические ${data.total_actual.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2})} ₽, ` +
+        `объявленные ${data.total_before.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2})} ₽, ` +
+        `ожидаемые ${data.total_after.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2})} ₽`;
 
       const syncStatus = await apiCall('/api/sync-status');
       if (syncStatus.last_sync) {
@@ -847,99 +740,96 @@
   }
 
   function showMonthlyDetails(month, details) {
-  const container = document.getElementById('monthlyDetails');
-  let html = `<h4>${month}</h4>`;
-  html += `<button class="close-btn" onclick="document.getElementById('monthlyDetails').classList.remove('visible')">✕</button>`;
-  html += `<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Актив</th><th>Сумма</th></tr></thead><tbody>`;
-  
-  details.sort((a, b) => {
-    if (a.date && b.date) return new Date(b.date) - new Date(a.date);
-    return 0;
-  });
-  
-  details.forEach(d => {
-    const dateStr = d.date ? new Date(d.date).toLocaleDateString() : '—';
-    let color = '';
-    let emoji = '';
+    const container = document.getElementById('monthlyDetails');
+    let html = `<h4>${month}</h4>`;
+    html += `<button class="close-btn" onclick="document.getElementById('monthlyDetails').classList.remove('visible')">✕</button>`;
+    html += `<div class="table-wrap"><table><thead><tr><th>Дата (реестра)</th><th>Актив</th><th>Сумма</th></tr></thead><tbody>`;
     
-    if (d.type === 'actual') {
-      color = 'var(--accent)';
-      emoji = '💰 ';
-    } else if (d.type === 'declared_dividend_before' || d.type === 'declared_coupon_before') {
-      color = '#FFC107';
-      emoji = '📢 ';
-    } else if (d.type === 'declared_dividend_after' || d.type === 'declared_coupon_after') {
-      color = '#9C27B0';
-      emoji = '⏳ ';
-    } else {
-      color = 'var(--text-secondary)';
-      emoji = '❓ ';
-    }
+    details.sort((a, b) => {
+      if (a.date && b.date) return new Date(b.date) - new Date(a.date);
+      return 0;
+    });
     
-    const formattedAmount = d.amount.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-    html += `<tr><td>${dateStr}</td><td>${d.name}</td><td style="color:${color}">${emoji}${formattedAmount}</td></tr>`;
-  });
-  
-  html += '</tbody></table></div>';
-  container.innerHTML = html;
-  container.classList.add('visible');
-}
+    details.forEach(d => {
+      const dateStr = d.date ? new Date(d.date).toLocaleDateString() : '—';
+      let color = '';
+      let emoji = '';
+      
+      if (d.type === 'actual') {
+        color = 'var(--accent)';
+        emoji = '💰 ';
+      } else if (d.type === 'declared_dividend_before' || d.type === 'declared_coupon_before') {
+        color = '#FFC107';
+        emoji = '📢 ';
+      } else if (d.type === 'declared_dividend_after' || d.type === 'declared_coupon_after') {
+        color = '#9C27B0';
+        emoji = '⏳ ';
+      } else {
+        color = 'var(--text-secondary)';
+        emoji = '❓ ';
+      }
+      
+      const formattedAmount = d.amount.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+      html += `<tr><td>${dateStr}</td><td>${d.name}</td><td style="color:${color}">${emoji}${formattedAmount}</td></tr>`;
+    });
+    
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+    container.classList.add('visible');
+  }
 
   // ============================================================
   // 9. СИНХРОНИЗАЦИЯ
   // ============================================================
   async function syncOperations() {
-	try {
-	  const res = await apiCall('/api/sync', 'POST');
-	  if (res.last_sync) {
-		document.getElementById('lastSync').textContent = new Date(res.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
-	  }
-	  if (currentDividendSubtab === 'yearly') loadDividends();
-	  else loadMonthlyDividends();
-	  showToast('Синхронизация выполнена успешно', 'success');
-	} catch (e) {
-	  showToast('Ошибка синхронизации', 'error');
-	}
+    try {
+      const res = await apiCall('/api/sync', 'POST');
+      showToast(`Синхронизация операций выполнена. Добавлено ${res.new_operations} записей.`, 'success');
+      document.getElementById('syncStatus').textContent = `Последняя синхронизация операций: ${new Date(res.last_sync).toLocaleString('ru-RU')}`;
+      if (currentDividendSubtab === 'yearly') loadDividends();
+      else loadMonthlyDividends();
+    } catch(e) {
+      showToast('Ошибка синхронизации операций', 'error');
+    }
   }
+
   async function syncCalendars() {
-  try {
-	showToast('Обновление календаря...', 'info');
-	const res = await apiCall('/api/sync-calendars', 'POST');
-	if (res.status === 'ok') {
-	  showToast(`Календарь обновлён: дивидендов ${res.dividends_updated}, купонов ${res.coupons_updated}`, 'success');
-	  // обновляем статус
-	  document.getElementById('lastCalendarSync').textContent = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
-	  // перезагружаем выплаты, если они активны
-	  if (currentDividendSubtab === 'monthly') loadMonthlyDividends();
-	  else loadDividends();
-	} else {
-	  showToast('Ошибка обновления календаря', 'error');
-	}
-  } catch (e) {
-	showToast('Ошибка синхронизации календаря', 'error');
+    try {
+      const res = await apiCall('/api/sync-calendars', 'POST');
+      showToast(`Синхронизация календарей выполнена. Дивидендов: ${res.dividends_updated}, купонов: ${res.coupons_updated}`, 'success');
+      document.getElementById('syncStatus').textContent = `Последняя синхронизация календарей: ${new Date().toLocaleString('ru-RU')}`;
+      if (currentDividendSubtab === 'yearly') loadDividends();
+      else loadMonthlyDividends();
+    } catch(e) {
+      showToast('Ошибка синхронизации календарей', 'error');
+    }
   }
-}
-	async function syncOperationsManual() {
-	  try {
-		showToast('Синхронизация операций...', 'info');
-		const res = await apiCall('/api/sync', 'POST');
-		if (res.status === 'ok') {
-		  showToast(`Операции синхронизированы (${res.new_operations} новых)`, 'success');
-		  document.getElementById('lastSyncSettings').textContent = new Date(res.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
-		  // перезагружаем выплаты, если они активны
-		  if (currentDividendSubtab === 'monthly') loadMonthlyDividends();
-		  else loadDividends();
-		} else {
-		  showToast('Ошибка синхронизации операций', 'error');
-		}
-	  } catch (e) {
-		showToast('Ошибка синхронизации операций', 'error');
-	  }
-	}
-	
-// ============================================================
-// 10. НАСТРОЙКИ: ПЕРЕИМЕНОВАНИЯ
-// ============================================================
+
+  // ============================================================
+  // 10. НАСТРОЙКИ: УПРАВЛЕНИЕ (переименования)
+  // ============================================================
+  function toggleOverridesTable() {
+    const wrapper = document.getElementById('overridesTableWrapper');
+    const btn = document.getElementById('toggleOverridesBtn');
+    if (wrapper.style.display === 'none') {
+      wrapper.style.display = 'block';
+      btn.textContent = 'Скрыть названия';
+      loadOverrides();
+    } else {
+      wrapper.style.display = 'none';
+      btn.textContent = 'Показать названия';
+    }
+  }
+
+  async function loadManagement() {
+    try {
+      const status = await apiCall('/api/sync-status');
+      if (status.last_sync) {
+        document.getElementById('syncStatus').textContent = `Последняя синхронизация операций: ${new Date(status.last_sync).toLocaleString('ru-RU')}`;
+      }
+    } catch(e) {}
+  }
+
   async function loadOverrides() {
     try {
       const data = await apiCall('/api/overrides');
@@ -947,7 +837,11 @@
       tbody.innerHTML = '';
       data.forEach(o => {
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${o.ticker}</td><td>${o.name}</td><td><button onclick="removeOverride('${o.ticker}')">Удалить</button></td>`;
+        tr.innerHTML = `
+          <td>${o.ticker}</td>
+          <td>${o.name}</td>
+          <td><button class="btn-danger" onclick="removeOverride('${o.ticker}')" style="padding:4px 10px; border:none; border-radius:4px; color:white; cursor:pointer;">Удалить</button></td>
+        `;
         tbody.appendChild(tr);
       });
     } catch (e) {
@@ -964,7 +858,9 @@
       await apiCall('/api/override', 'POST', { action: 'add', ticker, display_name: name });
       document.getElementById('newTicker').value = '';
       document.getElementById('newName').value = '';
-      loadOverrides();
+      if (document.getElementById('overridesTableWrapper').style.display !== 'none') {
+        loadOverrides();
+      }
       showToast('Переименование добавлено', 'success');
     } catch (e) {
       showToast('Ошибка добавления', 'error');
@@ -975,13 +871,18 @@
     if (!confirm(`Удалить переименование для ${ticker}?`)) return;
     try {
       await apiCall('/api/override', 'POST', { action: 'remove', ticker });
-      loadOverrides();
+      if (document.getElementById('overridesTableWrapper').style.display !== 'none') {
+        loadOverrides();
+      }
       showToast('Переименование удалено', 'success');
     } catch (e) {
       showToast('Ошибка удаления', 'error');
     }
   }
 
+  // ============================================================
+  // 11. НАСТРОЙКИ: ПРИВЯЗКА ТИКЕРОВ
+  // ============================================================
   async function loadUntickedOperations() {
     try {
       const data = await apiCall('/api/operations/unticked');
@@ -996,43 +897,18 @@
       allTickersList = tickers;
       operations.forEach(op => {
         const tr = document.createElement('tr');
-        const tdDate = document.createElement('td');
-        tdDate.textContent = new Date(op.date).toLocaleDateString();
-        tr.appendChild(tdDate);
-        const tdPayment = document.createElement('td');
-        tdPayment.textContent = op.payment.toFixed(2);
-        tr.appendChild(tdPayment);
-        const tdCurrent = document.createElement('td');
-        tdCurrent.textContent = op.ticker || '—';
-        tr.appendChild(tdCurrent);
-        const tdSelect = document.createElement('td');
-        const select = document.createElement('select');
-        select.className = 'ticker-select';
-        select.dataset.opid = op.id;
-        const defaultOpt = document.createElement('option');
-        defaultOpt.value = '';
-        defaultOpt.textContent = 'Выберите';
-        select.appendChild(defaultOpt);
-        tickers.forEach(t => {
-          const opt = document.createElement('option');
-          opt.value = t;
-          opt.textContent = t;
-          select.appendChild(opt);
-        });
-        tdSelect.appendChild(select);
-        tr.appendChild(tdSelect);
-        const tdAction = document.createElement('td');
-        const btn = document.createElement('button');
-        btn.className = 'btn-success';
-        btn.textContent = 'Привязать';
-        btn.style.padding = '4px 10px';
-        btn.style.border = 'none';
-        btn.style.borderRadius = '6px';
-        btn.style.cursor = 'pointer';
-        btn.style.fontSize = '10px';
-        btn.addEventListener('click', () => linkTicker(op.id));
-        tdAction.appendChild(btn);
-        tr.appendChild(tdAction);
+        tr.innerHTML = `
+          <td>${new Date(op.date).toLocaleDateString()}</td>
+          <td>${op.payment.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+          <td>${op.ticker || '—'}</td>
+          <td>
+            <select class="ticker-select" data-opid="${op.id}">
+              <option value="">Выберите</option>
+              ${tickers.map(t => `<option value="${t}">${t}</option>`).join('')}
+            </select>
+          </td>
+          <td><button class="btn-success" onclick="linkTicker('${op.id}')" style="padding:4px 10px; border:none; border-radius:4px; color:white; cursor:pointer;">Привязать</button></td>
+        `;
         tbody.appendChild(tr);
       });
     } catch (e) {
@@ -1056,6 +932,9 @@
     }
   }
 
+  // ============================================================
+  // 12. НАСТРОЙКИ: СЕКТОРА
+  // ============================================================
   async function loadSectors() {
     try {
       if (sectorsList.length === 0) {
@@ -1066,37 +945,16 @@
       tbody.innerHTML = '';
       data.forEach(inst => {
         const tr = document.createElement('tr');
-        const tdTicker = document.createElement('td');
-        tdTicker.textContent = inst.ticker;
-        tr.appendChild(tdTicker);
-        const tdName = document.createElement('td');
-        tdName.textContent = inst.name || inst.ticker;
-        tr.appendChild(tdName);
-        const tdSector = document.createElement('td');
-        const select = document.createElement('select');
-        select.className = 'sector-select';
-        select.dataset.ticker = inst.ticker;
-        sectorsList.forEach(s => {
-          const opt = document.createElement('option');
-          opt.value = s;
-          opt.textContent = s;
-          if (s === (inst.sector || 'Прочие')) opt.selected = true;
-          select.appendChild(opt);
-        });
-        tdSector.appendChild(select);
-        tr.appendChild(tdSector);
-        const tdAction = document.createElement('td');
-        const btn = document.createElement('button');
-        btn.className = 'btn-success';
-        btn.textContent = 'Сохранить';
-        btn.style.padding = '4px 10px';
-        btn.style.border = 'none';
-        btn.style.borderRadius = '6px';
-        btn.style.cursor = 'pointer';
-        btn.style.fontSize = '10px';
-        btn.addEventListener('click', () => updateSector(inst.ticker));
-        tdAction.appendChild(btn);
-        tr.appendChild(tdAction);
+        tr.innerHTML = `
+          <td>${inst.ticker}</td>
+          <td>${inst.name || inst.ticker}</td>
+          <td>
+            <select class="sector-select" data-ticker="${inst.ticker}">
+              ${sectorsList.map(s => `<option value="${s}" ${s === (inst.sector || 'Прочие') ? 'selected' : ''}>${s}</option>`).join('')}
+            </select>
+          </td>
+          <td><button class="btn-success" onclick="updateSector('${inst.ticker}')" style="padding:4px 10px; border:none; border-radius:4px; color:white; cursor:pointer;">Сохранить</button></td>
+        `;
         tbody.appendChild(tr);
       });
     } catch (e) {
@@ -1118,15 +976,15 @@
     }
   }
 
-// ============================================================
-// 11. ИНИЦИАЛИЗАЦИЯ
-// ============================================================
+  // ============================================================
+  // 13. ИНИЦИАЛИЗАЦИЯ
+  // ============================================================
   window.onload = function() {
     loadPortfolio();
     switchDividendSubtab('yearly');
     apiCall('/api/sync-status').then(data => {
       if (data.last_sync) {
-        document.getElementById('lastSync').textContent = new Date(data.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+        document.getElementById('syncStatus').textContent = `Последняя синхронизация операций: ${new Date(data.last_sync).toLocaleString('ru-RU')}`;
       }
     }).catch(() => {});
   };
