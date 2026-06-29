@@ -25,14 +25,9 @@ async def get_portfolio_with_details(http_session) -> Optional[Dict[str, Any]]:
                 secid = row['SECID']
                 last = row['LAST']
                 open_price = row['OPEN']
-                # Защита от деления на ноль и некорректных значений
-                if isinstance(last, (int, float)) and isinstance(open_price, (int, float)):
-                    if open_price != 0 and pd.notna(open_price) and pd.notna(last):
-                        change = ((last - open_price) / open_price) * 100
-                        ticker_change[secid] = change
-                    else:
-                        # Если цена открытия невалидна, можно оставить change = 0 или пропустить
-                        pass
+                if isinstance(last, (int, float)) and isinstance(open_price, (int, float)) and open_price != 0:
+                    change = ((last - open_price) / open_price) * 100
+                    ticker_change[secid] = change
 
         total_amount = data["total_amount"]
         positions = []
