@@ -98,6 +98,16 @@ async def refresh_coupon_calendar():
         logging.info(f"✅ Календарь купонов обновлён для {len(data)} облигаций")
     except Exception as e:
         logging.error(f"❌ Ошибка обновления календаря купонов: {e}")
+        
+# ---------- ФУНКЦИЯ прогнозирования ---------
+async def refresh_forecasts():
+    logging.info("🔄 Обновление прогнозов дивидендов")
+    try:
+        from services.forecast import calculate_and_update_forecasts
+        await calculate_and_update_forecasts(_http_session)
+        logging.info("✅ Прогнозы дивидендов обновлены")
+    except Exception as e:
+        logging.error(f"❌ Ошибка обновления прогнозов: {e}")
 
 # ---------- ОСНОВНОЙ ЦИКЛ ПЛАНИРОВЩИКА ----------
 async def scheduler_loop():
@@ -215,6 +225,10 @@ async def scheduler_loop():
             if hour == 3 and minute == 0 and not _instruments_synced:
                 _instruments_synced = True
                 asyncio.create_task(refresh_instruments_cache())
+                
+            # Ежедневное обновление кэша инструментов в 03:00 (один раз)
+            if hour == 4 and minute == 0:
+                asyncio.create_task(refresh_forecasts())
 
             # Пятница после 23:50
             if weekday == 4 and hour == 23 and minute >= 50:

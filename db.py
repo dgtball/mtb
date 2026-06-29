@@ -38,7 +38,6 @@ def init_db():
             UNIQUE(ticker, declared_date, payment_date))''')
         c.execute('CREATE INDEX IF NOT EXISTS idx_dividend_calendar_ticker ON dividend_calendar(ticker)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_dividend_calendar_payment_date ON dividend_calendar(payment_date)')
-        
         # Новая таблица для календаря купонов
         c.execute('''CREATE TABLE IF NOT EXISTS coupon_calendar (
             id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT NOT NULL,
@@ -46,7 +45,18 @@ def init_db():
             coupon_currency TEXT, record_date TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(ticker, coupon_date))''')
         c.execute('CREATE INDEX IF NOT EXISTS idx_coupon_calendar_ticker ON coupon_calendar(ticker)')
-        c.execute('CREATE INDEX IF NOT EXISTS idx_coupon_calendar_coupon_date ON coupon_calendar(coupon_date)')      
+        c.execute('CREATE INDEX IF NOT EXISTS idx_coupon_calendar_coupon_date ON coupon_calendar(coupon_date)')
+        # Новая таблица прогнозные выплаты
+        c.execute('''CREATE TABLE IF NOT EXISTS dividend_forecast (
+            ticker TEXT PRIMARY KEY,
+            forecast_amount REAL,
+            forecast_month INTEGER,
+            forecast_year INTEGER,
+            confidence_score REAL DEFAULT 1.0,
+            method TEXT DEFAULT 'historical_cagr',
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_forecast_ticker ON dividend_forecast(ticker)')        
         conn.commit()
     logging.info(f"✅ База данных инициализирована: {DB_PATH}") 
     seed_overrides()
@@ -420,3 +430,29 @@ def get_sector(ticker: str) -> str:
         c.execute("SELECT sector_name FROM sectors WHERE ticker = ?", (ticker,))
         row = c.fetchone()
     return row[0] if row else "Прочие"
+    
+# ===== ПРОГНОЗ ДИВИДЕНДОВ =====
+def upsert_dividend_forecast(ticker: str, forecast_amount: float, forecast_month: int, forecast_year: int, confidence_score: float = 1.0, method: str = 'historical_cagr'):
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute('''
+            INSERT OR REPLACE INTO dividend_forecast 
+            (ticker, forecast_amount, forecast_month, forecast_year, confidence_score, method, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ''', (ticker, forecast_amount, forecast_month, forecast_year, confidence_score, method))
+        conn.commit()
+
+def get_dividend_forecast(ticker: str = None):
+    """Получить прогноз для одного или всех тикеров."""
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        if ticker:
+            c.execute("SELECT ticker, forecast_amount, forecast_month, forecast_year, confidence_score, method, updated_at FROM dividend_forecast WHERE ticker = ?", (ticker,))
+            row = c.fetchone()
+            if row:
+                return {"ticker": row[0], "amount": row[1], "month": row[2], "year": row[3], "confidence": row[4], "method": row[5], "updated_at": row[6]}
+            return None
+        else:
+            c.execute("SELECT ticker, forecast_amount, forecast_month, forecast_year, confidence_score, method, updated_at FROM dividend_forecast")
+            rows = c.fetchall()
+            return [{"ticker": r[0], "amount": r[1], "month": r[2], "year": r[3], "confidence": r[4], "method": r[5], "updated_at": r[6]} for r in rows]

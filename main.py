@@ -428,6 +428,30 @@ async def api_dividends_monthly(request: Request, year: int = None):
                     "record_date": record_date,
                     "payment_date": coupon_date
                 })
+        # ---------- 6. Прогнозные выплаты (из dividend_forecast) ----------
+        c.execute("""
+            SELECT ticker, forecast_amount, forecast_month, forecast_year
+            FROM dividend_forecast
+            WHERE forecast_year = ? AND forecast_amount > 0
+        """, (str(year),))
+        forecast_rows = c.fetchall()
+
+        forecast_by_month = {m: {"total": 0.0, "details": []} for m in range(1, 13)}
+
+        for row in forecast_rows:
+            ticker = row[0]
+            amount = row[1]
+            month = row[2]
+            if amount > 0:
+                name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
+                forecast_by_month[month]["total"] += amount
+                forecast_by_month[month]["details"].append({
+                    "date": f"{year}-{month:02d}-01",  # приблизительная дата
+                    "ticker": ticker,
+                    "name": name,
+                    "amount": amount,
+                    "type": "forecast"
+                })
 
         # ---------- 5. Доступные годы (из операций) ----------
         c.execute("SELECT DISTINCT substr(date, 1, 4) FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date DESC")
@@ -647,6 +671,17 @@ async def portfolio_updater(http_session):
             await asyncio.sleep(60)
 
 # ---------- Объявленные дивиденды и купоны ----------
+@app.post("/api/refresh-forecasts") # Временный 
+async def refresh_forecasts_manual(request: Request):
+    if not check_token(request):
+        raise HTTPException(403)
+    try:
+        from services.forecast import calculate_and_update_forecasts
+        await calculate_and_update_forecasts(bot_session)
+        return JSONResponse({"status": "ok"})
+    except Exception as e:
+        logging.error(f"Forecast refresh error: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/api/debug-fetch-dividends")
 async def debug_fetch_dividends(request: Request):
