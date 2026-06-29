@@ -280,6 +280,22 @@ async def api_dividends_monthly(request: Request, year: int = None):
         if year is None:
             year = datetime.datetime.now().year
 
+        # Инициализация переменных заранее (чтобы избежать UnboundLocalError)
+        months_labels = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек']
+        years = []
+        actual_data = [0.0] * 12
+        before_data = [0.0] * 12
+        after_data = [0.0] * 12
+        forecast_data = [0.0] * 12
+        total_actual = 0.0
+        total_before = 0.0
+        total_after = 0.0
+        total_forecast = 0.0
+        details_actual = {m: [] for m in range(1, 13)}
+        details_declared_before = {m: [] for m in range(1, 13)}
+        details_declared_after = {m: [] for m in range(1, 13)}
+        details_forecast = {m: [] for m in range(1, 13)}
+
         # ---------- 1. Получаем портфель с количествами ----------
         from tinkoff_api import get_portfolio_summary
         portfolio = await get_portfolio_summary(bot_session)
@@ -329,7 +345,6 @@ async def api_dividends_monthly(request: Request, year: int = None):
             })
 
         # ---------- 3. Объявленные дивиденды (из календаря) ----------
-        # Только будущие выплаты (payment_date > сегодня)
         c.execute("""
             SELECT ticker, payment_date, record_date, dividend_net
             FROM dividend_calendar
@@ -348,20 +363,16 @@ async def api_dividends_monthly(request: Request, year: int = None):
             dividend_per_share = row[3]
             if not payment_date or not dividend_per_share:
                 continue
-            # Получаем количество акций из портфеля
             quantity = portfolio_quantities.get(ticker, 0)
             if quantity == 0:
-                # Если акции нет в портфеле – пропускаем
                 continue
             amount = dividend_per_share * quantity
-            month = int(record_date[5:7])  # группируем по record_date
+            month = int(record_date[5:7]) if record_date else int(payment_date[5:7])
             name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
-            # Определяем статус
             if record_date and record_date >= datetime.date.today().isoformat():
-                # реестр открыт – объявлены
                 declared_before_record[month]["total"] += amount
                 declared_before_record[month]["details"].append({
-                    "date": record_date,  # показываем дату закрытия в деталях
+                    "date": payment_date,
                     "ticker": ticker,
                     "name": name,
                     "amount": amount,
@@ -370,7 +381,6 @@ async def api_dividends_monthly(request: Request, year: int = None):
                     "payment_date": payment_date
                 })
             else:
-                # реестр закрыт – ожидаемые
                 declared_after_record[month]["total"] += amount
                 declared_after_record[month]["details"].append({
                     "date": payment_date,
@@ -393,9 +403,9 @@ async def api_dividends_monthly(request: Request, year: int = None):
 
         for row in declared_coupons:
             ticker = row[0]
-            coupon_date = row[1]      # payment_date (дата выплаты)
+            coupon_date = row[1]
             coupon_per_bond = row[2]
-            record_date = row[3]      # fixDate – дата фиксации реестра
+            record_date = row[3]
             if not coupon_date or not coupon_per_bond:
                 continue
             quantity = portfolio_quantities.get(ticker, 0)
@@ -404,8 +414,6 @@ async def api_dividends_monthly(request: Request, year: int = None):
             amount = coupon_per_bond * quantity
             month = int(record_date[5:7]) if record_date else int(coupon_date[5:7])
             name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
-            # Купоны показываем как "Объявлены" (жёлтый), так как у них нет разделения по реестру (или используем record_date)
-            # Для единообразия будем считать, что если record_date >= сегодня – объявлены, иначе ожидаемые
             if record_date and record_date >= datetime.date.today().isoformat():
                 declared_before_record[month]["total"] += amount
                 declared_before_record[month]["details"].append({
@@ -428,6 +436,7 @@ async def api_dividends_monthly(request: Request, year: int = None):
                     "record_date": record_date,
                     "payment_date": coupon_date
                 })
+
         # ---------- 5. Прогнозные выплаты (из dividend_forecast) ----------
         c.execute("""
             SELECT ticker, forecast_amount, forecast_month, forecast_year
@@ -437,7 +446,6 @@ async def api_dividends_monthly(request: Request, year: int = None):
         forecast_rows = c.fetchall()
 
         forecast_by_month = {m: {"total": 0.0, "details": []} for m in range(1, 13)}
-
         for row in forecast_rows:
             ticker = row[0]
             amount = row[1]
@@ -446,16 +454,34 @@ async def api_dividends_monthly(request: Request, year: int = None):
                 name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
                 forecast_by_month[month]["total"] += amount
                 forecast_by_month[month]["details"].append({
-                    "date": f"{year}-{month:02d}-01",  # приблизительная дата
+                    "date": f"{year}-{month:02d}-01",
                     "ticker": ticker,
                     "name": name,
                     "amount": amount,
                     "type": "forecast"
                 })
 
-        # Затем в ответ добавьте:
+        # ---------- 6. Доступные годы (из операций) ----------
+        c.execute("SELECT DISTINCT substr(date, 1, 4) FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date DESC")
+        years_rows = c.fetchall()
+        years = [int(row[0]) for row in years_rows if row[0] is not None]
+        conn.close()
+
+        # Формируем данные для ответа
+        actual_data = [actual_by_month[m]["total"] for m in range(1, 13)]
+        before_data = [declared_before_record[m]["total"] for m in range(1, 13)]
+        after_data = [declared_after_record[m]["total"] for m in range(1, 13)]
         forecast_data = [forecast_by_month[m]["total"] for m in range(1, 13)]
+
+        total_actual = sum(actual_data)
+        total_before = sum(before_data)
+        total_after = sum(after_data)
         total_forecast = sum(forecast_data)
+
+        details_actual = {m: actual_by_month[m]["details"] for m in range(1, 13)}
+        details_declared_before = {m: declared_before_record[m]["details"] for m in range(1, 13)}
+        details_declared_after = {m: declared_after_record[m]["details"] for m in range(1, 13)}
+        details_forecast = {m: forecast_by_month[m]["details"] for m in range(1, 13)}
 
         return JSONResponse({
             "year": year,
@@ -468,40 +494,10 @@ async def api_dividends_monthly(request: Request, year: int = None):
             "total_before": total_before,
             "total_after": total_after,
             "total_forecast": total_forecast,
-            "details_actual": {m: actual_by_month[m]["details"] for m in range(1, 13)},
-            "details_declared_before": {m: declared_before_record[m]["details"] for m in range(1, 13)},
-            "details_declared_after": {m: declared_after_record[m]["details"] for m in range(1, 13)},
-            "details_forecast": {m: forecast_by_month[m]["details"] for m in range(1, 13)},
-            "available_years": years
-        })
-
-        # ---------- 5. Доступные годы (из операций) ----------
-        c.execute("SELECT DISTINCT substr(date, 1, 4) FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date DESC")
-        years_rows = c.fetchall()
-        years = [int(row[0]) for row in years_rows if row[0] is not None]
-        conn.close()
-
-        months_labels = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек']
-        actual_data = [actual_by_month[m]["total"] for m in range(1, 13)]
-        before_data = [declared_before_record[m]["total"] for m in range(1, 13)]
-        after_data = [declared_after_record[m]["total"] for m in range(1, 13)]
-
-        total_actual = sum(actual_data)
-        total_before = sum(before_data)
-        total_after = sum(after_data)
-
-        return JSONResponse({
-            "year": year,
-            "months": months_labels,
-            "actual": actual_data,
-            "declared_before_record": before_data,
-            "declared_after_record": after_data,
-            "total_actual": total_actual,
-            "total_before": total_before,
-            "total_after": total_after,
-            "details_actual": {m: actual_by_month[m]["details"] for m in range(1, 13)},
-            "details_declared_before": {m: declared_before_record[m]["details"] for m in range(1, 13)},
-            "details_declared_after": {m: declared_after_record[m]["details"] for m in range(1, 13)},
+            "details_actual": details_actual,
+            "details_declared_before": details_declared_before,
+            "details_declared_after": details_declared_after,
+            "details_forecast": details_forecast,
             "available_years": years
         })
     except Exception as e:
