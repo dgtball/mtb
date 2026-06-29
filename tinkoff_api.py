@@ -311,14 +311,17 @@ async def get_dividends_for_instrument(http_session, figi: str):
     return data.get("dividends", [])
     
 async def get_coupons_for_instrument(http_session, figi: str):
-    """
-    Получить календарь купонных выплат по облигации.
-    Возвращает список объявленных купонов.
-    """
     endpoint = "tinkoff.public.invest.api.contract.v1.InstrumentsService/GetBondCoupons"
     params = {"figi": figi}
     data = await tinkoff_api_request(http_session, "POST", endpoint, params=params)
-    return data.get("events", [])  # в ответе поле events, содержащее массив купонов
+    coupons = data.get("events", [])
+    logging.info(f"Получено {len(coupons)} купонов для FIGI {figi}")
+    if coupons:
+        # Логируем первую и последнюю дату для проверки
+        first_date = coupons[0].get("couponDate") if coupons else None
+        last_date = coupons[-1].get("couponDate") if coupons else None
+        logging.info(f"Первый купон: {first_date}, последний: {last_date}")
+    return coupons
 
 """Получить дивидендные календари для всех акций/облигаций в портфеле."""    
 async def fetch_all_dividends(http_session):
