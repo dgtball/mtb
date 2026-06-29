@@ -12,12 +12,16 @@ from config import MY_CHAT_ID, TOP_N, TINKOFF_TOKEN
 from services.tops import get_top_data
 
 # ---------- Глобальные переменные ----------
-
 _bot = None
 _http_session = None
 _active_day_message_id = None
 _snapshot_saved_for_date = None
-portfolio_update_allowed = False # Новый флаг: разрешено ли автообновление портфеля (только днём)
+portfolio_update_allowed = False
+
+# Флаги однократного выполнения задач (сбрасываются в полночь)
+_dividend_calendar_synced = False
+_coupon_calendar_synced = False
+_instruments_synced = False
 
 def set_bot(bot: Bot):
     global _bot
@@ -98,6 +102,8 @@ async def refresh_coupon_calendar():
 # ---------- ОСНОВНОЙ ЦИКЛ ПЛАНИРОВЩИКА ----------
 async def scheduler_loop():
     global _active_day_message_id, portfolio_update_allowed, _snapshot_saved_for_date
+    global _dividend_calendar_synced, _coupon_calendar_synced, _instruments_synced
+
     last_week_sent_date = None
     last_month_sent_date = None
     day_update_interval = 30
@@ -112,6 +118,13 @@ async def scheduler_loop():
             hour = now.hour
             minute = now.minute
 
+            # Сброс флагов в полночь
+            if hour == 0 and minute == 0:
+                _dividend_calendar_synced = False
+                _coupon_calendar_synced = False
+                _instruments_synced = False
+                _snapshot_saved_for_date = None  # сброс для снэпшота
+
             # Вечерний снэпшот портфеля (после 23:50) – только один раз за день
             if hour == 23 and minute >= 50:
                 tomorrow = today + datetime.timedelta(days=1)
@@ -122,8 +135,8 @@ async def scheduler_loop():
                         db.set_daily_snapshot(tomorrow_str, current)
                         _snapshot_saved_for_date = tomorrow_str
                         logging.info(f"Снэпшот портфеля сохранён на {tomorrow_str}: {current:.2f}")
-                # Не спать, продолжить цикл – но можно сделать небольшой sleep, чтобы не проверять каждые 5 секунд
-                await asyncio.sleep(60)  # после 23:50 проверяем раз в минуту
+                # После проверки засыпаем на минуту, чтобы не спамить
+                await asyncio.sleep(60)
                 continue
 
             # Окно 06:50 – 00:50 МСК
@@ -180,7 +193,7 @@ async def scheduler_loop():
                     continue
             else:
                 portfolio_update_allowed = False
-                _active_day_message_id = None # сбрасываем, чтобы утром отправить новый топ, но старый не трогаем
+                _active_day_message_id = None
 
             # Ежедневная синхронизация операций в 10:00
             if hour == 10 and minute == 0:
@@ -188,17 +201,20 @@ async def scheduler_loop():
                     from tinkoff_api import sync_operations
                     asyncio.create_task(sync_operations(_http_session))
 
-            # Ежедневное обновление кэша инструментов в 03:00
-            if hour == 3 and minute == 0:
-                asyncio.create_task(refresh_instruments_cache())
-            
-            # Ежедневное обновление календаря купонов в 02:30    
-            if hour == 2 and minute == 30:
-                asyncio.create_task(refresh_coupon_calendar())
-                
-            # Ежедневное обновление календаря дивидендов в 02:00    
-            if hour == 2 and minute == 00:
+            # Ежедневное обновление календаря дивидендов в 02:00 (один раз)
+            if hour == 2 and minute == 0 and not _dividend_calendar_synced:
+                _dividend_calendar_synced = True
                 asyncio.create_task(refresh_dividend_calendar())
+
+            # Ежедневное обновление календаря купонов в 02:30 (один раз)
+            if hour == 2 and minute == 30 and not _coupon_calendar_synced:
+                _coupon_calendar_synced = True
+                asyncio.create_task(refresh_coupon_calendar())
+
+            # Ежедневное обновление кэша инструментов в 03:00 (один раз)
+            if hour == 3 and minute == 0 and not _instruments_synced:
+                _instruments_synced = True
+                asyncio.create_task(refresh_instruments_cache())
 
             # Пятница после 23:50
             if weekday == 4 and hour == 23 and minute >= 50:
