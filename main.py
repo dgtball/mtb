@@ -273,17 +273,33 @@ async def api_dividends_yearly(request: Request, year: int = None, ticker: str =
 
 @app.get("/api/dividends-monthly")
 async def api_dividends_monthly(request: Request, year: int = None):
+    logging.info(f"Запрос /api/dividends-monthly для года {year}")
     if not check_token(request):
         raise HTTPException(403)
-    logging.info(f"Запрос /api/dividends-monthly для года {year}")  # <-- здесь
     try:
         if year is None:
             year = datetime.datetime.now().year
 
+        # ---------- 1. Получаем портфель с количествами ----------
+        from tinkoff_api import get_portfolio_summary
+        portfolio = await get_portfolio_summary(bot_session)
+        if not portfolio:
+            portfolio_positions = []
+        else:
+            portfolio_positions = portfolio.get("positions", [])
+
+        # Строим словарь {ticker: quantity}
+        portfolio_quantities = {}
+        for pos in portfolio_positions:
+            ticker = pos["ticker"]
+            quantity = pos["quantity"]
+            if ticker and quantity > 0:
+                portfolio_quantities[ticker] = quantity
+
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
 
-        # ---------- 1. Фактические выплаты (из операций) ----------
+        # ---------- 2. Фактические выплаты (из операций) ----------
         c.execute("""SELECT date, ticker, payment, name 
                      FROM operations 
                      WHERE type IN ('Выплата дивидендов', 'Выплата купонов') 
@@ -312,7 +328,7 @@ async def api_dividends_monthly(request: Request, year: int = None):
                 "type": "actual"
             })
 
-        # ---------- 2. Объявленные дивиденды (из календаря) ----------
+        # ---------- 3. Объявленные дивиденды (из календаря) ----------
         # Только будущие выплаты (payment_date > сегодня)
         c.execute("""
             SELECT ticker, payment_date, record_date, dividend_net
@@ -329,58 +345,91 @@ async def api_dividends_monthly(request: Request, year: int = None):
             ticker = row[0]
             payment_date = row[1]
             record_date = row[2]
-            amount = row[3]
-            if payment_date and amount:
-                month = int(payment_date[5:7])
-                name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
-                # Определяем статус: до или после закрытия реестра
-                # record_date может быть None, тогда считаем, что реестр уже закрыт (фиолетовый)
-                if record_date and record_date >= datetime.date.today().isoformat():
-                    declared_before_record[month]["total"] += amount
-                    declared_before_record[month]["details"].append({
-                        "date": payment_date,
-                        "ticker": ticker,
-                        "name": name,
-                        "amount": amount,
-                        "type": "declared_dividend_before"
-                    })
-                else:
-                    declared_after_record[month]["total"] += amount
-                    declared_after_record[month]["details"].append({
-                        "date": payment_date,
-                        "ticker": ticker,
-                        "name": name,
-                        "amount": amount,
-                        "type": "declared_dividend_after"
-                    })
+            dividend_per_share = row[3]
+            if not payment_date or not dividend_per_share:
+                continue
+            # Получаем количество акций из портфеля
+            quantity = portfolio_quantities.get(ticker, 0)
+            if quantity == 0:
+                # Если акции нет в портфеле – пропускаем
+                continue
+            amount = dividend_per_share * quantity
+            month = int(record_date[5:7])  # группируем по record_date
+            name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
+            # Определяем статус
+            if record_date and record_date >= datetime.date.today().isoformat():
+                # реестр открыт – объявлены
+                declared_before_record[month]["total"] += amount
+                declared_before_record[month]["details"].append({
+                    "date": payment_date,  # показываем дату выплаты в деталях
+                    "ticker": ticker,
+                    "name": name,
+                    "amount": amount,
+                    "type": "declared_dividend_before",
+                    "record_date": record_date,
+                    "payment_date": payment_date
+                })
+            else:
+                # реестр закрыт – ожидаемые
+                declared_after_record[month]["total"] += amount
+                declared_after_record[month]["details"].append({
+                    "date": payment_date,
+                    "ticker": ticker,
+                    "name": name,
+                    "amount": amount,
+                    "type": "declared_dividend_after",
+                    "record_date": record_date,
+                    "payment_date": payment_date
+                })
 
-        # ---------- 3. Объявленные купоны (из календаря купонов) ----------
+        # ---------- 4. Объявленные купоны (из календаря купонов) ----------
         c.execute("""
-            SELECT ticker, coupon_date, coupon_value
+            SELECT ticker, coupon_date, coupon_value, record_date
             FROM coupon_calendar
             WHERE strftime('%Y', coupon_date) = ?
               AND coupon_date > date('now')
         """, (str(year),))
         declared_coupons = c.fetchall()
 
-        # Купоны показываем жёлтым (как объявленные до реестра)
         for row in declared_coupons:
             ticker = row[0]
-            coupon_date = row[1]
-            amount = row[2]
-            if coupon_date and amount:
-                month = int(coupon_date[5:7])
-                name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
+            coupon_date = row[1]      # payment_date (дата выплаты)
+            coupon_per_bond = row[2]
+            record_date = row[3]      # fixDate – дата фиксации реестра
+            if not coupon_date or not coupon_per_bond:
+                continue
+            quantity = portfolio_quantities.get(ticker, 0)
+            if quantity == 0:
+                continue
+            amount = coupon_per_bond * quantity
+            month = int(record_date[5:7]) if record_date else int(coupon_date[5:7])
+            name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
+            # Купоны показываем как "Объявлены" (жёлтый), так как у них нет разделения по реестру (или используем record_date)
+            # Для единообразия будем считать, что если record_date >= сегодня – объявлены, иначе ожидаемые
+            if record_date and record_date >= datetime.date.today().isoformat():
                 declared_before_record[month]["total"] += amount
                 declared_before_record[month]["details"].append({
                     "date": coupon_date,
                     "ticker": ticker,
                     "name": name,
                     "amount": amount,
-                    "type": "declared_coupon"
+                    "type": "declared_coupon_before",
+                    "record_date": record_date,
+                    "payment_date": coupon_date
+                })
+            else:
+                declared_after_record[month]["total"] += amount
+                declared_after_record[month]["details"].append({
+                    "date": coupon_date,
+                    "ticker": ticker,
+                    "name": name,
+                    "amount": amount,
+                    "type": "declared_coupon_after",
+                    "record_date": record_date,
+                    "payment_date": coupon_date
                 })
 
-        # ---------- 4. Доступные годы (из операций) ----------
+        # ---------- 5. Доступные годы (из операций) ----------
         c.execute("SELECT DISTINCT substr(date, 1, 4) FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date DESC")
         years_rows = c.fetchall()
         years = [int(row[0]) for row in years_rows if row[0] is not None]

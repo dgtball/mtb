@@ -605,7 +605,7 @@
       html += `<button class="all-btn" onclick="showAllDividendDetails('${asset}')">Все выплаты</button>`;
       html += `<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Название</th><th>Сумма</th></tr></thead><tbody>`;
       data.details.forEach(d => {
-        html += `<tr><td>${new Date(d.date).toLocaleDateString()}</td><td>${d.name}</td><td>${d.amount.toFixed(2)}</td></tr>`;
+        html += `<tr><td>${new Date(d.date).toLocaleDateString()}</td><td>${d.name}</td><td>${d.amount.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td></tr>`;
       });
       html += '</tbody></table></div>';
       container.innerHTML = html;
@@ -631,13 +631,13 @@
       if (data.yearly_totals) {
         html += `<div style="margin:8px 0;font-size:12px;color:var(--text-secondary);">`;
         for (const [year, total] of Object.entries(data.yearly_totals)) {
-          html += `<span style="margin-right:12px;"><b>${year}:</b> ${total.toFixed(2)} ₽</span>`;
+          html += `<span style="margin-right:12px;"><b>${year}:</b> ${total.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2})} ₽</span>`;
         }
         html += `</div>`;
       }
       html += `<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Название</th><th>Сумма</th></tr></thead><tbody>`;
       data.details.forEach(d => {
-        html += `<tr><td>${new Date(d.date).toLocaleDateString()}</td><td>${d.name}</td><td>${d.amount.toFixed(2)}</td></tr>`;
+        html += `<tr><td>${new Date(d.date).toLocaleDateString()}</td><td>${d.name}</td><td>${d.amount.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td></tr>`;
       });
       html += '</tbody></table></div>';
       container.innerHTML = html;
@@ -718,19 +718,19 @@
           labels: data.months,
           datasets: [
             {
-              label: 'Фактические выплаты',
+              label: 'Факт',
               data: data.actual,
               backgroundColor: '#2196F3',
               borderRadius: 4,
             },
             {
-              label: 'Объявлены (реестр открыт)',
+              label: 'Объявлены',
               data: data.declared_before_record,   // ИСПРАВЛЕНО
               backgroundColor: '#FFC107',
               borderRadius: 4,
             },
             {
-              label: 'Ожидаются (реестр закрыт)',
+              label: 'Ожидаемые',
               data: data.declared_after_record,    // ИСПРАВЛЕНО
               backgroundColor: '#9C27B0',
               borderRadius: 4,
@@ -748,7 +748,7 @@
             tooltip: {
               callbacks: {
                 label: function(context) {
-                  return context.dataset.label + ': ' + context.raw.toFixed(2) + ' ₽';
+                  return context.dataset.label + ': ' + context.raw.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ₽';
                 }
               }
             },
@@ -758,13 +758,13 @@
               color: '#e0e0e0',
               font: { weight: 'bold', size: 9 },
               formatter: function(value) {
-                return value > 0 ? value.toFixed(2) : '';
+                return value > 0 ? value.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '';
               }
             }
           },
           scales: {
             x: { stacked: true, ticks: { color: '#9e9e9e' }, grid: { display: false } },
-            y: { stacked: true, ticks: { color: '#9e9e9e', callback: v => v.toFixed(2) }, grid: { color: '#333' } }
+            y: { stacked: true, ticks: { color: '#9e9e9e', callback: v => v.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }, grid: { color: '#333' } }
           },
           onClick: (event, elements, chart) => {
             if (elements.length > 0) {
@@ -784,12 +784,12 @@
         plugins: [ChartDataLabels]
       });
 
-      const totalLabel = document.getElementById('totalYearLabel');
-      totalLabel.style.display = 'block';
-      totalLabel.textContent = 
-        `💰 Итого за ${year}: фактические ${data.total_actual.toFixed(2)} ₽, ` +
-        `объявленные ${data.total_before.toFixed(2)} ₽, ` +
-        `ожидаемые ${data.total_after.toFixed(2)} ₽`;
+		const totalLabel = document.getElementById('totalYearLabel');
+		totalLabel.style.display = 'block';
+		totalLabel.textContent = 
+		  `💰 Итого за ${year}: факт: ${data.total_actual.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2})} , ` +
+		  `объявленны: ${data.total_before.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2})}, ` +
+		  `ожидаем: ${data.total_after.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
 
       const syncStatus = await apiCall('/api/sync-status');
       if (syncStatus.last_sync) {
@@ -802,45 +802,43 @@
   }
 
   function showMonthlyDetails(month, details) {
-    const container = document.getElementById('monthlyDetails');
-    let html = `<h4>${month}</h4>`;
-    html += `<button class="close-btn" onclick="document.getElementById('monthlyDetails').classList.remove('visible')">✕</button>`;
-    html += `<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Актив</th><th>Тип</th><th>Сумма</th></tr></thead><tbody>`;
+  const container = document.getElementById('monthlyDetails');
+  let html = `<h4>${month}</h4>`;
+  html += `<button class="close-btn" onclick="document.getElementById('monthlyDetails').classList.remove('visible')">✕</button>`;
+  html += `<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Актив</th><th>Сумма</th></tr></thead><tbody>`;
+  
+  details.sort((a, b) => {
+    if (a.date && b.date) return new Date(b.date) - new Date(a.date);
+    return 0;
+  });
+  
+  details.forEach(d => {
+    const dateStr = d.date ? new Date(d.date).toLocaleDateString() : '—';
+    let color = '';
+    let emoji = '';
     
-    details.sort((a, b) => {
-      if (a.date && b.date) return new Date(b.date) - new Date(a.date);
-      return 0;
-    });
+    if (d.type === 'actual') {
+      color = 'var(--accent)';
+      emoji = '💰 ';
+    } else if (d.type === 'declared_dividend_before' || d.type === 'declared_coupon_before') {
+      color = '#FFC107';
+      emoji = '📢 ';
+    } else if (d.type === 'declared_dividend_after' || d.type === 'declared_coupon_after') {
+      color = '#9C27B0';
+      emoji = '⏳ ';
+    } else {
+      color = 'var(--text-secondary)';
+      emoji = '❓ ';
+    }
     
-    details.forEach(d => {
-      const dateStr = d.date ? new Date(d.date).toLocaleDateString() : '—';
-      let typeLabel = '';
-      let color = '';
-      
-      if (d.type === 'actual') {
-        typeLabel = 'Факт';
-        color = 'var(--accent)';
-      } else if (d.type === 'declared_dividend_before') {
-        typeLabel = 'Объявл. див. (реестр открыт)';
-        color = '#FFC107';
-      } else if (d.type === 'declared_dividend_after') {
-        typeLabel = 'Ожидание див. (реестр закрыт)';
-        color = '#9C27B0';
-      } else if (d.type === 'declared_coupon') {
-        typeLabel = 'Объявл. купон';
-        color = '#FFC107';
-      } else {
-        typeLabel = d.type || 'Неизвестно';
-        color = 'var(--text-secondary)';
-      }
-      
-      html += `<tr><td>${dateStr}</td><td>${d.name}</td><td style="color:${color}">${typeLabel}</td><td>${d.amount.toFixed(2)}</td></tr>`;
-    });
-    
-    html += '</tbody></table></div>';
-    container.innerHTML = html;
-    container.classList.add('visible');
-  }
+    const formattedAmount = d.amount.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    html += `<tr><td>${dateStr}</td><td>${d.name}</td><td style="color:${color}">${emoji}${formattedAmount}</td></tr>`;
+  });
+  
+  html += '</tbody></table></div>';
+  container.innerHTML = html;
+  container.classList.add('visible');
+}
 
   // ============================================================
   // 9. СИНХРОНИЗАЦИЯ
