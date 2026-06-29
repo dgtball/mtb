@@ -1,8 +1,9 @@
 import logging
 import datetime
 import statistics
+import sqlite3
 import db
-from config import NAME_OVERRIDES, ticker_to_name
+from config import NAME_OVERRIDES, ticker_to_name, DB_PATH
 
 async def calculate_and_update_forecasts(http_session):
     """Рассчитывает прогнозы дивидендов для всех тикеров в портфеле и сохраняет в БД."""
@@ -30,7 +31,7 @@ async def calculate_and_update_forecasts(http_session):
                 logging.info(f"Прогноз для {ticker}: {forecast['amount']:.2f} ₽ в {forecast['month']}/{forecast['year']}")
             else:
                 # Если прогноз не удалось рассчитать, удаляем старую запись (если была)
-                db.upsert_dividend_forecast(ticker, 0, 0, 0, 0, "none")  # можно не сохранять
+                db.upsert_dividend_forecast(ticker, 0, 0, 0, 0, "none")
         except Exception as e:
             logging.error(f"Ошибка расчёта прогноза для {ticker}: {e}")
 
@@ -39,8 +40,7 @@ def calculate_forecast_for_ticker(ticker: str):
     Рассчитывает прогноз дивидендов на основе исторических выплат.
     Возвращает словарь с полями: amount, month, year, confidence.
     """
-    # Получаем все выплаты дивидендов по тикеру
-    conn = db.get_db_connection()  # используем существующее соединение
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""
         SELECT date, payment 

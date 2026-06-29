@@ -428,7 +428,7 @@ async def api_dividends_monthly(request: Request, year: int = None):
                     "record_date": record_date,
                     "payment_date": coupon_date
                 })
-        # ---------- 6. Прогнозные выплаты (из dividend_forecast) ----------
+        # ---------- 5. Прогнозные выплаты (из dividend_forecast) ----------
         c.execute("""
             SELECT ticker, forecast_amount, forecast_month, forecast_year
             FROM dividend_forecast
@@ -452,6 +452,28 @@ async def api_dividends_monthly(request: Request, year: int = None):
                     "amount": amount,
                     "type": "forecast"
                 })
+
+        # Затем в ответ добавьте:
+        forecast_data = [forecast_by_month[m]["total"] for m in range(1, 13)]
+        total_forecast = sum(forecast_data)
+
+        return JSONResponse({
+            "year": year,
+            "months": months_labels,
+            "actual": actual_data,
+            "declared_before_record": before_data,
+            "declared_after_record": after_data,
+            "forecast": forecast_data,
+            "total_actual": total_actual,
+            "total_before": total_before,
+            "total_after": total_after,
+            "total_forecast": total_forecast,
+            "details_actual": {m: actual_by_month[m]["details"] for m in range(1, 13)},
+            "details_declared_before": {m: declared_before_record[m]["details"] for m in range(1, 13)},
+            "details_declared_after": {m: declared_after_record[m]["details"] for m in range(1, 13)},
+            "details_forecast": {m: forecast_by_month[m]["details"] for m in range(1, 13)},
+            "available_years": years
+        })
 
         # ---------- 5. Доступные годы (из операций) ----------
         c.execute("SELECT DISTINCT substr(date, 1, 4) FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date DESC")
