@@ -1,7 +1,7 @@
 # services/portfolio.py
 import logging
 import datetime
-pandas as pd
+import pandas as pd
 from typing import List, Dict, Any, Optional
 from db import get_sector
 from moex_api import get_market_data
