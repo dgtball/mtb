@@ -297,8 +297,8 @@ def calc_period_change(df):
 
 async def get_bond_maturity_date(http_session, ticker: str):
     """
-    Получает дату погашения облигации по тикеру через MOEX ISS.
-    Возвращает строку с датой в формате YYYY-MM-DD или None.
+    Получает дату погашения и купонный период (в днях) облигации по тикеру через MOEX ISS.
+    Возвращает словарь с полями maturity_date (str) и coupon_period (int) или None.
     """
     url = f"https://iss.moex.com/iss/engines/stock/markets/bonds/boards/TQCB/securities/{ticker}.json?iss.meta=off&iss.only=securities"
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -312,16 +312,21 @@ async def get_bond_maturity_date(http_session, ticker: str):
                 rows = data['securities']['data']
                 if rows:
                     columns = data['securities']['columns']
-                    # Ищем индекс колонки MATDATE (дата погашения)
+                    result = {}
+                    # Дата погашения
                     try:
                         idx = columns.index('MATDATE')
+                        result['maturity_date'] = rows[0][idx]
                     except ValueError:
                         logging.warning(f"Колонка MATDATE не найдена для {ticker}")
-                        return None
-                    maturity = rows[0][idx]
-                    if maturity:
-                        # Формат: YYYY-MM-DD
-                        return maturity
+                    # Купонный период (в днях) – поле COUPONPERIOD
+                    try:
+                        idx = columns.index('COUPONPERIOD')
+                        result['coupon_period'] = int(rows[0][idx]) if rows[0][idx] else None
+                    except ValueError:
+                        logging.warning(f"Колонка COUPONPERIOD не найдена для {ticker}")
+                    if result:
+                        return result
     except Exception as e:
-        logging.error(f"Ошибка получения даты погашения из MOEX для {ticker}: {e}")
+        logging.error(f"Ошибка получения данных из MOEX для {ticker}: {e}")
     return None

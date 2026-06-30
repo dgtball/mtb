@@ -317,10 +317,16 @@ def upsert_instrument(ticker: str, name: str = None, sector: str = None, figi: s
             row = c.fetchone()
             if row and row[0]:
                 maturity_date = row[0]
-
-        c.execute('''INSERT OR REPLACE INTO instruments (ticker, name, sector, figi, instrument_type, updated_at, maturity_date)
-                     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)''',
-                  (ticker, name, sector, figi, instrument_type, maturity_date))
+        # Если coupon_period не указан, оставляем существующий
+        if coupon_period is None:
+            c.execute("SELECT coupon_period FROM instruments WHERE ticker = ?", (ticker,))
+            row = c.fetchone()
+            if row and row[0]:
+                coupon_period = row[0]
+        c.execute('''INSERT OR REPLACE INTO instruments 
+                     (ticker, name, sector, figi, instrument_type, updated_at, maturity_date, coupon_period)
+                     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)''',
+                  (ticker, name, sector, figi, instrument_type, maturity_date, coupon_period))
         conn.commit()
 
 def update_instrument_sector(ticker: str, new_sector: str):
