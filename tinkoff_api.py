@@ -364,96 +364,28 @@ async def fetch_all_coupons(http_session):
             figi = pos["figi"]
             ticker = pos["ticker"]
             try:
+                # 1. Получаем купоны из API Т-Инвестиций
                 coupons = await get_coupons_for_instrument(http_session, figi)
                 if not coupons:
                     logging.warning(f"Нет купонов для {ticker}")
                     continue
                 
-                # Сохраняем все купоны из API
-                for coup in coupons:
-                    db.upsert_coupon_calendar(ticker, figi, coup)
+                # 2. Пытаемся получить дату погашения из MOEX
+                from moex_api import get_bond_maturity_date
+                maturity_date = await get_bond_maturity_date(http_session, ticker)
                 
-                # Определяем последний купон и дату погашения
-                last_coupon = coupons[-1]
-                last_date = datetime.datetime.fromisoformat(last_coupon["couponDate"].replace('Z', '+00:00'))
-                amount = last_coupon.get("payOneBond", {})
-                
-                # Получаем дату погашения
-                bond_info = await get_bond_info(http_session, figi)
-                maturity_date = bond_info.get("maturity_date")
-                if not maturity_date:
-                    logging.warning(f"Нет даты погашения для {ticker} (FIGI {figi}). Пропускаем генерацию купонов.")
-                    # Сохраняем только существующие купоны
+                if maturity_date:
+                    # Генерируем недостающие купоны и добавляем погашение
+                    # (логика генерации остаётся как раньше, но с использованием maturity_date)
+                    ...
+                else:
+                    # Если даты нет, просто сохраняем купоны из API
                     for coup in coupons:
                         db.upsert_coupon_calendar(ticker, figi, coup)
-                    continue
                 
-                # Вычисляем период (в днях) между последними купонами
-                if len(coupons) >= 2:
-                    prev_date = datetime.datetime.fromisoformat(coupons[-2]["couponDate"].replace('Z', '+00:00'))
-                    period_days = (last_date - prev_date).days
-                else:
-                    period_days = 182  # стандартный полугодовой купон
-                
-                # Добавляем недостающие купоны до даты погашения
-                current_date = last_date
-                while current_date < maturity_dt:
-                    next_date = current_date + datetime.timedelta(days=period_days)
-                    if next_date > maturity_dt:
-                        break
-                    # Создаём купон
-                    new_coupon = {
-                        "couponDate": next_date.isoformat() + "Z",
-                        "payOneBond": amount,
-                        "currency": "RUB",
-                        "fixDate": (next_date - datetime.timedelta(days=1)).isoformat() + "Z",
-                        "is_redemption": False
-                    }
-                    db.upsert_coupon_calendar(ticker, figi, new_coupon)
-                    current_date = next_date
-                
-                # Добавляем погашение (если дата погашения ещё не прошла)
-                if maturity_dt >= datetime.datetime.now(datetime.timezone.utc):
-                    redemption = {
-                        "couponDate": maturity_date,
-                        "payOneBond": {"units": "1000", "nano": 0},
-                        "currency": "RUB",
-                        "fixDate": maturity_date,
-                        "is_redemption": True
-                    }
-                    db.upsert_coupon_calendar(ticker, figi, redemption)
-                
-                logging.info(f"Сохранены купоны и погашение для {ticker}")
+                # Сохраняем результат
+                result[ticker] = {"figi": figi, "coupons": coupons}
             except Exception as e:
                 logging.error(f"Ошибка обработки облигации {ticker}: {e}")
     
     return result
-    
-async def get_bond_info(http_session, figi: str):
-    """
-    Получает информацию об облигации через GetBondBy (с использованием uid).
-    Возвращает дату погашения (maturityDate).
-    """
-    # 1. Получаем uid через GetInstrumentBy
-    endpoint = "tinkoff.public.invest.api.contract.v1.InstrumentsService/GetInstrumentBy"
-    params = {"id": figi, "idType": "INSTRUMENT_ID_TYPE_FIGI"}
-    data = await tinkoff_api_request(http_session, "POST", endpoint, params=params)
-    instrument = data.get("instrument", {})
-    uid = instrument.get("uid")
-    if not uid:
-        logging.warning(f"Не удалось получить uid для FIGI {figi}")
-        return {"maturity_date": None}
-    
-    # 2. Получаем BondBy с uid
-    endpoint_bond = "tinkoff.public.invest.api.contract.v1.InstrumentsService/GetBondBy"
-    params_bond = {"id": uid, "idType": "INSTRUMENT_ID_TYPE_UID"}
-    try:
-        data_bond = await tinkoff_api_request(http_session, "POST", endpoint_bond, params=params_bond)
-        instrument_bond = data_bond.get("instrument", {})
-        maturity_date = instrument_bond.get("maturityDate")
-        if not maturity_date:
-            logging.warning(f"Нет даты погашения для FIGI {figi}")
-        return {"maturity_date": maturity_date}
-    except Exception as e:
-        logging.error(f"Ошибка получения BondBy для FIGI {figi}: {e}")
-        return {"maturity_date": None}

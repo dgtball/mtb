@@ -294,3 +294,34 @@ def calc_period_change(df):
     combined = first.join(last, how='inner')
     combined['CHANGE_PCT'] = ((combined['CLOSE'] - combined['OPEN']) / combined['OPEN']) * 100
     return combined.reset_index()
+
+async def get_bond_maturity_date(http_session, ticker: str):
+    """
+    Получает дату погашения облигации по тикеру через MOEX ISS.
+    Возвращает строку с датой в формате YYYY-MM-DD или None.
+    """
+    url = f"https://iss.moex.com/iss/engines/stock/markets/bonds/boards/TQCB/securities/{ticker}.json?iss.meta=off&iss.only=securities"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        async with http_session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            if resp.status != 200:
+                logging.warning(f"MOEX вернул статус {resp.status} для {ticker}")
+                return None
+            data = await resp.json()
+            if 'securities' in data and 'data' in data['securities']:
+                rows = data['securities']['data']
+                if rows:
+                    columns = data['securities']['columns']
+                    # Ищем индекс колонки MATDATE (дата погашения)
+                    try:
+                        idx = columns.index('MATDATE')
+                    except ValueError:
+                        logging.warning(f"Колонка MATDATE не найдена для {ticker}")
+                        return None
+                    maturity = rows[0][idx]
+                    if maturity:
+                        # Формат: YYYY-MM-DD
+                        return maturity
+    except Exception as e:
+        logging.error(f"Ошибка получения даты погашения из MOEX для {ticker}: {e}")
+    return None
