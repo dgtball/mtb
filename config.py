@@ -6,7 +6,9 @@ VERSION = "3.8.8"
 # ---------- ТОКЕНЫ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
 TINKOFF_TOKEN = os.getenv("TITN")
-MINI_APP_SECRET = os.getenv("MINI_APP_SECRET", "fallback_default")
+MINI_APP_SECRET = os.getenv("MINI_APP_SECRET")
+if not MINI_APP_SECRET:
+    raise ValueError("MINI_APP_SECRET не задан")
 MY_CHAT_ID = os.getenv("MY_CHAT_ID")
 if not MY_CHAT_ID:
     raise ValueError("MY_CHAT_ID не задан")
