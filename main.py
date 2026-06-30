@@ -374,7 +374,7 @@ async def api_dividends_monthly(request: Request, year: int = None):
 
         # ---------- 4. Объявленные купоны (из календаря купонов) ----------
         c.execute("""
-            SELECT ticker, coupon_date, coupon_value, record_date
+            SELECT ticker, coupon_date, coupon_value, record_date, is_redemption
             FROM coupon_calendar
             WHERE strftime('%Y', coupon_date) = ?
               AND coupon_date > date('now')
@@ -386,6 +386,7 @@ async def api_dividends_monthly(request: Request, year: int = None):
             coupon_date = row[1]
             coupon_per_bond = row[2]
             record_date = row[3]
+            is_redemption = row[4]
             if not coupon_date or not coupon_per_bond:
                 continue
             quantity = portfolio_quantities.get(ticker, 0)
@@ -394,27 +395,37 @@ async def api_dividends_monthly(request: Request, year: int = None):
             amount = coupon_per_bond * quantity
             month = int(record_date[5:7]) if record_date else int(coupon_date[5:7])
             name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
-            if record_date and record_date >= datetime.date.today().isoformat():
+            if is_redemption:
+                # Погашение – оранжевый цвет
                 declared_before_record[month]["total"] += amount
                 declared_before_record[month]["details"].append({
                     "date": coupon_date,
                     "ticker": ticker,
                     "name": name,
                     "amount": amount,
-                    "type": "declared_coupon_before"
+                    "type": "redemption"
                 })
             else:
-                declared_after_record[month]["total"] += amount
-                declared_after_record[month]["details"].append({
-                    "date": coupon_date,
-                    "ticker": ticker,
-                    "name": name,
-                    "amount": amount,
-                    "type": "declared_coupon_after"
-                })
+                if record_date and record_date >= datetime.date.today().isoformat():
+                    declared_before_record[month]["total"] += amount
+                    declared_before_record[month]["details"].append({
+                        "date": coupon_date,
+                        "ticker": ticker,
+                        "name": name,
+                        "amount": amount,
+                        "type": "declared_coupon_before"
+                    })
+                else:
+                    declared_after_record[month]["total"] += amount
+                    declared_after_record[month]["details"].append({
+                        "date": coupon_date,
+                        "ticker": ticker,
+                        "name": name,
+                        "amount": amount,
+                        "type": "declared_coupon_after"
+                    })
 
         # ---------- 5. Прогнозные дивиденды (из таблицы forecast) ----------
-        # Прогнозы хранятся в пересчёте на 1 акцию
         c.execute("""
             SELECT ticker, forecast_amount, forecast_month, forecast_year
             FROM dividend_forecast
@@ -436,7 +447,7 @@ async def api_dividends_monthly(request: Request, year: int = None):
                 name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
                 forecast_by_month[month]["total"] += amount
                 forecast_by_month[month]["details"].append({
-                    "date": f"{year}-{month:02d}-01",  # приблизительная дата (начало месяца)
+                    "date": f"{year}-{month:02d}-01",
                     "ticker": ticker,
                     "name": name,
                     "amount": amount,
@@ -444,12 +455,8 @@ async def api_dividends_monthly(request: Request, year: int = None):
                 })
 
         # ---------- 6. Доступные годы ----------
-        # Берём годы из операций
         c.execute("SELECT DISTINCT substr(date, 1, 4) FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date DESC")
-        years_rows = c.fetchall()
-        years_from_ops = [int(row[0]) for row in years_rows if row[0] is not None]
-
-        # Добавляем годы из прогнозов
+        years_from_ops = [int(row[0]) for row in c.fetchall() if row[0] is not None]
         c.execute("SELECT DISTINCT forecast_year FROM dividend_forecast WHERE forecast_amount > 0")
         forecast_years = [int(row[0]) for row in c.fetchall() if row[0] is not None]
         all_years = sorted(set(years_from_ops + forecast_years), reverse=True)

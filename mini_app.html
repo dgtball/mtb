@@ -691,6 +691,7 @@ function switchDividendSubtab(subtab) {
         { label: 'Факт', data: data.actual, color: '#2196F3' },
         { label: 'Объявлено', data: data.declared_before_record, color: '#FFC107' },
         { label: 'Ожидаем', data: data.declared_after_record, color: '#9C27B0' },
+        { label: 'Погашение', data: data.redemption, color: '#FF9800' },
         { label: 'Прогноз', data: data.forecast || [], color: '#4CAF50' }
       ];
 
@@ -835,7 +836,10 @@ function switchDividendSubtab(subtab) {
       } else if (d.type === 'forecast') {
         color = '#4CAF50';
         emoji = '🔮 ';
-      } else {
+      } else if (d.type === 'redemption') {
+		color = '#FF9800';
+		emoji = '💵 ';
+	  }else {
         color = 'var(--text-secondary)';
         emoji = '❓ ';
       }

@@ -9,14 +9,14 @@ def init_db():
         c = conn.cursor()
         # Таблица переопределений названий
         c.execute('''CREATE TABLE IF NOT EXISTS name_overrides
-                    (ticker TEXT PRIMARY KEY, display_name TEXT)''')   
-        # Таблица состояния портфеля (снапшоты, текущая стоимость)
+                    (ticker TEXT PRIMARY KEY, display_name TEXT)''')
+        # Таблица состояния портфеля
         c.execute('''CREATE TABLE IF NOT EXISTS portfolio_state
                     (key TEXT PRIMARY KEY, value REAL)''')
         # Старая таблица секторов (для обратной совместимости)
         c.execute('''CREATE TABLE IF NOT EXISTS sectors
-                    (ticker TEXT PRIMARY KEY, sector_name TEXT)''')  
-        # Таблица операций (выплаты, сделки)
+                    (ticker TEXT PRIMARY KEY, sector_name TEXT)''')
+        # Таблица операций
         c.execute('''CREATE TABLE IF NOT EXISTS operations
                     (id TEXT PRIMARY KEY, date TEXT NOT NULL,
                     type TEXT NOT NULL, ticker TEXT, figi TEXT,
@@ -24,29 +24,34 @@ def init_db():
                     currency TEXT, commission REAL, name TEXT)''')
         c.execute('CREATE INDEX IF NOT EXISTS idx_operations_date ON operations(date)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_operations_type ON operations(type)')
-        # Новая таблица инструментов (кэш MOEX)
+        # Таблица инструментов (кэш MOEX) – добавляем колонки для облигаций
         c.execute('''CREATE TABLE IF NOT EXISTS instruments 
-                    (ticker TEXT PRIMARY KEY, name TEXT,sector TEXT,
-                    figi TEXT, instrument_type TEXT, updated_at TIMESTAMP)''')
+                    (ticker TEXT PRIMARY KEY, name TEXT, sector TEXT,
+                    figi TEXT, instrument_type TEXT, updated_at TIMESTAMP,
+                    maturity_date TEXT, coupon_period INTEGER)''')
         c.execute('CREATE INDEX IF NOT EXISTS idx_instruments_figi ON instruments(figi)')
-        # Новая таблица для календаря дивидендов
+        # Календарь дивидендов
         c.execute('''CREATE TABLE IF NOT EXISTS dividend_calendar (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT NOT NULL,
-            figi TEXT NOT NULL, declared_date TEXT, record_date TEXT,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL, figi TEXT NOT NULL,
+            declared_date TEXT, record_date TEXT,
             payment_date TEXT, dividend_net REAL, dividend_type TEXT,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(ticker, declared_date, payment_date))''')
         c.execute('CREATE INDEX IF NOT EXISTS idx_dividend_calendar_ticker ON dividend_calendar(ticker)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_dividend_calendar_payment_date ON dividend_calendar(payment_date)')
-        # Новая таблица для календаря купонов
+        # Календарь купонов – добавим колонку is_redemption
         c.execute('''CREATE TABLE IF NOT EXISTS coupon_calendar (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT NOT NULL,
-            figi TEXT NOT NULL, coupon_date TEXT, coupon_value REAL,
-            coupon_currency TEXT, record_date TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL, figi TEXT NOT NULL,
+            coupon_date TEXT, coupon_value REAL,
+            coupon_currency TEXT, record_date TEXT,
+            is_redemption BOOLEAN DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(ticker, coupon_date))''')
         c.execute('CREATE INDEX IF NOT EXISTS idx_coupon_calendar_ticker ON coupon_calendar(ticker)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_coupon_calendar_coupon_date ON coupon_calendar(coupon_date)')
-        # Новая таблица прогнозные выплаты
+        # Прогнозы дивидендов
         c.execute('''CREATE TABLE IF NOT EXISTS dividend_forecast (
             ticker TEXT PRIMARY KEY,
             forecast_amount REAL,
@@ -54,15 +59,24 @@ def init_db():
             forecast_year INTEGER,
             confidence_score REAL DEFAULT 1.0,
             method TEXT DEFAULT 'historical_cagr',
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )''')
-        c.execute('CREATE INDEX IF NOT EXISTS idx_forecast_ticker ON dividend_forecast(ticker)')        
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_forecast_ticker ON dividend_forecast(ticker)')
+        # Миграция: добавляем колонки, если их нет (для существующих баз)
+        c.execute("PRAGMA table_info(instruments)")
+        columns = [col[1] for col in c.fetchall()]
+        if 'maturity_date' not in columns:
+            c.execute("ALTER TABLE instruments ADD COLUMN maturity_date TEXT")
+        if 'coupon_period' not in columns:
+            c.execute("ALTER TABLE instruments ADD COLUMN coupon_period INTEGER")
+        c.execute("PRAGMA table_info(coupon_calendar)")
+        columns = [col[1] for col in c.fetchall()]
+        if 'is_redemption' not in columns:
+            c.execute("ALTER TABLE coupon_calendar ADD COLUMN is_redemption BOOLEAN DEFAULT 0")
         conn.commit()
-    logging.info(f"✅ База данных инициализирована: {DB_PATH}") 
+    logging.info(f"✅ База данных инициализирована: {DB_PATH}")
     seed_overrides()
     seed_sectors()
     migrate_sectors_to_instruments()
-
 # ---------- НАЧАЛЬНЫЕ ПЕРЕОПРЕДЕЛЕНИЯ ----------
 def seed_overrides():
     initial = [
@@ -368,25 +382,26 @@ def get_dividend_calendar(ticker=None, year=None, month=None):
 
 # ===== КАЛЕНДАРЬ КУПОНОВ =====
 def upsert_coupon_calendar(ticker, figi, coupon_data):
-    # Извлекаем сумму купона (payOneBond – объект)
     pay_obj = coupon_data.get("payOneBond", {})
     units = float(pay_obj.get("units", 0))
     nano = float(pay_obj.get("nano", 0)) / 1e9
     coupon_value = units + nano
-
+    
+    is_redemption = coupon_data.get("is_redemption", False)
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         c.execute("""
             INSERT OR REPLACE INTO coupon_calendar 
-            (ticker, figi, coupon_date, coupon_value, coupon_currency, record_date)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (ticker, figi, coupon_date, coupon_value, coupon_currency, record_date, is_redemption)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
             ticker,
             figi,
             coupon_data.get("couponDate"),
             coupon_value,
             coupon_data.get("currency", "RUB"),
-            coupon_data.get("fixDate")  # или coupon_data.get("recordDate") – проверьте документацию
+            coupon_data.get("fixDate"),
+            1 if is_redemption else 0
         ))
         conn.commit()
 
