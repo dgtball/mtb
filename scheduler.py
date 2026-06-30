@@ -15,13 +15,14 @@ from services.tops import get_top_data
 _bot = None
 _http_session = None
 _active_day_message_id = None
-_snapshot_saved_for_date = None
+_snapshot_saved_today = False       # флаг сохранения снэпшота на сегодня
 portfolio_update_allowed = False
 
 # Флаги однократного выполнения задач (сбрасываются в полночь)
 _dividend_calendar_synced = False
 _coupon_calendar_synced = False
 _instruments_synced = False
+_forecasts_synced = False           # новый флаг для прогнозов
 
 def set_bot(bot: Bot):
     global _bot
@@ -43,7 +44,6 @@ async def send_periodic_top(period: str):
         gainers, losers, _, _, _, _ = await get_top_data(period, _http_session)
         if gainers.empty and losers.empty:
             return
-        # Формируем заголовок
         if period == 'week':
             start = now - datetime.timedelta(days=now.weekday())
             title = f"📅 Топ за неделю #{start.isocalendar()[1]}"
@@ -98,8 +98,8 @@ async def refresh_coupon_calendar():
         logging.info(f"✅ Календарь купонов обновлён для {len(data)} облигаций")
     except Exception as e:
         logging.error(f"❌ Ошибка обновления календаря купонов: {e}")
-        
-# ---------- ФУНКЦИЯ прогнозирования ---------
+
+# ---------- ФУНКЦИЯ ПРОГНОЗИРОВАНИЯ ---------
 async def refresh_forecasts():
     logging.info("🔄 Обновление прогнозов дивидендов")
     try:
@@ -111,8 +111,8 @@ async def refresh_forecasts():
 
 # ---------- ОСНОВНОЙ ЦИКЛ ПЛАНИРОВЩИКА ----------
 async def scheduler_loop():
-    global _active_day_message_id, portfolio_update_allowed, _snapshot_saved_for_date
-    global _dividend_calendar_synced, _coupon_calendar_synced, _instruments_synced
+    global _active_day_message_id, portfolio_update_allowed, _snapshot_saved_today
+    global _dividend_calendar_synced, _coupon_calendar_synced, _instruments_synced, _forecasts_synced
 
     last_week_sent_date = None
     last_month_sent_date = None
@@ -130,26 +130,26 @@ async def scheduler_loop():
 
             # Сброс флагов в полночь
             if hour == 0 and minute == 0:
+                _snapshot_saved_today = False
                 _dividend_calendar_synced = False
                 _coupon_calendar_synced = False
                 _instruments_synced = False
-                _snapshot_saved_for_date = None  # сброс для снэпшота
+                _forecasts_synced = False
 
-            # Вечерний снэпшот портфеля (после 23:50) – только один раз за день
-            if hour == 23 and minute >= 50:
+            # ----- Снэпшот портфеля (после 23:50) – только один раз -----
+            if hour == 23 and minute >= 50 and not _snapshot_saved_today:
                 tomorrow = today + datetime.timedelta(days=1)
                 tomorrow_str = tomorrow.isoformat()
-                if _snapshot_saved_for_date != tomorrow_str:
-                    current = db.get_portfolio_value()
-                    if current is not None:
-                        db.set_daily_snapshot(tomorrow_str, current)
-                        _snapshot_saved_for_date = tomorrow_str
-                        logging.info(f"Снэпшот портфеля сохранён на {tomorrow_str}: {current:.2f}")
-                # После проверки засыпаем на минуту, чтобы не спамить
+                current = db.get_portfolio_value()
+                if current is not None:
+                    db.set_daily_snapshot(tomorrow_str, current)
+                    _snapshot_saved_today = True
+                    logging.info(f"Снэпшот портфеля сохранён на {tomorrow_str}: {current:.2f}")
+                # После сохранения засыпаем на минуту, чтобы не проверять слишком часто
                 await asyncio.sleep(60)
                 continue
 
-            # Окно 06:50 – 00:50 МСК
+            # ----- Окно 06:50 – 00:50 МСК (топ дня) -----
             start_minutes = 6*60 + 50
             end_minutes = 0*60 + 50 + 24*60
             current_minutes = hour*60 + minute
@@ -205,38 +205,40 @@ async def scheduler_loop():
                 portfolio_update_allowed = False
                 _active_day_message_id = None
 
-            # Ежедневная синхронизация операций в 10:00
+            # ----- Ежедневные задачи (с флагами) -----
+            # Синхронизация операций в 10:00 (без флага, так как может быть вызвана вручную)
             if hour == 10 and minute == 0:
                 if TINKOFF_TOKEN:
                     from tinkoff_api import sync_operations
                     asyncio.create_task(sync_operations(_http_session))
 
-            # Ежедневное обновление календаря дивидендов в 02:00 (один раз)
+            # Календарь дивидендов в 02:00
             if hour == 2 and minute == 0 and not _dividend_calendar_synced:
                 _dividend_calendar_synced = True
                 asyncio.create_task(refresh_dividend_calendar())
 
-            # Ежедневное обновление календаря купонов в 02:30 (один раз)
+            # Календарь купонов в 02:30
             if hour == 2 and minute == 30 and not _coupon_calendar_synced:
                 _coupon_calendar_synced = True
                 asyncio.create_task(refresh_coupon_calendar())
 
-            # Ежедневное обновление кэша инструментов в 03:00 (один раз)
+            # Справочник инструментов в 03:00
             if hour == 3 and minute == 0 and not _instruments_synced:
                 _instruments_synced = True
                 asyncio.create_task(refresh_instruments_cache())
-                
-            # Ежедневное обновление кэша инструментов в 03:00 (один раз)
-            if hour == 4 and minute == 0:
+
+            # Прогнозы дивидендов в 04:00
+            if hour == 4 and minute == 0 and not _forecasts_synced:
+                _forecasts_synced = True
                 asyncio.create_task(refresh_forecasts())
 
-            # Пятница после 23:50
+            # ----- Топ недели (пятница после 23:50) -----
             if weekday == 4 and hour == 23 and minute >= 50:
                 if last_week_sent_date != today:
                     await send_periodic_top('week')
                     last_week_sent_date = today
 
-            # Последний торговый день месяца после 23:50
+            # ----- Топ месяца (последний торговый день месяца после 23:50) -----
             last_trade_day = last_trading_day(today)
             if today == last_trade_day and hour == 23 and minute >= 51:
                 if last_month_sent_date != today:
