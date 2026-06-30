@@ -312,7 +312,7 @@
   // ============================================================
   // 2. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
   // ============================================================
-    async function apiCall(endpoint, method = 'GET', body = null) {
+     async function apiCall(endpoint, method = 'GET', body = null) {
     const options = {
       method,
       headers: {
@@ -337,7 +337,6 @@
     clearTimeout(toast._timer);
     toast._timer = setTimeout(() => toast.classList.remove('show'), 3000);
   }
-
   // ============================================================
   // 3. ПЕРЕКЛЮЧЕНИЕ ОСНОВНЫХ ВКЛАДОК
   // ============================================================
@@ -355,7 +354,6 @@
       loadManagement();
     }
   }
-
   // ============================================================
   // 4. ПЕРЕКЛЮЧЕНИЕ ПОДВКЛАДОК НАСТРОЙКИ
   // ============================================================
@@ -372,7 +370,7 @@
   // ============================================================
   // 5. ПЕРЕКЛЮЧЕНИЕ ПОДВКЛАДОК ВЫПЛАТ
   // ============================================================
-function switchDividendSubtab(subtab) {
+  function switchDividendSubtab(subtab) {
     currentDividendSubtab = subtab;
     document.querySelectorAll('.dividend-subtab').forEach(el => el.classList.remove('active'));
     document.querySelector(`.dividend-subtab[onclick="switchDividendSubtab('${subtab}')"]`).classList.add('active');
@@ -381,11 +379,9 @@ function switchDividendSubtab(subtab) {
     if (subtab === 'yearly') {
       loadDividends();
     } else {
-      // При переключении на месячный режим выбираем текущий год
-      loadMonthlyDividends(true); // параметр force_current_year
+      loadMonthlyDividends(true);
     }
   }
-
   // ============================================================
   // 6. ПОРТФЕЛЬ
   // ============================================================
@@ -629,7 +625,6 @@ function switchDividendSubtab(subtab) {
     let year = yearSelect.value;
 
     try {
-      // Если год не выбран или принудительно выбираем текущий
       if (!year || forceCurrentYear) {
         const data = await apiCall('/api/dividends-monthly');
         if (data.error) {
@@ -644,7 +639,6 @@ function switchDividendSubtab(subtab) {
             opt.textContent = y;
             yearSelect.appendChild(opt);
           });
-          // Выбираем текущий год, если он есть
           const currentYear = new Date().getFullYear();
           if (data.available_years.includes(currentYear)) {
             year = currentYear;
@@ -668,7 +662,6 @@ function switchDividendSubtab(subtab) {
         return;
       }
 
-      // Обновляем список годов, если он не совпадает
       if (data.available_years && data.available_years.length > 0) {
         const currentValues = Array.from(yearSelect.options).map(opt => opt.value);
         data.available_years.forEach(y => {
@@ -686,16 +679,16 @@ function switchDividendSubtab(subtab) {
         }
       }
 
-      // Подготовка datasets (фильтруем только те, у которых есть сумма > 0)
+      // Подготовка datasets
       const allDatasets = [
         { label: 'Факт', data: data.actual, color: '#2196F3' },
-        { label: 'Объявлено', data: data.declared_before_record, color: '#FFC107' },
-        { label: 'Ожидаем', data: data.declared_after_record, color: '#9C27B0' },
-        { label: 'Погашение', data: data.redemption, color: '#FF9800' },
+        { label: 'Объявлены', data: data.declared_before_record, color: '#FFC107' },
+        { label: 'Ожидаемые', data: data.declared_after_record, color: '#9C27B0' },
         { label: 'Прогноз', data: data.forecast || [], color: '#4CAF50' }
       ];
+      // Добавляем погашение только если есть сумма
+      // Погашение не добавляем как отдельный dataset, так как оно редко, но в детализации отобразим оранжевым.
 
-      // Фильтруем датасеты с ненулевой суммой
       const filteredDatasets = allDatasets.filter(ds => {
         const sum = ds.data.reduce((a, b) => a + b, 0);
         return sum > 0;
@@ -708,12 +701,11 @@ function switchDividendSubtab(subtab) {
         borderRadius: 4,
       }));
 
-      // Вычисляем максимальное значение для оси Y (с запасом 15%)
       let maxValue = 0;
       filteredDatasets.forEach(ds => {
         ds.data.forEach(v => { if (v > maxValue) maxValue = v; });
       });
-      const suggestedMax = maxValue * 1.15; // добавляем 15% сверху
+      const suggestedMax = maxValue * 1.15;
 
       const ctx = document.getElementById('dividendChartMonthly').getContext('2d');
       if (dividendChartMonthly) dividendChartMonthly.destroy();
@@ -768,6 +760,7 @@ function switchDividendSubtab(subtab) {
               const index = elements[0].index;
               const month = chart.data.labels[index];
               const monthNum = index + 1;
+              // Собираем все детали из всех источников
               const actualDetails = data.details_actual[monthNum] || [];
               const declaredBeforeDetails = data.details_declared_before[monthNum] || [];
               const declaredAfterDetails = data.details_declared_after[monthNum] || [];
@@ -783,10 +776,10 @@ function switchDividendSubtab(subtab) {
       // Формируем итоговую строку только из ненулевых категорий
       let parts = [];
       const categories = [
-        { label: 'факт', value: data.total_actual },
-        { label: 'объявлено', value: data.total_before },
-        { label: 'ожидаем', value: data.total_after },
-        { label: 'прогнозн', value: data.total_forecast }
+        { label: 'фактические', value: data.total_actual },
+        { label: 'объявленные', value: data.total_before },
+        { label: 'ожидаемые', value: data.total_after },
+        { label: 'прогнозные', value: data.total_forecast }
       ];
       categories.forEach(cat => {
         if (cat.value > 0) {
@@ -808,6 +801,7 @@ function switchDividendSubtab(subtab) {
       showToast('Ошибка загрузки данных по месяцам', 'error');
     }
   }
+
   function showMonthlyDetails(month, details) {
     const container = document.getElementById('monthlyDetails');
     let html = `<h4>${month}</h4>`;
@@ -837,9 +831,9 @@ function switchDividendSubtab(subtab) {
         color = '#4CAF50';
         emoji = '🔮 ';
       } else if (d.type === 'redemption') {
-		color = '#FF9800';
-		emoji = '💵 ';
-	  }else {
+        color = '#FF9800';
+        emoji = '💵 ';
+      } else {
         color = 'var(--text-secondary)';
         emoji = '❓ ';
       }
@@ -852,11 +846,10 @@ function switchDividendSubtab(subtab) {
     container.innerHTML = html;
     container.classList.add('visible');
   }
-
   // ============================================================
   // 9. СИНХРОНИЗАЦИЯ
   // ============================================================
-  async function syncOperations() {
+async function syncOperations() {
     try {
       const res = await apiCall('/api/sync', 'POST');
       if (res.last_sync) {
@@ -882,7 +875,6 @@ function switchDividendSubtab(subtab) {
       showToast('Ошибка синхронизации календарей', 'error');
     }
   }
-
   // ============================================================
   // 10. НАСТРОЙКИ: УПРАВЛЕНИЕ (переименования)
   // ============================================================
@@ -961,32 +953,75 @@ function switchDividendSubtab(subtab) {
   // ============================================================
   // 11. НАСТРОЙКИ: ПРИВЯЗКА ТИКЕРОВ
   // ============================================================
-  async function loadUntickedOperations() {
+async function loadUntickedOperations() {
     try {
       const data = await apiCall('/api/operations/unticked');
       const tbody = document.getElementById('untickedTable');
       tbody.innerHTML = '';
+      
       const operations = data.operations || [];
       if (operations.length === 0) {
         tbody.innerHTML = '<tr><td colspan="5">Нет операций без тикера</td></tr>';
         return;
       }
+      
       const tickers = data.available_tickers || [];
       allTickersList = tickers;
+      
       operations.forEach(op => {
         const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>${new Date(op.date).toLocaleDateString()}</td>
-          <td>${op.payment.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-          <td>${op.ticker || '—'}</td>
-          <td>
-            <select class="ticker-select" data-opid="${op.id}">
-              <option value="">Выберите</option>
-              ${tickers.map(t => `<option value="${t}">${t}</option>`).join('')}
-            </select>
-          </td>
-          <td><button class="btn-success" onclick="linkTicker('${op.id}')" style="padding:4px 10px; border:none; border-radius:4px; color:white; cursor:pointer;">Привязать</button></td>
-        `;
+        
+        // Дата
+        const tdDate = document.createElement('td');
+        tdDate.textContent = new Date(op.date).toLocaleDateString();
+        tr.appendChild(tdDate);
+        
+        // Сумма (с копейками)
+        const tdPayment = document.createElement('td');
+        tdPayment.textContent = op.payment.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        tr.appendChild(tdPayment);
+        
+        // Текущий тикер
+        const tdCurrent = document.createElement('td');
+        tdCurrent.textContent = op.ticker || '—';
+        tr.appendChild(tdCurrent);
+        
+        // Выпадающий список
+        const tdSelect = document.createElement('td');
+        const select = document.createElement('select');
+        select.className = 'ticker-select';
+        select.dataset.opid = op.id;
+        
+        const defaultOpt = document.createElement('option');
+        defaultOpt.value = '';
+        defaultOpt.textContent = 'Выберите';
+        select.appendChild(defaultOpt);
+        
+        tickers.forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t;
+          opt.textContent = t;
+          select.appendChild(opt);
+        });
+        
+        tdSelect.appendChild(select);
+        tr.appendChild(tdSelect);
+        
+        // Кнопка привязки
+        const tdAction = document.createElement('td');
+        const btn = document.createElement('button');
+        btn.className = 'btn-success';
+        btn.textContent = 'Привязать';
+        btn.style.padding = '4px 10px';
+        btn.style.border = 'none';
+        btn.style.borderRadius = '4px';
+        btn.style.color = 'white';
+        btn.style.cursor = 'pointer';
+        btn.style.fontSize = '10px';
+        btn.addEventListener('click', () => linkTicker(op.id));
+        tdAction.appendChild(btn);
+        tr.appendChild(tdAction);
+        
         tbody.appendChild(tr);
       });
     } catch (e) {
@@ -1015,34 +1050,83 @@ function switchDividendSubtab(subtab) {
   // ============================================================
   async function loadSectors() {
     try {
+      // Загружаем список секторов (один раз)
       if (sectorsList.length === 0) {
         sectorsList = await apiCall('/api/sectors/list');
+        // Если сектора не загрузились, используем запасной список
+        if (!sectorsList || sectorsList.length === 0) {
+          sectorsList = ['Нефть и газ', 'Металлы и добыча', 'Химия', 'Электроэнергетика', 'Машиностроение', 
+                         'Транспорт', 'Связь', 'Торговля', 'Финансы', 'ИТ', 'Строительство', 'Здравоохранение', 'Прочие'];
+        }
       }
+      
       const data = await apiCall('/api/instruments');
       const tbody = document.getElementById('sectorsTable');
       tbody.innerHTML = '';
+      
+      if (!data || data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4">Нет данных об инструментах</td></tr>';
+        return;
+      }
+      
       data.forEach(inst => {
         const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>${inst.ticker}</td>
-          <td>${inst.name || inst.ticker}</td>
-          <td>
-            <select class="sector-select" data-ticker="${inst.ticker}">
-              ${sectorsList.map(s => `<option value="${s}" ${s === (inst.sector || 'Прочие') ? 'selected' : ''}>${s}</option>`).join('')}
-            </select>
-          </td>
-          <td><button class="btn-success" onclick="updateSector('${inst.ticker}')" style="padding:4px 10px; border:none; border-radius:4px; color:white; cursor:pointer;">Сохранить</button></td>
-        `;
+        
+        // Тикер
+        const tdTicker = document.createElement('td');
+        tdTicker.textContent = inst.ticker;
+        tr.appendChild(tdTicker);
+        
+        // Название
+        const tdName = document.createElement('td');
+        tdName.textContent = inst.name || inst.ticker;
+        tr.appendChild(tdName);
+        
+        // Сектор (выпадающий список)
+        const tdSector = document.createElement('td');
+        const select = document.createElement('select');
+        select.className = 'sector-select';
+        select.dataset.ticker = inst.ticker;
+        
+        // Заполняем список секторов
+        sectorsList.forEach(s => {
+          const opt = document.createElement('option');
+          opt.value = s;
+          opt.textContent = s;
+          if (s === (inst.sector || 'Прочие')) {
+            opt.selected = true;
+          }
+          select.appendChild(opt);
+        });
+        
+        tdSector.appendChild(select);
+        tr.appendChild(tdSector);
+        
+        // Кнопка "Сохранить"
+        const tdAction = document.createElement('td');
+        const btn = document.createElement('button');
+        btn.className = 'btn-success';
+        btn.textContent = 'Сохранить';
+        btn.style.padding = '4px 10px';
+        btn.style.border = 'none';
+        btn.style.borderRadius = '4px';
+        btn.style.color = 'white';
+        btn.style.cursor = 'pointer';
+        btn.style.fontSize = '10px';
+        btn.addEventListener('click', () => updateSector(inst.ticker));
+        tdAction.appendChild(btn);
+        tr.appendChild(tdAction);
+        
         tbody.appendChild(tr);
       });
     } catch (e) {
-      console.error(e);
+      console.error('Ошибка загрузки секторов:', e);
       showToast('Ошибка загрузки секторов', 'error');
     }
   }
 
   async function updateSector(ticker) {
-    const select = document.querySelector(`.sector-select[data-ticker="${ticker}"]`);
+    const select = document.querySelector(.sector-select[data-ticker="${ticker}"]);
     const newSector = select.value;
     if (!newSector) { showToast('Выберите сектор', 'error'); return; }
     try {
@@ -1057,13 +1141,12 @@ function switchDividendSubtab(subtab) {
   // ============================================================
   // 13. ИНИЦИАЛИЗАЦИЯ
   // ============================================================
-  window.onload = function() {
+ window.onload = function() {
     loadPortfolio();
     switchDividendSubtab('yearly');
     apiCall('/api/sync-status').then(data => {
       if (data.last_sync) {
-        document.getElementById('lastSync').textContent = new Date(data.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
-        document.getElementById('syncStatus').textContent = `Последняя синхронизация операций: ${new Date(data.last_sync).toLocaleString('ru-RU')}`;
+        document.getElementById('syncStatus').textContent = "Последняя синхронизация операций: ${new Date(data.last_sync).toLocaleString('ru-RU')}";
       }
     }).catch(() => {});
   };

@@ -364,37 +364,36 @@ async def fetch_all_coupons(http_session):
             figi = pos["figi"]
             ticker = pos["ticker"]
             try:
-                # 1. Получаем купоны из API
                 coupons = await get_coupons_for_instrument(http_session, figi)
                 if not coupons:
                     logging.warning(f"Нет купонов для {ticker}")
                     continue
                 
-                # 2. Определяем последний купон
+                # Сохраняем все купоны из API
+                for coup in coupons:
+                    db.upsert_coupon_calendar(ticker, figi, coup)
+                
+                # Определяем последний купон и дату погашения
                 last_coupon = coupons[-1]
                 last_date = datetime.datetime.fromisoformat(last_coupon["couponDate"].replace('Z', '+00:00'))
-                amount = last_coupon["payOneBond"]
+                amount = last_coupon.get("payOneBond", {})
                 
-                # 3. Получаем дату погашения
+                # Получаем дату погашения
                 bond_info = await get_bond_info(http_session, figi)
                 maturity_date = bond_info.get("maturity_date")
                 if not maturity_date:
                     logging.warning(f"Нет даты погашения для {ticker}")
-                    # сохраняем только то, что есть
-                    for coup in coupons:
-                        db.upsert_coupon_calendar(ticker, figi, coup)
                     continue
-                
                 maturity_dt = datetime.datetime.fromisoformat(maturity_date.replace('Z', '+00:00'))
                 
-                # 4. Вычисляем период между купонами (в днях)
+                # Вычисляем период (в днях) между последними купонами
                 if len(coupons) >= 2:
                     prev_date = datetime.datetime.fromisoformat(coupons[-2]["couponDate"].replace('Z', '+00:00'))
                     period_days = (last_date - prev_date).days
                 else:
                     period_days = 182  # стандартный полугодовой купон
                 
-                # 5. Добавляем купоны до погашения
+                # Добавляем недостающие купоны до даты погашения
                 current_date = last_date
                 while current_date < maturity_dt:
                     next_date = current_date + datetime.timedelta(days=period_days)
@@ -408,39 +407,31 @@ async def fetch_all_coupons(http_session):
                         "fixDate": (next_date - datetime.timedelta(days=1)).isoformat() + "Z",
                         "is_redemption": False
                     }
-                    coupons.append(new_coupon)
+                    db.upsert_coupon_calendar(ticker, figi, new_coupon)
                     current_date = next_date
                 
-                # 6. Сохраняем все купоны в БД
-                for coup in coupons:
-                    db.upsert_coupon_calendar(ticker, figi, coup)
-                
-                # 7. Добавляем погашение (если дата погашения есть и ещё не прошла)
+                # Добавляем погашение (если дата погашения ещё не прошла)
                 if maturity_dt >= datetime.datetime.now(datetime.timezone.utc):
-                    db.upsert_coupon_calendar(ticker, figi, {
+                    redemption = {
                         "couponDate": maturity_date,
                         "payOneBond": {"units": "1000", "nano": 0},
                         "currency": "RUB",
                         "fixDate": maturity_date,
                         "is_redemption": True
-                    })
+                    }
+                    db.upsert_coupon_calendar(ticker, figi, redemption)
                 
-                result[ticker] = {"figi": figi, "coupons": coupons}
-                logging.info(f"Сохранено {len(coupons)} купонов и погашение для {ticker}")
+                logging.info(f"Сохранены купоны и погашение для {ticker}")
             except Exception as e:
                 logging.error(f"Ошибка обработки облигации {ticker}: {e}")
     
     return result
     
 async def get_bond_info(http_session, figi: str):
-    """Получает информацию об облигации: дата погашения, купонный период (дней)."""
     endpoint = "tinkoff.public.invest.api.contract.v1.InstrumentsService/GetInstrumentBy"
     params = {"id": figi, "idType": "INSTRUMENT_ID_TYPE_FIGI"}
     data = await tinkoff_api_request(http_session, "POST", endpoint, params=params)
     instrument = data.get("instrument", {})
-    maturity_date = instrument.get("maturityDate")
-    # купонный период можно получить из couponQuantityPerYear, но лучше из последнего купона
     return {
-        "maturity_date": maturity_date,
-        "coupon_period": None  # будем вычислять из купонов
+        "maturity_date": instrument.get("maturityDate")
     }
