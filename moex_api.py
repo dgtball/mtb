@@ -296,37 +296,32 @@ def calc_period_change(df):
     return combined.reset_index()
 
 async def get_bond_maturity_date(http_session, ticker: str):
-    """
-    Получает дату погашения и купонный период (в днях) облигации по тикеру через MOEX ISS.
-    Возвращает словарь с полями maturity_date (str) и coupon_period (int) или None.
-    """
-    url = f"https://iss.moex.com/iss/engines/stock/markets/bonds/boards/TQCB/securities/{ticker}.json?iss.meta=off&iss.only=securities"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        async with http_session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-            if resp.status != 200:
-                logging.warning(f"MOEX вернул статус {resp.status} для {ticker}")
-                return None
-            data = await resp.json()
-            if 'securities' in data and 'data' in data['securities']:
-                rows = data['securities']['data']
-                if rows:
-                    columns = data['securities']['columns']
-                    result = {}
-                    # Дата погашения
-                    try:
-                        idx = columns.index('MATDATE')
-                        result['maturity_date'] = rows[0][idx]
-                    except ValueError:
-                        logging.warning(f"Колонка MATDATE не найдена для {ticker}")
-                    # Купонный период (в днях) – поле COUPONPERIOD
-                    try:
-                        idx = columns.index('COUPONPERIOD')
-                        result['coupon_period'] = int(rows[0][idx]) if rows[0][idx] else None
-                    except ValueError:
-                        logging.warning(f"Колонка COUPONPERIOD не найдена для {ticker}")
-                    if result:
-                        return result
-    except Exception as e:
-        logging.error(f"Ошибка получения данных из MOEX для {ticker}: {e}")
+    boards = ["TQCB", "TQOB"]
+    for board in boards:
+        url = f"https://iss.moex.com/iss/engines/stock/markets/bonds/boards/{board}/securities/{ticker}.json?iss.meta=off&iss.only=securities"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        try:
+            async with http_session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    continue
+                data = await resp.json()
+                if 'securities' in data and 'data' in data['securities']:
+                    rows = data['securities']['data']
+                    if rows:
+                        columns = data['securities']['columns']
+                        result = {}
+                        try:
+                            idx = columns.index('MATDATE')
+                            result['maturity_date'] = rows[0][idx]
+                        except ValueError:
+                            pass
+                        try:
+                            idx = columns.index('COUPONPERIOD')
+                            result['coupon_period'] = int(rows[0][idx]) if rows[0][idx] else None
+                        except ValueError:
+                            pass
+                        if result:
+                            return result
+        except Exception:
+            continue
     return None
