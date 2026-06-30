@@ -356,7 +356,7 @@ async def api_dividends_monthly(request: Request, year: int = None):
             if record_date and record_date >= datetime.date.today().isoformat():
                 declared_before_record[month]["total"] += amount
                 declared_before_record[month]["details"].append({
-                    "date": payment_date,
+                    "date": record_date,
                     "ticker": ticker,
                     "name": name,
                     "amount": amount,
@@ -365,7 +365,7 @@ async def api_dividends_monthly(request: Request, year: int = None):
             else:
                 declared_after_record[month]["total"] += amount
                 declared_after_record[month]["details"].append({
-                    "date": payment_date,
+                    "date": record_date,
                     "ticker": ticker,
                     "name": name,
                     "amount": amount,
