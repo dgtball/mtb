@@ -372,7 +372,7 @@ async def api_dividends_monthly(request: Request, year: int = None):
                     "type": "declared_dividend_after"
                 })
 
-                # ---------- 4. Объявленные купоны (из календаря купонов) ----------
+        # ---------- 4. Объявленные купоны (из календаря купонов) ----------
         c.execute("""
             SELECT ticker, coupon_date, coupon_value, record_date, is_redemption
             FROM coupon_calendar
@@ -395,8 +395,8 @@ async def api_dividends_monthly(request: Request, year: int = None):
             if quantity == 0:
                 continue
             amount = coupon_per_bond * quantity
-            # Определяем месяц по record_date, если есть, иначе по coupon_date
-            month = int(record_date[5:7]) if record_date else int(coupon_date[5:7])
+            # Группируем по дате выплаты (coupon_date)
+            month = int(coupon_date[5:7])
             name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
             
             if is_redemption:
