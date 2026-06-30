@@ -430,12 +430,22 @@ async def fetch_all_coupons(http_session):
     return result
     
 async def get_bond_info(http_session, figi: str):
-    """Получает информацию об облигации: дата погашения через GetBondBy."""
-    endpoint = "tinkoff.public.invest.api.contract.v1.InstrumentsService/GetBondBy"
+    # 1. Получаем базовую информацию через GetInstrumentBy (он работает)
+    endpoint = "tinkoff.public.invest.api.contract.v1.InstrumentsService/GetInstrumentBy"
     params = {"id": figi, "idType": "INSTRUMENT_ID_TYPE_FIGI"}
     data = await tinkoff_api_request(http_session, "POST", endpoint, params=params)
     instrument = data.get("instrument", {})
-    maturity_date = instrument.get("maturityDate")
+    uid = instrument.get("uid")
+    if not uid:
+        logging.warning(f"Не удалось получить uid для FIGI {figi}")
+        return {"maturity_date": None}
+    
+    # 2. Вызываем GetBondBy с uid
+    endpoint_bond = "tinkoff.public.invest.api.contract.v1.InstrumentsService/GetBondBy"
+    params_bond = {"id": uid, "idType": "INSTRUMENT_ID_TYPE_UID"}
+    data_bond = await tinkoff_api_request(http_session, "POST", endpoint_bond, params=params_bond)
+    instrument_bond = data_bond.get("instrument", {})
+    maturity_date = instrument_bond.get("maturityDate")
     if not maturity_date:
         logging.warning(f"Нет даты погашения для FIGI {figi}")
     return {"maturity_date": maturity_date}
