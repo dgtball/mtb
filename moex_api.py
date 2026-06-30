@@ -121,7 +121,7 @@ async def load_instrument_names(http_session, force=False):
 
     logging.info(f"✅ Обновлено {len(instruments)} инструментов из MOEX")
 
-@retry(max_attempts=3, delay=1, backoff=1.5)    
+@retry(max_attempts=5, delay=2, backoff=2)    
 async def get_market_data(http_session):
     url = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=marketdata,securities"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
