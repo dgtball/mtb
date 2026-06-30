@@ -372,7 +372,7 @@ async def api_dividends_monthly(request: Request, year: int = None):
                     "type": "declared_dividend_after"
                 })
 
-        # ---------- 4. Объявленные купоны (из календаря купонов) ----------
+                # ---------- 4. Объявленные купоны (из календаря купонов) ----------
         c.execute("""
             SELECT ticker, coupon_date, coupon_value, record_date, is_redemption
             FROM coupon_calendar
@@ -395,11 +395,11 @@ async def api_dividends_monthly(request: Request, year: int = None):
             if quantity == 0:
                 continue
             amount = coupon_per_bond * quantity
+            # Определяем месяц по record_date, если есть, иначе по coupon_date
             month = int(record_date[5:7]) if record_date else int(coupon_date[5:7])
             name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
             
             if is_redemption:
-                # Погашение – отдельный dataset
                 redemption_by_month[month]["total"] += amount
                 redemption_by_month[month]["details"].append({
                     "date": coupon_date,
@@ -409,8 +409,9 @@ async def api_dividends_monthly(request: Request, year: int = None):
                     "type": "redemption"
                 })
             else:
-                # Обычные купоны
-                if record_date and record_date >= datetime.date.today().isoformat():
+                # Определяем, относится ли купон к "объявленным" или "ожидаемым"
+                # Если record_date отсутствует, считаем, что реестр открыт (если купон будущий)
+                if (record_date and record_date >= datetime.date.today().isoformat()) or (not record_date and coupon_date > datetime.date.today().isoformat()):
                     declared_before_record[month]["total"] += amount
                     declared_before_record[month]["details"].append({
                         "date": coupon_date,
