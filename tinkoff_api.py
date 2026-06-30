@@ -392,8 +392,6 @@ async def fetch_all_coupons(http_session):
                 
                 # 3. Если дата получена, обновляем instruments
                 if maturity_date:
-                    # Обновляем запись в instruments (сохраняем maturity_date)
-                    # Получаем существующие данные, чтобы не потерять другие поля
                     existing = db.get_instrument(ticker)
                     if existing:
                         db.upsert_instrument(
@@ -417,19 +415,20 @@ async def fetch_all_coupons(http_session):
                 # 4. Генерация недостающих купонов и погашения
                 # Определяем последний купон и период
                 last_coupon = coupons[-1]
-                last_date_dt = datetime.datetime.fromisoformat(last_coupon["couponDate"].replace('Z', '+00:00'))
+                last_date_str = last_coupon["couponDate"].replace('Z', '+00:00')
+                last_date_dt = datetime.datetime.fromisoformat(last_date_str).replace(tzinfo=None)
                 amount = last_coupon["payOneBond"]
                 
                 # Вычисляем период (если купонов >=2)
                 if len(coupons) >= 2:
-                    prev_date = datetime.datetime.fromisoformat(coupons[-2]["couponDate"].replace('Z', '+00:00'))
-                    period_days = (last_date_dt - prev_date).days
+                    prev_date_str = coupons[-2]["couponDate"].replace('Z', '+00:00')
+                    prev_date_dt = datetime.datetime.fromisoformat(prev_date_str).replace(tzinfo=None)
+                    period_days = (last_date_dt - prev_date_dt).days
                 else:
-                    period_days = 182  # стандартный полугодовой купон
-                
+                    period_days = 182  # стандартный полугодовой купон               
                 # Генерируем купоны до даты погашения, если она известна
                 if maturity_date:
-                    maturity_dt = datetime.datetime.fromisoformat(maturity_date.replace('Z', '+00:00'))
+                    maturity_dt = datetime.datetime.fromisoformat(maturity_date.replace('Z', '+00:00')).replace(tzinfo=None)
                     current_date = last_date_dt
                     while current_date < maturity_dt:
                         next_date = current_date + datetime.timedelta(days=period_days)
@@ -444,10 +443,9 @@ async def fetch_all_coupons(http_session):
                             "is_redemption": False
                         }
                         coupons.append(new_coupon)
-                        current_date = next_date
-                    
+                        current_date = next_date                
                     # Добавляем погашение (если дата погашения в будущем)
-                    if maturity_dt >= datetime.datetime.now(datetime.timezone.utc):
+                    if maturity_dt >= datetime.datetime.now().replace(tzinfo=None):
                         coupons.append({
                             "couponDate": maturity_date,
                             "payOneBond": {"units": "1000", "nano": 0},
@@ -455,16 +453,12 @@ async def fetch_all_coupons(http_session):
                             "fixDate": maturity_date,
                             "is_redemption": True
                         })
-                        logging.info(f"Добавлено погашение для {ticker} на {maturity_date}")
-                
+                        logging.info(f"Добавлено погашение для {ticker} на {maturity_date}")              
                 # 5. Сохраняем все купоны в БД
                 for coup in coupons:
-                    db.upsert_coupon_calendar(ticker, figi, coup)
-                
+                    db.upsert_coupon_calendar(ticker, figi, coup)                
                 result[ticker] = {"figi": figi, "coupons": coupons}
-                logging.info(f"Сохранено {len(coupons)} купонов для {ticker}")
-                
+                logging.info(f"Сохранено {len(coupons)} купонов для {ticker}")               
             except Exception as e:
-                logging.error(f"Ошибка обработки облигации {ticker}: {e}", exc_info=True)
-    
+                logging.error(f"Ошибка обработки облигации {ticker}: {e}", exc_info=True)  
     return result
