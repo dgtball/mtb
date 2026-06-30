@@ -491,9 +491,9 @@ async def api_dividends_monthly(request: Request, year: int = None):
 @app.get("/api/sync-status")
 async def api_sync_status(request: Request):
     if not check_token(request):
-        raise HTTPException(status_code=403, detail="Forbidden")
-    last_date = db.get_last_operation_date()
-    return JSONResponse({"last_sync": last_date})
+        raise HTTPException(403)
+    last_sync = db.get_last_sync_time()
+    return JSONResponse({"last_sync": last_sync})
 
 @app.post("/api/sync")
 async def api_sync(request: Request):
@@ -504,6 +504,7 @@ async def api_sync(request: Request):
         full = request.query_params.get("full") == "true"
         new_count = await sync_operations(bot_session, force_full=full)
         now_moscow = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3)).isoformat()
+        db.set_last_sync_time(now_moscow)
         return JSONResponse({
             "status": "ok",
             "new_operations": new_count,
@@ -522,6 +523,7 @@ async def api_sync_full(request: Request):
         from tinkoff_api import sync_operations
         new_count = await sync_operations(bot_session, force_full=True)
         now_moscow = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3)).isoformat()
+        db.set_last_sync_time(now_moscow)
         return JSONResponse({
             "status": "ok",
             "new_operations": new_count,

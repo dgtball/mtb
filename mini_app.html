@@ -689,8 +689,8 @@ function switchDividendSubtab(subtab) {
       // Подготовка datasets (фильтруем только те, у которых есть сумма > 0)
       const allDatasets = [
         { label: 'Факт', data: data.actual, color: '#2196F3' },
-        { label: 'Объявлены', data: data.declared_before_record, color: '#FFC107' },
-        { label: 'Ожидаемые', data: data.declared_after_record, color: '#9C27B0' },
+        { label: 'Объявлено', data: data.declared_before_record, color: '#FFC107' },
+        { label: 'Ожидаем', data: data.declared_after_record, color: '#9C27B0' },
         { label: 'Прогноз', data: data.forecast || [], color: '#4CAF50' }
       ];
 
@@ -782,10 +782,10 @@ function switchDividendSubtab(subtab) {
       // Формируем итоговую строку только из ненулевых категорий
       let parts = [];
       const categories = [
-        { label: 'фактические', value: data.total_actual },
-        { label: 'объявленные', value: data.total_before },
-        { label: 'ожидаемые', value: data.total_after },
-        { label: 'прогнозные', value: data.total_forecast }
+        { label: 'факт', value: data.total_actual },
+        { label: 'объявлено', value: data.total_before },
+        { label: 'ожидаем', value: data.total_after },
+        { label: 'прогнозн', value: data.total_forecast }
       ];
       categories.forEach(cat => {
         if (cat.value > 0) {
@@ -855,10 +855,13 @@ function switchDividendSubtab(subtab) {
   async function syncOperations() {
     try {
       const res = await apiCall('/api/sync', 'POST');
-      showToast(`Синхронизация операций выполнена. Добавлено ${res.new_operations} записей.`, 'success');
-      document.getElementById('syncStatus').textContent = `Последняя синхронизация операций: ${new Date(res.last_sync).toLocaleString('ru-RU')}`;
+      if (res.last_sync) {
+        document.getElementById('lastSync').textContent = new Date(res.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+      }
       if (currentDividendSubtab === 'yearly') loadDividends();
       else loadMonthlyDividends();
+      showToast(`Синхронизация операций выполнена. Добавлено ${res.new_operations} записей.`, 'success');
+      document.getElementById('syncStatus').textContent = `Последняя синхронизация операций: ${new Date(res.last_sync).toLocaleString('ru-RU')}`;
     } catch(e) {
       showToast('Ошибка синхронизации операций', 'error');
     }
@@ -1055,6 +1058,7 @@ function switchDividendSubtab(subtab) {
     switchDividendSubtab('yearly');
     apiCall('/api/sync-status').then(data => {
       if (data.last_sync) {
+        document.getElementById('lastSync').textContent = new Date(data.last_sync).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
         document.getElementById('syncStatus').textContent = `Последняя синхронизация операций: ${new Date(data.last_sync).toLocaleString('ru-RU')}`;
       }
     }).catch(() => {});

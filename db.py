@@ -456,3 +456,17 @@ def get_dividend_forecast(ticker: str = None):
             c.execute("SELECT ticker, forecast_amount, forecast_month, forecast_year, confidence_score, method, updated_at FROM dividend_forecast")
             rows = c.fetchall()
             return [{"ticker": r[0], "amount": r[1], "month": r[2], "year": r[3], "confidence": r[4], "method": r[5], "updated_at": r[6]} for r in rows]
+            
+# ---------- ВРЕМЯ ПОСЛЕДНЕЙ СИНХРОНИЗАЦИИ ----------
+def set_last_sync_time(timestamp: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO portfolio_state (key, value) VALUES (?, ?)", ("last_sync_time", timestamp))
+        conn.commit()
+
+def get_last_sync_time() -> str | None:
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT value FROM portfolio_state WHERE key = ?", ("last_sync_time",))
+        row = c.fetchone()
+        return row[0] if row else None
