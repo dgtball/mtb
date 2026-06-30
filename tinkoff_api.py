@@ -382,9 +382,11 @@ async def fetch_all_coupons(http_session):
                 bond_info = await get_bond_info(http_session, figi)
                 maturity_date = bond_info.get("maturity_date")
                 if not maturity_date:
-                    logging.warning(f"Нет даты погашения для {ticker}")
+                    logging.warning(f"Нет даты погашения для {ticker} (FIGI {figi}). Пропускаем генерацию купонов.")
+                    # Сохраняем только существующие купоны
+                    for coup in coupons:
+                        db.upsert_coupon_calendar(ticker, figi, coup)
                     continue
-                maturity_dt = datetime.datetime.fromisoformat(maturity_date.replace('Z', '+00:00'))
                 
                 # Вычисляем период (в днях) между последними купонами
                 if len(coupons) >= 2:
@@ -428,10 +430,22 @@ async def fetch_all_coupons(http_session):
     return result
     
 async def get_bond_info(http_session, figi: str):
+    """Получает информацию об облигации: дата погашения."""
     endpoint = "tinkoff.public.invest.api.contract.v1.InstrumentsService/GetInstrumentBy"
     params = {"id": figi, "idType": "INSTRUMENT_ID_TYPE_FIGI"}
     data = await tinkoff_api_request(http_session, "POST", endpoint, params=params)
     instrument = data.get("instrument", {})
-    return {
-        "maturity_date": instrument.get("maturityDate")
-    }
+    
+    # Логируем полный ответ для отладки (для конкретного FIGI)
+    if figi == "TCS00A106UW3" or figi == "BBG01MVSHPP3":  # временно для нужных
+        logging.info(f"Полный ответ GetInstrumentBy для FIGI {figi}: {instrument}")
+        # Выводим все ключи
+        logging.info(f"Ключи instrument: {list(instrument.keys())}")
+    
+    maturity_date = instrument.get("maturityDate")
+    if not maturity_date:
+        # Попробуем другие возможные поля
+        maturity_date = instrument.get("maturity_date")
+    if not maturity_date:
+        maturity_date = instrument.get("maturityDate")
+    return {"maturity_date": maturity_date}
