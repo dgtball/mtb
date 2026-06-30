@@ -685,6 +685,7 @@
         { label: 'Факт', data: data.actual, color: '#2196F3' },
         { label: 'Объявлены', data: data.declared_before_record, color: '#FFC107' },
         { label: 'Ожидаемые', data: data.declared_after_record, color: '#9C27B0' },
+        { label: 'Погашения', data: data.redemption || [], color: '#FF9800' },
         { label: 'Прогноз', data: data.forecast || [], color: '#4CAF50' }
       ];
 
@@ -763,7 +764,8 @@
               const declaredBeforeDetails = data.details_declared_before[monthNum] || [];
               const declaredAfterDetails = data.details_declared_after[monthNum] || [];
               const forecastDetails = data.details_forecast[monthNum] || [];
-              const allDetails = [...actualDetails, ...declaredBeforeDetails, ...declaredAfterDetails, ...forecastDetails];
+              const redemptionDetails = data.details_redemption[monthNum] || [];
+              const allDetails = [...actualDetails, ...declaredBeforeDetails, ...declaredAfterDetails, ...redemptionDetails, ...forecastDetails];
               if (allDetails.length > 0) showMonthlyDetails(month, allDetails);
             }
           }
@@ -777,6 +779,7 @@
         { label: 'фактические', value: data.total_actual },
         { label: 'объявленные', value: data.total_before },
         { label: 'ожидаемые', value: data.total_after },
+        { label: 'погашения', value: data.total_redemption },
         { label: 'прогнозные', value: data.total_forecast }
       ];
       categories.forEach(cat => {

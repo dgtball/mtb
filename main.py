@@ -381,6 +381,8 @@ async def api_dividends_monthly(request: Request, year: int = None):
         """, (str(year),))
         declared_coupons = c.fetchall()
 
+        redemption_by_month = {m: {"total": 0.0, "details": []} for m in range(1, 13)}
+
         for row in declared_coupons:
             ticker = row[0]
             coupon_date = row[1]
@@ -395,10 +397,11 @@ async def api_dividends_monthly(request: Request, year: int = None):
             amount = coupon_per_bond * quantity
             month = int(record_date[5:7]) if record_date else int(coupon_date[5:7])
             name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
+            
             if is_redemption:
-                # Погашение – оранжевый цвет
-                declared_before_record[month]["total"] += amount
-                declared_before_record[month]["details"].append({
+                # Погашение – отдельный dataset
+                redemption_by_month[month]["total"] += amount
+                redemption_by_month[month]["details"].append({
                     "date": coupon_date,
                     "ticker": ticker,
                     "name": name,
@@ -406,6 +409,7 @@ async def api_dividends_monthly(request: Request, year: int = None):
                     "type": "redemption"
                 })
             else:
+                # Обычные купоны
                 if record_date and record_date >= datetime.date.today().isoformat():
                     declared_before_record[month]["total"] += amount
                     declared_before_record[month]["details"].append({
@@ -468,11 +472,13 @@ async def api_dividends_monthly(request: Request, year: int = None):
         before_data = [declared_before_record[m]["total"] for m in range(1, 13)]
         after_data = [declared_after_record[m]["total"] for m in range(1, 13)]
         forecast_data = [forecast_by_month[m]["total"] for m in range(1, 13)]
+        redemption_data = [redemption_by_month[m]["total"] for m in range(1, 13)]
 
         total_actual = sum(actual_data)
         total_before = sum(before_data)
         total_after = sum(after_data)
         total_forecast = sum(forecast_data)
+        total_redemption = sum(redemption_data)
 
         return JSONResponse({
             "year": year,
@@ -480,14 +486,17 @@ async def api_dividends_monthly(request: Request, year: int = None):
             "actual": actual_data,
             "declared_before_record": before_data,
             "declared_after_record": after_data,
+            "redemption": redemption_data,
             "forecast": forecast_data,
             "total_actual": total_actual,
             "total_before": total_before,
             "total_after": total_after,
+            "total_redemption": total_redemption,
             "total_forecast": total_forecast,
             "details_actual": {m: actual_by_month[m]["details"] for m in range(1, 13)},
             "details_declared_before": {m: declared_before_record[m]["details"] for m in range(1, 13)},
             "details_declared_after": {m: declared_after_record[m]["details"] for m in range(1, 13)},
+            "details_redemption": {m: redemption_by_month[m]["details"] for m in range(1, 13)},
             "details_forecast": {m: forecast_by_month[m]["details"] for m in range(1, 13)},
             "available_years": all_years
         })
