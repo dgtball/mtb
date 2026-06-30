@@ -280,7 +280,7 @@ def get_all_instruments():
         rows = c.fetchall()
     return [{"ticker": r[0], "name": r[1], "sector": r[2], "figi": r[3], "instrument_type": r[4], "updated_at": r[5]} for r in rows]
 
-def upsert_instrument(ticker: str, name: str = None, sector: str = None, figi: str = None, instrument_type: str = None):
+def upsert_instrument(ticker: str, name: str = None, sector: str = None, figi: str = None, instrument_type: str = None, maturity_date: str = None):
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         # Если сектор не указан, пытаемся взять из старой таблицы sectors
@@ -298,7 +298,7 @@ def upsert_instrument(ticker: str, name: str = None, sector: str = None, figi: s
             if row and row[0]:
                 name = row[0]
             else:
-                name = ticker  # гарантируем, что не None
+                name = ticker
         # Если figi не указан, оставляем существующий
         if figi is None:
             c.execute("SELECT figi FROM instruments WHERE ticker = ?", (ticker,))
@@ -311,10 +311,16 @@ def upsert_instrument(ticker: str, name: str = None, sector: str = None, figi: s
             row = c.fetchone()
             if row and row[0]:
                 instrument_type = row[0]
+        # Если maturity_date не указан, оставляем существующий
+        if maturity_date is None:
+            c.execute("SELECT maturity_date FROM instruments WHERE ticker = ?", (ticker,))
+            row = c.fetchone()
+            if row and row[0]:
+                maturity_date = row[0]
 
-        c.execute('''INSERT OR REPLACE INTO instruments (ticker, name, sector, figi, instrument_type, updated_at)
-                     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)''',
-                  (ticker, name, sector, figi, instrument_type))
+        c.execute('''INSERT OR REPLACE INTO instruments (ticker, name, sector, figi, instrument_type, updated_at, maturity_date)
+                     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)''',
+                  (ticker, name, sector, figi, instrument_type, maturity_date))
         conn.commit()
 
 def update_instrument_sector(ticker: str, new_sector: str):
