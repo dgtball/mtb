@@ -280,55 +280,62 @@ def get_all_instruments():
         rows = c.fetchall()
     return [{"ticker": r[0], "name": r[1], "sector": r[2], "figi": r[3], "instrument_type": r[4], "updated_at": r[5]} for r in rows]
 
-def upsert_instrument(ticker: str, name: str = None, sector: str = None, figi: str = None, instrument_type: str = None, maturity_date: str = None):
+def upsert_instrument(ticker: str, name: str = None, sector: str = None, figi: str = None,
+                      instrument_type: str = None, maturity_date: str = None, coupon_period: int = None):
+    """
+    Вставляет или обновляет запись в таблице instruments.
+    Если параметр не указан, оставляет существующее значение (если оно есть).
+    """
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
-        # Если сектор не указан, пытаемся взять из старой таблицы sectors
+        # Сначала получаем существующие значения, если они есть
+        c.execute("SELECT name, sector, figi, instrument_type, maturity_date, coupon_period FROM instruments WHERE ticker = ?", (ticker,))
+        row = c.fetchone()
+        existing = {
+            "name": row[0] if row else None,
+            "sector": row[1] if row else None,
+            "figi": row[2] if row else None,
+            "instrument_type": row[3] if row else None,
+            "maturity_date": row[4] if row else None,
+            "coupon_period": row[5] if row else None
+        }
+        
+        # Если сектор не указан, пробуем взять из старой таблицы sectors (для обратной совместимости)
         if sector is None:
             c.execute("SELECT sector_name FROM sectors WHERE ticker = ?", (ticker,))
-            row = c.fetchone()
-            if row:
-                sector = row[0]
+            row_sector = c.fetchone()
+            if row_sector:
+                sector = row_sector[0]
             else:
-                sector = "Прочие"
-        # Если имя не указано, оставляем существующее
+                sector = existing["sector"] or "Прочие"
+        
+        # Если имя не указано, оставляем существующее или ставим тикер
         if name is None:
-            c.execute("SELECT name FROM instruments WHERE ticker = ?", (ticker,))
-            row = c.fetchone()
-            if row and row[0]:
-                name = row[0]
-            else:
-                name = ticker
+            name = existing["name"] or ticker
+        
         # Если figi не указан, оставляем существующий
         if figi is None:
-            c.execute("SELECT figi FROM instruments WHERE ticker = ?", (ticker,))
-            row = c.fetchone()
-            if row and row[0]:
-                figi = row[0]
+            figi = existing["figi"]
+        
         # Если instrument_type не указан, оставляем существующий
         if instrument_type is None:
-            c.execute("SELECT instrument_type FROM instruments WHERE ticker = ?", (ticker,))
-            row = c.fetchone()
-            if row and row[0]:
-                instrument_type = row[0]
-        # Если maturity_date не указан, оставляем существующий
+            instrument_type = existing["instrument_type"]
+        
+        # Если maturity_date не указана, оставляем существующую
         if maturity_date is None:
-            c.execute("SELECT maturity_date FROM instruments WHERE ticker = ?", (ticker,))
-            row = c.fetchone()
-            if row and row[0]:
-                maturity_date = row[0]
+            maturity_date = existing["maturity_date"]
+        
         # Если coupon_period не указан, оставляем существующий
         if coupon_period is None:
-            c.execute("SELECT coupon_period FROM instruments WHERE ticker = ?", (ticker,))
-            row = c.fetchone()
-            if row and row[0]:
-                coupon_period = row[0]
+            coupon_period = existing["coupon_period"]
+        
+        # Выполняем INSERT OR REPLACE
         c.execute('''INSERT OR REPLACE INTO instruments 
                      (ticker, name, sector, figi, instrument_type, updated_at, maturity_date, coupon_period)
                      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)''',
                   (ticker, name, sector, figi, instrument_type, maturity_date, coupon_period))
         conn.commit()
-
+        
 def update_instrument_sector(ticker: str, new_sector: str):
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
