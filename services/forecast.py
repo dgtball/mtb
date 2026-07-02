@@ -119,6 +119,14 @@ async def calculate_forecast_for_ticker(ticker: str) -> list[dict]:
         if period_forecast and period_forecast["amount"] > 0:
             result.append(period_forecast)
 
+    declared_set = {
+        (f["year"], f["month"])
+        for f in result if f["method"] == "declared"
+    }
+    result = [
+        f for f in result
+        if f["method"] == "declared" or (f["year"], f["month"]) not in declared_set
+    ]
     return result
 
 
