@@ -74,11 +74,11 @@ async def calculate_forecast_for_ticker(ticker: str) -> list[dict]:
     past = [(ds, amt) for ds, amt in past if _parse_date(ds) >= cutoff]
 
     if len(past) < 3:
-        return result
+        return []
 
     freq = classify_frequency(past)
     if freq == "unknown":
-        return result
+        return []
 
     sector = await db.get_sector(ticker)
 
@@ -125,7 +125,7 @@ async def calculate_forecast_for_ticker(ticker: str) -> list[dict]:
     }
     result = [
         f for f in result
-        if f["method"] == "declared" or (f["year"], f["month"]) not in declared_set
+        if f["method"] != "declared" and (f["year"], f["month"]) not in declared_set
     ]
     return result
 
