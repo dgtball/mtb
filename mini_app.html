@@ -823,7 +823,7 @@
         { label: 'Объявлены', data: data.declared_before_record, color: '#FFC107' },
         { label: 'Ожидаем', data: data.declared_after_record, color: '#9C27B0' },
         { label: 'Погашение', data: data.redemption || [], color: '#FF9800' },
-        { label: 'Прогноз', data: data.forecast.map((v, i) => v + (data.manual?.[i] || 0)) || [], color: '#4CAF50' }
+        { label: 'Прогноз', data: data.forecast || [], color: '#4CAF50' }
       ];
 
       const filteredDatasets = allDatasets.filter(ds => {
@@ -902,9 +902,8 @@
               const declaredBeforeDetails = data.details_declared_before[monthNum] || [];
               const declaredAfterDetails = data.details_declared_after[monthNum] || [];
               const forecastDetails = data.details_forecast[monthNum] || [];
-              const manualDetails = (data.details_manual[monthNum] || []).map(d => ({...d, type: 'forecast'}));
               const redemptionDetails = data.details_redemption[monthNum] || [];
-              const allDetails = [...actualDetails, ...declaredBeforeDetails, ...declaredAfterDetails, ...redemptionDetails, ...forecastDetails, ...manualDetails];
+              const allDetails = [...actualDetails, ...declaredBeforeDetails, ...declaredAfterDetails, ...redemptionDetails, ...forecastDetails];
               if (allDetails.length > 0) showMonthlyDetails(month, allDetails);
             }
           }
@@ -919,7 +918,7 @@
         { label: 'Объявлены', value: data.total_before },
         { label: 'Ожидаем', value: data.total_after },
         { label: 'Погашение', value: data.total_redemption },
-        { label: 'Прогноз', value: data.total_forecast + (data.total_manual || 0) }
+        { label: 'Прогноз', value: data.total_forecast }
       ];
       categories.forEach(cat => {
         if (cat.value > 0) {

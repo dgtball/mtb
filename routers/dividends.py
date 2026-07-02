@@ -232,19 +232,19 @@ async def api_dividends_monthly(request: Request, year: int = None):
                     })
 
         forecast_rows = await db.get_dividend_forecast(year=year)
-        manual_rows = await db.get_manual_forecasts(year=year)
+        forecast_rows.sort(key=lambda r: (r["year"], r["month"], 0 if r.get("method") == "manual" else 1))
 
-        manual_keys = {(f["ticker"], f["year"], f["month"]) for f in manual_rows}
-
+        seen_keys = set()
         forecast_by_month = {m: {"total": 0.0, "details": []} for m in range(1, 13)}
-        manual_by_month = {m: {"total": 0.0, "details": []} for m in range(1, 13)}
 
         for row in forecast_rows:
             if row["amount"] <= 0:
                 continue
             ticker = row["ticker"]
-            if (ticker, row["year"], row["month"]) in manual_keys:
+            key = (ticker, row["year"], row["month"])
+            if key in seen_keys:
                 continue
+            seen_keys.add(key)
             forecast_per_share = row["amount"]
             month = row["month"]
             if forecast_per_share > 0:
@@ -256,56 +256,36 @@ async def api_dividends_monthly(request: Request, year: int = None):
                 forecast_by_month[month]["total"] += amount
                 forecast_by_month[month]["details"].append({
                     "date": f"{year}-{month:02d}-01", "ticker": ticker, "name": name,
-                    "amount": amount, "type": "forecast"
+                    "amount": amount, "type": "forecast", "method": row.get("method"),
+                    "id": row.get("id")
                 })
-
-        for row in manual_rows:
-            if row["amount"] <= 0:
-                continue
-            ticker = row["ticker"]
-            forecast_per_share = row["amount"]
-            month = row["month"]
-            quantity = portfolio_quantities.get(ticker, 0)
-            if quantity == 0:
-                continue
-            amount = forecast_per_share * quantity
-            name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
-            manual_by_month[month]["total"] += amount
-            manual_by_month[month]["details"].append({
-                "date": f"{year}-{month:02d}-01", "ticker": ticker, "name": name,
-                "amount": amount, "type": "manual", "id": row.get("id")
-            })
 
         c = await conn.execute("SELECT DISTINCT substr(date, 1, 4) FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date DESC")
         years_from_ops = [int(row[0]) for row in await c.fetchall() if row[0] is not None]
         all_forecasts = await db.get_dividend_forecast()
         forecast_years = sorted(set(f["year"] for f in all_forecasts if f["amount"] > 0))
-        all_manual = await db.get_manual_forecasts()
-        manual_years = sorted(set(f["year"] for f in all_manual if f["amount"] > 0))
-        all_years = sorted(set(years_from_ops + forecast_years + manual_years), reverse=True)
+        all_years = sorted(set(years_from_ops + forecast_years), reverse=True)
 
         months_labels = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек']
         actual_data = [actual_by_month[m]["total"] for m in range(1, 13)]
         before_data = [declared_before_record[m]["total"] for m in range(1, 13)]
         after_data = [declared_after_record[m]["total"] for m in range(1, 13)]
         forecast_data = [forecast_by_month[m]["total"] for m in range(1, 13)]
-        manual_data = [manual_by_month[m]["total"] for m in range(1, 13)]
         redemption_data = [redemption_by_month[m]["total"] for m in range(1, 13)]
 
         return JSONResponse({
             "year": year, "months": months_labels,
             "actual": actual_data, "declared_before_record": before_data,
             "declared_after_record": after_data, "redemption": redemption_data,
-            "forecast": forecast_data, "manual": manual_data,
+            "forecast": forecast_data,
             "total_actual": sum(actual_data), "total_before": sum(before_data),
             "total_after": sum(after_data), "total_redemption": sum(redemption_data),
-            "total_forecast": sum(forecast_data), "total_manual": sum(manual_data),
+            "total_forecast": sum(forecast_data),
             "details_actual": {m: actual_by_month[m]["details"] for m in range(1, 13)},
             "details_declared_before": {m: declared_before_record[m]["details"] for m in range(1, 13)},
             "details_declared_after": {m: declared_after_record[m]["details"] for m in range(1, 13)},
             "details_redemption": {m: redemption_by_month[m]["details"] for m in range(1, 13)},
             "details_forecast": {m: forecast_by_month[m]["details"] for m in range(1, 13)},
-            "details_manual": {m: manual_by_month[m]["details"] for m in range(1, 13)},
             "available_years": all_years
         })
     except Exception as e:
