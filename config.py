@@ -2,7 +2,6 @@ import os
 
 # ---------- ВЕРСИЯ ----------
 VERSION = "3.8.17"
-#прогноз
 # ---------- ТОКЕНЫ ----------
 API_TOKEN = os.getenv("BOT_TOKEN")
 TINKOFF_TOKEN = os.getenv("TITN")

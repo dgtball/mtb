@@ -11,7 +11,7 @@ router = APIRouter()
 @router.get("/api/sync-status")
 async def api_sync_status(request: Request):
     require_token(request)
-    last_sync = db.get_last_sync_time()
+    last_sync = await db.get_last_sync_time()
     return JSONResponse({"last_sync": last_sync})
 
 @router.post("/api/sync")
@@ -22,7 +22,7 @@ async def api_sync(request: Request):
         full = request.query_params.get("full") == "true"
         new_count = await sync_operations(state.bot_session, force_full=full)
         now_moscow = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3)).isoformat()
-        db.set_last_sync_time(now_moscow)
+        await db.set_last_sync_time(now_moscow)
         return JSONResponse({
             "status": "ok", "new_operations": new_count,
             "last_sync": now_moscow, "full": full
@@ -38,7 +38,7 @@ async def api_sync_full(request: Request):
         from tinkoff_api import sync_operations
         new_count = await sync_operations(state.bot_session, force_full=True)
         now_moscow = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3)).isoformat()
-        db.set_last_sync_time(now_moscow)
+        await db.set_last_sync_time(now_moscow)
         return JSONResponse({
             "status": "ok", "new_operations": new_count,
             "last_sync": now_moscow, "full": True

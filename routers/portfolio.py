@@ -39,9 +39,9 @@ async def api_override(request: Request):
         ticker = body.get("ticker")
         if action == "add":
             display_name = body.get("display_name")
-            db.set_name_override(ticker, display_name)
+            await db.set_name_override(ticker, display_name)
         elif action == "remove":
-            db.remove_name_override(ticker)
+            await db.remove_name_override(ticker)
         return JSONResponse({"status": "ok"})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
