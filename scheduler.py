@@ -181,8 +181,10 @@ async def snapshot_loop():
         tomorrow = (get_moscow_time() + datetime.timedelta(days=1)).date().isoformat()
         current = await db.get_portfolio_value()
         if current is not None:
-            await db.set_daily_snapshot(tomorrow, current)
-            logging.info(f"Снэпшот портфеля сохранён на {tomorrow}: {current:.2f}")
+            from moex_api import get_moex_index
+            imoex = await get_moex_index(state.bot_session)
+            await db.upsert_daily_snapshot(tomorrow, portfolio_value=current, imoex_value=imoex)
+            logging.info(f"Снэпшот сохранён на {tomorrow}: портфель={current:.2f}, IMOEX={imoex}")
 
 async def daily_task_loop(name: str, hour: int, minute: int, coro_func, *args):
     while True:

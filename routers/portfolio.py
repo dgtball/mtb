@@ -1,4 +1,5 @@
 import logging
+import datetime
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from services.portfolio import get_portfolio_with_details
@@ -44,4 +45,67 @@ async def api_override(request: Request):
             await db.remove_name_override(ticker)
         return JSONResponse({"status": "ok"})
     except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@router.get("/api/portfolio-performance")
+async def api_portfolio_performance(request: Request, range: str = "30d"):
+    require_token(request)
+    try:
+        today = datetime.date.today()
+        range_map = {
+            "7d": today - datetime.timedelta(days=7),
+            "30d": today - datetime.timedelta(days=30),
+            "90d": today - datetime.timedelta(days=90),
+            "180d": today - datetime.timedelta(days=180),
+            "1y": today - datetime.timedelta(days=365),
+            "all": today - datetime.timedelta(days=3650),
+        }
+        from_date = range_map.get(range, today - datetime.timedelta(days=30))
+
+        snapshots = await db.get_daily_snapshots(from_date.isoformat(), today.isoformat())
+
+        from moex_api import get_imoex_history
+        imoex_data = await get_imoex_history(state.bot_session, from_date.isoformat(), today.isoformat())
+        imoex_by_date = {r["date"][:10]: r["close"] for r in imoex_data if r.get("close")}
+
+        dates_set = set()
+        for s in snapshots:
+            dates_set.add(s["date"])
+        for d in imoex_by_date:
+            dates_set.add(d)
+        all_dates = sorted(dates_set)
+
+        if not all_dates:
+            return JSONResponse({"dates": [], "portfolio": [], "imoex": []})
+
+        portfolio_map = {s["date"]: s["portfolio_value"] for s in snapshots}
+        first_pv = None
+        for d in all_dates:
+            if d in portfolio_map and portfolio_map[d] is not None:
+                first_pv = portfolio_map[d]
+                break
+
+        portfolio_series = []
+        imoex_series = []
+        for d in all_dates:
+            pv = portfolio_map.get(d)
+            portfolio_series.append(pv)
+
+            iv = imoex_by_date.get(d)
+            if iv is not None and first_pv is not None:
+                base_iv = imoex_by_date.get(all_dates[0])
+                if base_iv and base_iv > 0:
+                    imoex_series.append(round(iv / base_iv * first_pv, 2))
+                else:
+                    imoex_series.append(None)
+            else:
+                imoex_series.append(None)
+
+        return JSONResponse({
+            "dates": all_dates,
+            "portfolio": portfolio_series,
+            "imoex": imoex_series,
+        })
+    except Exception as e:
+        logging.error(f"Error in /api/portfolio-performance: {e}", exc_info=True)
         return JSONResponse({"error": str(e)}, status_code=500)

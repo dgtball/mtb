@@ -170,6 +170,10 @@
     .sync-btn.success { background: var(--positive); }
     .toggle-btn { background: var(--surface-light); color: var(--text); border: 1px solid var(--border); padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
     .toggle-btn:hover { background: var(--surface); }
+    .range-btns { display: flex; gap: 4px; flex-wrap: wrap; }
+    .range-btn { background: var(--surface-light); color: var(--text-secondary); border: 1px solid var(--border); padding: 3px 10px; border-radius: 6px; cursor: pointer; font-size: 11px; transition: all 0.2s; }
+    .range-btn:hover { background: var(--accent); color: white; }
+    .range-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
 
     @media (max-width: 480px) {
       body { padding: 8px; }
@@ -201,6 +205,20 @@
         <div class="summary-item"><span class="summary-label">Стоимость портфеля</span><span class="summary-value" id="totalAmount">—</span></div>
         <div class="summary-item"><span class="summary-label">Изменение за день</span><span class="summary-change" id="dailyChange">—</span></div>
       </div>
+    </div>
+    <div class="card">
+      <div class="card-title card-title-flex">
+        <span>📈 Портфель vs IMOEX</span>
+        <div class="range-btns" id="perfRangeBtns">
+          <button class="range-btn active" onclick="loadPerformance('7d')">7д</button>
+          <button class="range-btn" onclick="loadPerformance('30d')">30д</button>
+          <button class="range-btn" onclick="loadPerformance('90d')">90д</button>
+          <button class="range-btn" onclick="loadPerformance('180d')">180д</button>
+          <button class="range-btn" onclick="loadPerformance('1y')">1г</button>
+          <button class="range-btn" onclick="loadPerformance('all')">Всё</button>
+        </div>
+      </div>
+      <div class="chart-container" id="perfChartContainer" style="height:250px;"><canvas id="performanceChart"></canvas></div>
     </div>
     <div class="card">
       <div class="card-title">Распределение по секторам</div>
@@ -520,6 +538,7 @@
           row.innerHTML = `<td>${item.name}</td><td>${item.price_formatted}</td><td style="color:var(--negative)">${item.change_pct.toFixed(2)}%</td>`;
         });
       }
+      loadPerformance('7d');
     } catch (e) {
       console.error(e);
       if (summary) setLoading(summary, false);
@@ -539,6 +558,56 @@
     html += '</tbody></table></div>';
     container.innerHTML = html;
     container.classList.add('visible');
+  }
+
+  // ============================================================
+  // 6.5 ПОРТФЕЛЬ: ГРАФИК ДИНАМИКИ
+  // ============================================================
+  let performanceChartInstance;
+
+  async function loadPerformance(range = '30d') {
+    const container = document.getElementById('perfChartContainer');
+    if (container) setLoading(container, true);
+    document.querySelectorAll('#perfRangeBtns .range-btn').forEach(b => b.classList.remove('active'));
+    const activeBtn = document.querySelector(`#perfRangeBtns .range-btn[onclick*="loadPerformance('${range}')"]`);
+    if (activeBtn) activeBtn.classList.add('active');
+    try {
+      const data = await apiCall(`/api/portfolio-performance?range=${range}`);
+      if (container) setLoading(container, false);
+      if (!data.dates || data.dates.length === 0) return;
+      const ctx = document.getElementById('performanceChart').getContext('2d');
+      if (performanceChartInstance) performanceChartInstance.destroy();
+      const fmt = v => (v || 0).toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+      performanceChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: data.dates.map(d => { const p = d.split('-'); return p[1] + '/' + p[2]; }),
+          datasets: [
+            { label: 'Портфель', data: data.portfolio, borderColor: '#2196F3', backgroundColor: 'transparent', tension: 0.2, pointRadius: 0, borderWidth: 2 },
+            { label: 'IMOEX', data: data.imoex, borderColor: '#FFC107', backgroundColor: 'transparent', tension: 0.2, pointRadius: 0, borderWidth: 2, borderDash: [5, 3] },
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'bottom', labels: { color: '#e0e0e0', font: { size: 10 } } },
+            tooltip: {
+              callbacks: {
+                label: ctx => ctx.dataset.label + ': ' + fmt(ctx.parsed.y) + ' ₽'
+              }
+            }
+          },
+          scales: {
+            x: { ticks: { color: '#9e9e9e', maxTicksLimit: 10, font: { size: 9 } }, grid: { display: false } },
+            y: { ticks: { color: '#9e9e9e', callback: v => fmt(v) + ' ₽', font: { size: 9 } }, grid: { color: '#333' } }
+          }
+        }
+      });
+    } catch (e) {
+      if (container) setLoading(container, false);
+      console.error(e);
+    }
   }
 
   // ============================================================

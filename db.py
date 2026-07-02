@@ -84,6 +84,11 @@ async def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(ticker, forecast_year, forecast_month));
             CREATE INDEX IF NOT EXISTS idx_manual_forecasts_ticker ON manual_forecasts(ticker);
+            CREATE TABLE IF NOT EXISTS daily_snapshots (
+                date TEXT PRIMARY KEY,
+                portfolio_value REAL,
+                imoex_value REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
         ''')
 
         for col in ('maturity_date', 'coupon_period'):
@@ -127,6 +132,10 @@ async def init_db():
             await migrate_sectors_to_instruments()
         except Exception as e:
             logging.error(f"Ошибка migrate_sectors_to_instruments: {e}")
+        try:
+            await backfill_snapshots()
+        except Exception as e:
+            logging.error(f"Ошибка backfill_snapshots: {e}")
         _initialized = True
     except Exception as e:
         logging.error(f"Критическая ошибка инициализации БД: {e}", exc_info=True)
@@ -485,3 +494,46 @@ async def get_manual_forecast_by_id(forecast_id: int):
     if row:
         return {"id": row[0], "ticker": row[1], "amount": row[2], "month": row[3], "year": row[4]}
     return None
+
+async def upsert_daily_snapshot(date_str: str, portfolio_value: float = None, imoex_value: float = None):
+    db = await get_db()
+    cursor = await db.execute("SELECT portfolio_value, imoex_value FROM daily_snapshots WHERE date = ?", (date_str,))
+    row = await cursor.fetchone()
+    pv = portfolio_value if portfolio_value is not None else (row[0] if row else None)
+    iv = imoex_value if imoex_value is not None else (row[1] if row else None)
+    await db.execute("""INSERT OR REPLACE INTO daily_snapshots
+        (date, portfolio_value, imoex_value) VALUES (?, ?, ?)""", (date_str, pv, iv))
+    await db.commit()
+
+async def get_daily_snapshots(from_date: str = None, to_date: str = None):
+    db = await get_db()
+    parts = ["SELECT date, portfolio_value, imoex_value FROM daily_snapshots"]
+    params = []
+    conds = []
+    if from_date:
+        conds.append("date >= ?")
+        params.append(from_date)
+    if to_date:
+        conds.append("date <= ?")
+        params.append(to_date)
+    if conds:
+        parts.append("WHERE " + " AND ".join(conds))
+    parts.append("ORDER BY date")
+    cursor = await db.execute(" ".join(parts), params)
+    rows = await cursor.fetchall()
+    return [{"date": r[0], "portfolio_value": r[1], "imoex_value": r[2]} for r in rows]
+
+async def backfill_snapshots():
+    db = await get_db()
+    cursor = await db.execute("SELECT key, value FROM portfolio_state WHERE key LIKE 'snapshot_%'")
+    rows = await cursor.fetchall()
+    count = 0
+    for key, value in rows:
+        date_str = key.replace("snapshot_", "")
+        await db.execute("""INSERT OR REPLACE INTO daily_snapshots
+            (date, portfolio_value) VALUES (?, ?)""", (date_str, value))
+        count += 1
+    if count:
+        await db.commit()
+        logging.info(f"Перенесено {count} снепшотов из portfolio_state в daily_snapshots")
+    return count

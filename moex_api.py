@@ -246,6 +246,35 @@ async def get_moex_index(http_session):
     info = await get_moex_index_info(http_session)
     return info.get('last') if info else None
 
+@retry(max_attempts=3, delay=1, backoff=1.5)
+async def get_imoex_history(http_session, from_date: str, to_date: str) -> list[dict]:
+    url = f"https://iss.moex.com/iss/engines/stock/markets/index/securities/IMOEX/candles.json?from={from_date}&till={to_date}&interval=24&iss.meta=off"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    try:
+        async with http_session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            if resp.status != 200:
+                logging.warning(f"IMOEX history returned {resp.status}")
+                return []
+            data = await resp.json()
+            if "candles" not in data:
+                return []
+            columns = data["candles"]["columns"]
+            rows = data["candles"]["data"]
+            result = []
+            for row in rows:
+                d = dict(zip(columns, row))
+                result.append({
+                    "date": d.get("begin"),
+                    "open": d.get("open"),
+                    "close": d.get("close"),
+                    "high": d.get("high"),
+                    "low": d.get("low"),
+                })
+            return result
+    except Exception as e:
+        logging.error(f"Ошибка получения истории IMOEX: {e}")
+        return []
+
 def get_top_movers(data, top_n=10, exclude_level3=True):
     if data.empty:
         return pd.DataFrame(), pd.DataFrame()
