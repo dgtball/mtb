@@ -74,6 +74,16 @@ async def init_db():
                 UNIQUE(ticker, forecast_year, forecast_month));
             CREATE INDEX IF NOT EXISTS idx_forecast_ticker ON dividend_forecast(ticker);
             CREATE INDEX IF NOT EXISTS idx_forecast_year ON dividend_forecast(forecast_year);
+            CREATE TABLE IF NOT EXISTS manual_forecasts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker TEXT NOT NULL,
+                amount REAL NOT NULL,
+                forecast_month INTEGER NOT NULL,
+                forecast_year INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(ticker, forecast_year, forecast_month));
+            CREATE INDEX IF NOT EXISTS idx_manual_forecasts_ticker ON manual_forecasts(ticker);
         ''')
 
         for col in ('maturity_date', 'coupon_period'):
@@ -436,3 +446,42 @@ async def operation_exists(op_id: str) -> bool:
     db = await get_db()
     cursor = await db.execute("SELECT id FROM operations WHERE id = ?", (op_id,))
     return (await cursor.fetchone()) is not None
+
+async def get_manual_forecasts(ticker: str = None, year: int = None):
+    db = await get_db()
+    parts = ["SELECT id, ticker, amount, forecast_month, forecast_year, created_at, updated_at FROM manual_forecasts"]
+    params = []
+    conds = []
+    if ticker is not None:
+        conds.append("ticker = ?")
+        params.append(ticker)
+    if year is not None:
+        conds.append("forecast_year = ?")
+        params.append(year)
+    if conds:
+        parts.append("WHERE " + " AND ".join(conds))
+    parts.append("ORDER BY forecast_year, forecast_month, ticker")
+    cursor = await db.execute(" ".join(parts), params)
+    rows = await cursor.fetchall()
+    return [{"id": r[0], "ticker": r[1], "amount": r[2], "month": r[3], "year": r[4], "created_at": r[5], "updated_at": r[6]} for r in rows]
+
+async def upsert_manual_forecast(ticker: str, amount: float, month: int, year: int):
+    db = await get_db()
+    await db.execute("""INSERT OR REPLACE INTO manual_forecasts
+        (ticker, amount, forecast_month, forecast_year, updated_at)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+        (ticker, amount, month, year))
+    await db.commit()
+
+async def delete_manual_forecast(forecast_id: int):
+    db = await get_db()
+    await db.execute("DELETE FROM manual_forecasts WHERE id = ?", (forecast_id,))
+    await db.commit()
+
+async def get_manual_forecast_by_id(forecast_id: int):
+    db = await get_db()
+    cursor = await db.execute("SELECT id, ticker, amount, forecast_month, forecast_year FROM manual_forecasts WHERE id = ?", (forecast_id,))
+    row = await cursor.fetchone()
+    if row:
+        return {"id": row[0], "ticker": row[1], "amount": row[2], "month": row[3], "year": row[4]}
+    return None

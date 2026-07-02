@@ -279,6 +279,29 @@
           </div>
         </div>
       </div>
+      <div class="card">
+        <div class="card-title card-title-flex">
+          <span>📊 Ручные прогнозы дивидендов</span>
+          <button onclick="toggleManualForecastsTable()" class="toggle-btn" id="toggleManualBtn">Показать все</button>
+        </div>
+        <div class="form-row">
+          <input type="text" id="mfTicker" placeholder="Тикер (например, TATNP)" style="width:100px;">
+          <input type="number" id="mfAmount" placeholder="₽ на акцию" step="0.01" min="0" style="width:110px;">
+          <select id="mfMonth" style="width:85px;">
+            <option value="1">Янв</option><option value="2">Фев</option><option value="3">Мар</option>
+            <option value="4">Апр</option><option value="5">Май</option><option value="6">Июн</option>
+            <option value="7">Июл</option><option value="8">Авг</option><option value="9">Сен</option>
+            <option value="10">Окт</option><option value="11">Ноя</option><option value="12">Дек</option>
+          </select>
+          <input type="number" id="mfYear" placeholder="Год" value="2026" min="2020" max="2035" style="width:75px;">
+          <button onclick="addManualForecast()">➕ Добавить</button>
+        </div>
+        <div id="manualForecastsWrapper" style="display:none;">
+          <div class="table-wrap">
+            <table><thead><tr><th>Тикер</th><th>Сумма</th><th>Месяц</th><th>Год</th><th></th></tr></thead><tbody id="manualForecastsTable"></tbody></table>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Подвкладка: Привязка тикеров -->
@@ -729,9 +752,9 @@
       const allDatasets = [
         { label: 'Факт', data: data.actual, color: '#2196F3' },
         { label: 'Объявлены', data: data.declared_before_record, color: '#FFC107' },
-        { label: 'Ожидаемые', data: data.declared_after_record, color: '#9C27B0' },
-        { label: 'Погашения', data: data.redemption || [], color: '#FF9800' },
-        { label: 'Прогноз', data: data.forecast || [], color: '#4CAF50' }
+        { label: 'Ожидаем', data: data.declared_after_record, color: '#9C27B0' },
+        { label: 'Погашение', data: data.redemption || [], color: '#FF9800' },
+        { label: 'Прогноз', data: data.forecast.map((v, i) => v + (data.manual?.[i] || 0)) || [], color: '#4CAF50' }
       ];
 
       const filteredDatasets = allDatasets.filter(ds => {
@@ -810,8 +833,9 @@
               const declaredBeforeDetails = data.details_declared_before[monthNum] || [];
               const declaredAfterDetails = data.details_declared_after[monthNum] || [];
               const forecastDetails = data.details_forecast[monthNum] || [];
+              const manualDetails = (data.details_manual[monthNum] || []).map(d => ({...d, type: 'forecast'}));
               const redemptionDetails = data.details_redemption[monthNum] || [];
-              const allDetails = [...actualDetails, ...declaredBeforeDetails, ...declaredAfterDetails, ...redemptionDetails, ...forecastDetails];
+              const allDetails = [...actualDetails, ...declaredBeforeDetails, ...declaredAfterDetails, ...redemptionDetails, ...forecastDetails, ...manualDetails];
               if (allDetails.length > 0) showMonthlyDetails(month, allDetails);
             }
           }
@@ -822,11 +846,11 @@
       // Формируем итоговую строку только из ненулевых категорий
       let parts = [];
       const categories = [
-        { label: 'фактические', value: data.total_actual },
-        { label: 'объявленные', value: data.total_before },
-        { label: 'ожидаемые', value: data.total_after },
-        { label: 'погашения', value: data.total_redemption },
-        { label: 'прогнозные', value: data.total_forecast }
+        { label: 'Факт', value: data.total_actual },
+        { label: 'Объявлены', value: data.total_before },
+        { label: 'Ожидаем', value: data.total_after },
+        { label: 'Погашение', value: data.total_redemption },
+        { label: 'Прогноз', value: data.total_forecast + (data.total_manual || 0) }
       ];
       categories.forEach(cat => {
         if (cat.value > 0) {
@@ -995,6 +1019,91 @@
         loadOverrides();
       }
       showToast('Переименование удалено', 'success');
+    } catch (e) {
+      showToast('Ошибка удаления', 'error');
+    }
+  }
+
+  // ============================================================
+  // 10.5 НАСТРОЙКИ: РУЧНЫЕ ПРОГНОЗЫ
+  // ============================================================
+  function toggleManualForecastsTable() {
+    const wrapper = document.getElementById('manualForecastsWrapper');
+    const btn = document.getElementById('toggleManualBtn');
+    if (wrapper.style.display === 'none') {
+      wrapper.style.display = 'block';
+      btn.textContent = 'Скрыть все';
+      loadManualForecasts();
+    } else {
+      wrapper.style.display = 'none';
+      btn.textContent = 'Показать все';
+    }
+  }
+
+  async function loadManualForecasts() {
+    try {
+      const data = await apiCall('/api/manual-forecasts');
+      const tbody = document.getElementById('manualForecastsTable');
+      tbody.innerHTML = '';
+      data.forEach(f => {
+        const tr = document.createElement('tr');
+        const months = ['','Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+        tr.innerHTML = `
+          <td>${f.name || f.ticker}</td>
+          <td><input type="number" step="0.01" min="0" value="${f.amount}" id="mf_val_${f.id}" style="width:80px;"></td>
+          <td><select id="mf_mon_${f.id}">${[1,2,3,4,5,6,7,8,9,10,11,12].map(m => `<option value="${m}" ${m===f.month?'selected':''}>${months[m]}</option>`).join('')}</select></td>
+          <td><input type="number" value="${f.year}" id="mf_yr_${f.id}" min="2020" max="2035" style="width:65px;"></td>
+          <td>
+            <button onclick="updateManualForecast(${f.id})" style="padding:4px 8px; border:none; border-radius:4px; background:var(--accent); color:white; cursor:pointer; margin-right:4px;">💾</button>
+            <button onclick="deleteManualForecast(${f.id})" class="btn-danger" style="padding:4px 10px; border:none; border-radius:4px; color:white; cursor:pointer;">Удалить</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    } catch (e) {
+      console.error(e);
+      showToast('Ошибка загрузки прогнозов', 'error');
+    }
+  }
+
+  async function addManualForecast() {
+    const ticker = document.getElementById('mfTicker').value.trim().toUpperCase();
+    const amount = document.getElementById('mfAmount').value.trim();
+    const month = document.getElementById('mfMonth').value;
+    const year = document.getElementById('mfYear').value;
+    if (!ticker || !amount) { showToast('Заполните тикер и сумму', 'error'); return; }
+    try {
+      await apiCall('/api/manual-forecasts', 'POST', { ticker, amount: parseFloat(amount), month: parseInt(month), year: parseInt(year) });
+      document.getElementById('mfTicker').value = '';
+      document.getElementById('mfAmount').value = '';
+      if (document.getElementById('manualForecastsWrapper').style.display !== 'none') {
+        loadManualForecasts();
+      }
+      showToast('Прогноз добавлен', 'success');
+    } catch (e) {
+      showToast('Ошибка добавления: ' + e.message, 'error');
+    }
+  }
+
+  async function updateManualForecast(id) {
+    const amount = document.getElementById('mf_val_' + id).value;
+    const month = document.getElementById('mf_mon_' + id).value;
+    const year = document.getElementById('mf_yr_' + id).value;
+    try {
+      await apiCall('/api/manual-forecasts/' + id, 'PUT', { amount: parseFloat(amount), month: parseInt(month), year: parseInt(year) });
+      showToast('Прогноз обновлён', 'success');
+      loadManualForecasts();
+    } catch (e) {
+      showToast('Ошибка обновления', 'error');
+    }
+  }
+
+  async function deleteManualForecast(id) {
+    if (!confirm('Удалить прогноз?')) return;
+    try {
+      await apiCall('/api/manual-forecasts/' + id, 'DELETE');
+      showToast('Прогноз удалён', 'success');
+      loadManualForecasts();
     } catch (e) {
       showToast('Ошибка удаления', 'error');
     }

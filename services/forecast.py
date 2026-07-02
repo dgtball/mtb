@@ -22,6 +22,9 @@ async def calculate_and_update_forecasts(http_session):
     for ticker in tickers:
         try:
             forecasts = await calculate_forecast_for_ticker(ticker)
+            manual = await db.get_manual_forecasts(ticker=ticker)
+            manual_keys = {(f["year"], f["month"]) for f in manual}
+            forecasts = [f for f in forecasts if (f["year"], f["month"]) not in manual_keys]
             await db.upsert_dividend_forecasts(ticker, forecasts)
             for f in forecasts:
                 logging.info(
