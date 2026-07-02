@@ -3,6 +3,7 @@ import logging
 from config import DB_PATH, NAME_OVERRIDES, ticker_to_name
 
 _db: aiosqlite.Connection | None = None
+_initialized: bool = False
 
 async def get_db() -> aiosqlite.Connection:
     global _db
@@ -10,99 +11,116 @@ async def get_db() -> aiosqlite.Connection:
         _db = await aiosqlite.connect(DB_PATH)
         _db.row_factory = aiosqlite.Row
         await _db.execute("PRAGMA journal_mode=WAL")
-        await _db.execute("PRAGMA foreign_keys=ON")
     return _db
 
 async def close_db():
-    global _db
+    global _db, _initialized
     if _db:
         await _db.close()
         _db = None
+        _initialized = False
 
 async def init_db():
-    db = await get_db()
-    await db.executescript('''
-        CREATE TABLE IF NOT EXISTS name_overrides
-            (ticker TEXT PRIMARY KEY, display_name TEXT);
-        CREATE TABLE IF NOT EXISTS portfolio_state
-            (key TEXT PRIMARY KEY, value REAL);
-        CREATE TABLE IF NOT EXISTS sectors
-            (ticker TEXT PRIMARY KEY, sector_name TEXT);
-        CREATE TABLE IF NOT EXISTS operations
-            (id TEXT PRIMARY KEY, date TEXT NOT NULL,
-             type TEXT NOT NULL, ticker TEXT, figi TEXT,
-             instrument_type TEXT, quantity INTEGER, payment REAL,
-             currency TEXT, commission REAL, name TEXT);
-        CREATE INDEX IF NOT EXISTS idx_operations_date ON operations(date);
-        CREATE INDEX IF NOT EXISTS idx_operations_type ON operations(type);
-        CREATE TABLE IF NOT EXISTS instruments
-            (ticker TEXT PRIMARY KEY, name TEXT, sector TEXT,
-             figi TEXT, instrument_type TEXT, updated_at TIMESTAMP,
-             maturity_date TEXT, coupon_period INTEGER);
-        CREATE INDEX IF NOT EXISTS idx_instruments_figi ON instruments(figi);
-        CREATE TABLE IF NOT EXISTS dividend_calendar (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ticker TEXT NOT NULL, figi TEXT NOT NULL,
-            declared_date TEXT, record_date TEXT,
-            payment_date TEXT, dividend_net REAL, dividend_type TEXT,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(ticker, declared_date, payment_date));
-        CREATE INDEX IF NOT EXISTS idx_dividend_calendar_ticker ON dividend_calendar(ticker);
-        CREATE INDEX IF NOT EXISTS idx_dividend_calendar_payment_date ON dividend_calendar(payment_date);
-        CREATE TABLE IF NOT EXISTS coupon_calendar (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ticker TEXT NOT NULL, figi TEXT NOT NULL,
-            coupon_date TEXT, coupon_value REAL,
-            coupon_currency TEXT, record_date TEXT,
-            is_redemption BOOLEAN DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(ticker, coupon_date));
-        CREATE INDEX IF NOT EXISTS idx_coupon_calendar_ticker ON coupon_calendar(ticker);
-        CREATE INDEX IF NOT EXISTS idx_coupon_calendar_coupon_date ON coupon_calendar(coupon_date);
-        CREATE TABLE IF NOT EXISTS dividend_forecast (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ticker TEXT NOT NULL,
-            forecast_amount REAL, forecast_month INTEGER,
-            forecast_year INTEGER, confidence_score REAL DEFAULT 1.0,
-            method TEXT DEFAULT 'historical_cagr',
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(ticker, forecast_year, forecast_month));
-        CREATE INDEX IF NOT EXISTS idx_forecast_ticker ON dividend_forecast(ticker);
-        CREATE INDEX IF NOT EXISTS idx_forecast_year ON dividend_forecast(forecast_year);
-    ''')
+    global _initialized
+    if _initialized:
+        return
+    try:
+        db = await get_db()
+        await db.executescript('''
+            CREATE TABLE IF NOT EXISTS name_overrides
+                (ticker TEXT PRIMARY KEY, display_name TEXT);
+            CREATE TABLE IF NOT EXISTS portfolio_state
+                (key TEXT PRIMARY KEY, value REAL);
+            CREATE TABLE IF NOT EXISTS sectors
+                (ticker TEXT PRIMARY KEY, sector_name TEXT);
+            CREATE TABLE IF NOT EXISTS operations
+                (id TEXT PRIMARY KEY, date TEXT NOT NULL,
+                 type TEXT NOT NULL, ticker TEXT, figi TEXT,
+                 instrument_type TEXT, quantity INTEGER, payment REAL,
+                 currency TEXT, commission REAL, name TEXT);
+            CREATE INDEX IF NOT EXISTS idx_operations_date ON operations(date);
+            CREATE INDEX IF NOT EXISTS idx_operations_type ON operations(type);
+            CREATE TABLE IF NOT EXISTS instruments
+                (ticker TEXT PRIMARY KEY, name TEXT, sector TEXT,
+                 figi TEXT, instrument_type TEXT, updated_at TIMESTAMP,
+                 maturity_date TEXT, coupon_period INTEGER);
+            CREATE INDEX IF NOT EXISTS idx_instruments_figi ON instruments(figi);
+            CREATE TABLE IF NOT EXISTS dividend_calendar (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker TEXT NOT NULL, figi TEXT NOT NULL,
+                declared_date TEXT, record_date TEXT,
+                payment_date TEXT, dividend_net REAL, dividend_type TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(ticker, declared_date, payment_date));
+            CREATE INDEX IF NOT EXISTS idx_dividend_calendar_ticker ON dividend_calendar(ticker);
+            CREATE INDEX IF NOT EXISTS idx_dividend_calendar_payment_date ON dividend_calendar(payment_date);
+            CREATE TABLE IF NOT EXISTS coupon_calendar (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker TEXT NOT NULL, figi TEXT NOT NULL,
+                coupon_date TEXT, coupon_value REAL,
+                coupon_currency TEXT, record_date TEXT,
+                is_redemption BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(ticker, coupon_date));
+            CREATE INDEX IF NOT EXISTS idx_coupon_calendar_ticker ON coupon_calendar(ticker);
+            CREATE INDEX IF NOT EXISTS idx_coupon_calendar_coupon_date ON coupon_calendar(coupon_date);
+            CREATE TABLE IF NOT EXISTS dividend_forecast (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker TEXT NOT NULL,
+                forecast_amount REAL, forecast_month INTEGER,
+                forecast_year INTEGER, confidence_score REAL DEFAULT 1.0,
+                method TEXT DEFAULT 'historical_cagr',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(ticker, forecast_year, forecast_month));
+            CREATE INDEX IF NOT EXISTS idx_forecast_ticker ON dividend_forecast(ticker);
+            CREATE INDEX IF NOT EXISTS idx_forecast_year ON dividend_forecast(forecast_year);
+        ''')
 
-    for col in ('maturity_date', 'coupon_period'):
-        cursor = await db.execute("PRAGMA table_info(instruments)")
+        for col in ('maturity_date', 'coupon_period'):
+            cursor = await db.execute("PRAGMA table_info(instruments)")
+            columns = [row[1] for row in await cursor.fetchall()]
+            if col not in columns:
+                await db.execute(f"ALTER TABLE instruments ADD COLUMN {col} TEXT")
+
+        cursor = await db.execute("PRAGMA table_info(coupon_calendar)")
         columns = [row[1] for row in await cursor.fetchall()]
-        if col not in columns:
-            await db.execute(f"ALTER TABLE instruments ADD COLUMN {col} TEXT")
+        if 'is_redemption' not in columns:
+            await db.execute("ALTER TABLE coupon_calendar ADD COLUMN is_redemption BOOLEAN DEFAULT 0")
 
-    cursor = await db.execute("PRAGMA table_info(coupon_calendar)")
-    columns = [row[1] for row in await cursor.fetchall()]
-    if 'is_redemption' not in columns:
-        await db.execute("ALTER TABLE coupon_calendar ADD COLUMN is_redemption BOOLEAN DEFAULT 0")
+        cursor = await db.execute("PRAGMA table_info(dividend_forecast)")
+        columns = [row[1] for row in await cursor.fetchall()]
+        if columns and columns[0] == 'ticker':
+            await db.execute("DROP TABLE dividend_forecast")
+            await db.execute("""CREATE TABLE IF NOT EXISTS dividend_forecast (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker TEXT NOT NULL,
+                forecast_amount REAL, forecast_month INTEGER,
+                forecast_year INTEGER, confidence_score REAL DEFAULT 1.0,
+                method TEXT DEFAULT 'historical_cagr',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(ticker, forecast_year, forecast_month))""")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_forecast_ticker ON dividend_forecast(ticker)")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_forecast_year ON dividend_forecast(forecast_year)")
+            logging.info("Таблица dividend_forecast пересоздана (новая схема с id)")
 
-    cursor = await db.execute("PRAGMA table_info(dividend_forecast)")
-    columns = [row[1] for row in await cursor.fetchall()]
-    if columns and columns[0] == 'ticker':
-        await db.execute("DROP TABLE dividend_forecast")
-        await db.execute("""CREATE TABLE IF NOT EXISTS dividend_forecast (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ticker TEXT NOT NULL,
-            forecast_amount REAL, forecast_month INTEGER,
-            forecast_year INTEGER, confidence_score REAL DEFAULT 1.0,
-            method TEXT DEFAULT 'historical_cagr',
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(ticker, forecast_year, forecast_month))""")
-        await db.execute("CREATE INDEX IF NOT EXISTS idx_forecast_ticker ON dividend_forecast(ticker)")
-        await db.execute("CREATE INDEX IF NOT EXISTS idx_forecast_year ON dividend_forecast(forecast_year)")
-        logging.info("Таблица dividend_forecast пересоздана (новая схема с id)")
-
-    await db.commit()
-    logging.info(f"База данных инициализирована: {DB_PATH}")
-    await seed_overrides()
-    await seed_sectors()
-    await migrate_sectors_to_instruments()
+        await db.commit()
+        logging.info(f"База данных инициализирована: {DB_PATH}")
+        try:
+            await seed_overrides()
+        except Exception as e:
+            logging.error(f"Ошибка seed_overrides: {e}")
+        try:
+            await seed_sectors()
+        except Exception as e:
+            logging.error(f"Ошибка seed_sectors: {e}")
+        try:
+            await migrate_sectors_to_instruments()
+        except Exception as e:
+            logging.error(f"Ошибка migrate_sectors_to_instruments: {e}")
+        _initialized = True
+    except Exception as e:
+        logging.error(f"Критическая ошибка инициализации БД: {e}", exc_info=True)
+        raise
 
 async def seed_overrides():
     initial = [

@@ -110,7 +110,10 @@ async def mini_app(request: Request):
         return HTMLResponse("<h1>Ошибка: mini_app.html не найден</h1>", status_code=404)
 
 async def main():
-    await db.init_db()
+    try:
+        await db.init_db()
+    except Exception as e:
+        logging.error(f"Не удалось инициализировать БД: {e}", exc_info=True)
     await db.load_name_overrides()
 
     session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
