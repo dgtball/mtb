@@ -154,7 +154,8 @@ def classify_frequency(past: list[tuple[str, float]]) -> str:
 
 
 def _parse_date(date_str: str) -> date:
-    parts = date_str.split("-")
+    clean = date_str.split("T")[0]
+    parts = clean.split("-")
     return date(int(parts[0]), int(parts[1]), int(parts[2]) if len(parts) > 2 else 1)
 
 
