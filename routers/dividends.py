@@ -231,19 +231,16 @@ async def api_dividends_monthly(request: Request, year: int = None):
                         "amount": amount, "type": "declared_coupon_after"
                     })
 
-        c = await conn.execute("""
-            SELECT ticker, forecast_amount, forecast_month, forecast_year
-            FROM dividend_forecast
-            WHERE forecast_year = ? AND forecast_amount > 0
-        """, (str(year),))
-        forecast_rows = await c.fetchall()
+        forecast_rows = await db.get_dividend_forecast(year=year)
 
         forecast_by_month = {m: {"total": 0.0, "details": []} for m in range(1, 13)}
 
         for row in forecast_rows:
-            ticker = row[0]
-            forecast_per_share = row[1]
-            month = row[2]
+            if row["amount"] <= 0:
+                continue
+            ticker = row["ticker"]
+            forecast_per_share = row["amount"]
+            month = row["month"]
             if forecast_per_share > 0:
                 quantity = portfolio_quantities.get(ticker, 0)
                 if quantity == 0:
@@ -258,8 +255,8 @@ async def api_dividends_monthly(request: Request, year: int = None):
 
         c = await conn.execute("SELECT DISTINCT substr(date, 1, 4) FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date DESC")
         years_from_ops = [int(row[0]) for row in await c.fetchall() if row[0] is not None]
-        c = await conn.execute("SELECT DISTINCT forecast_year FROM dividend_forecast WHERE forecast_amount > 0")
-        forecast_years = [int(row[0]) for row in await c.fetchall() if row[0] is not None]
+        all_forecasts = await db.get_dividend_forecast()
+        forecast_years = sorted(set(f["year"] for f in all_forecasts if f["amount"] > 0))
         all_years = sorted(set(years_from_ops + forecast_years), reverse=True)
 
         months_labels = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек']

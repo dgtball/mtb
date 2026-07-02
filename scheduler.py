@@ -1,12 +1,11 @@
 import asyncio
 import datetime
 import logging
-import pandas as pd
 from aiogram import Bot
 import db
 
 from handlers import format_message, format_historical_table
-from moex_api import get_market_data, get_moex_index_info, get_top_movers, get_historical_shares, calc_period_change
+from moex_api import get_market_data, get_moex_index_info, get_top_movers
 from utils import get_moscow_time, get_local_time, get_session_status, last_trading_day, get_portfolio_change_str, build_table_universal
 from config import MY_CHAT_ID, TOP_N, TINKOFF_TOKEN
 from services.tops import get_top_data
@@ -14,13 +13,7 @@ from services.tops import get_top_data
 _bot = None
 _http_session = None
 _active_day_message_id = None
-_snapshot_saved_today = False
 portfolio_update_allowed = False
-
-_dividend_calendar_synced = False
-_coupon_calendar_synced = False
-_instruments_synced = False
-_forecasts_synced = False
 
 def set_bot(bot: Bot):
     global _bot
@@ -101,130 +94,156 @@ async def refresh_forecasts():
     except Exception as e:
         logging.error(f"Ошибка обновления прогнозов: {e}")
 
-async def scheduler_loop():
-    global _active_day_message_id, portfolio_update_allowed, _snapshot_saved_today
-    global _dividend_calendar_synced, _coupon_calendar_synced, _instruments_synced, _forecasts_synced
+def seconds_until(hour: int, minute: int = 0) -> float:
+    now = get_moscow_time()
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= now:
+        target += datetime.timedelta(days=1)
+    return (target - now).total_seconds()
 
-    last_week_sent_date = None
-    last_month_sent_date = None
+def is_in_day_window(now) -> bool:
+    minutes = now.hour * 60 + now.minute
+    return 6 * 60 + 50 <= minutes <= 24 * 60 + 50
+
+async def day_window_loop():
+    global _active_day_message_id, portfolio_update_allowed
     day_update_interval = 30
 
-    await asyncio.sleep(5)
-
     while True:
-        try:
+        window_open = 6 * 60 + 50
+        now = get_moscow_time()
+        current_minutes = now.hour * 60 + now.minute
+
+        if current_minutes < window_open:
+            delay = (window_open - current_minutes) * 60 - now.second
+            logging.debug(f"До окна торгов {delay:.0f}с")
+            await asyncio.sleep(delay)
+            continue
+
+        if current_minutes > 24 * 60 + 50:
+            delay = (24 * 60 + 60 + window_open - current_minutes) * 60 - now.second
+            logging.debug(f"Окно закрыто, до следующего {delay:.0f}с")
+            await asyncio.sleep(delay)
+            continue
+
+        portfolio_update_allowed = True
+        today = now.date()
+        shares_df = await get_market_data(_http_session)
+        gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
+
+        if not gainers.empty or not losers.empty:
+            index_info = await get_moex_index_info(_http_session)
+            session_status = get_session_status(time_offset=1)
+            update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
+            portfolio_line = await get_portfolio_change_str()
+            text = format_message(gainers, losers, index_info, update_time, session_status, portfolio_line)
+            sent_msg = await _bot.send_message(MY_CHAT_ID, text, parse_mode="HTML")
+            _active_day_message_id = sent_msg.message_id
+
+            today_str = today.isoformat()
+            if await db.get_daily_snapshot(today_str) is None:
+                try:
+                    from tinkoff_api import get_portfolio_summary
+                    data = await get_portfolio_summary(_http_session)
+                    if data:
+                        total = data['total_amount']
+                        await db.set_daily_snapshot(today_str, total)
+                        await db.set_portfolio_value(total)
+                        logging.info(f"Снэпшот портфеля восстановлен за {today_str}: {total:.2f}")
+                except Exception as e:
+                    logging.error(f"Не удалось создать страховочный снэпшот: {e}")
+
+        while True:
+            await asyncio.sleep(day_update_interval)
             now = get_moscow_time()
-            today = now.date()
-            weekday = now.weekday()
-            hour = now.hour
-            minute = now.minute
-
-            if hour == 0 and minute == 0:
-                _snapshot_saved_today = False
-                _dividend_calendar_synced = False
-                _coupon_calendar_synced = False
-                _instruments_synced = False
-                _forecasts_synced = False
-
-            if hour == 23 and minute >= 50 and not _snapshot_saved_today:
-                tomorrow = today + datetime.timedelta(days=1)
-                tomorrow_str = tomorrow.isoformat()
-                current = await db.get_portfolio_value()
-                if current is not None:
-                    await db.set_daily_snapshot(tomorrow_str, current)
-                    _snapshot_saved_today = True
-                    logging.info(f"Снэпшот портфеля сохранён на {tomorrow_str}: {current:.2f}")
-                await asyncio.sleep(60)
-                continue
-
-            start_minutes = 6*60 + 50
-            end_minutes = 0*60 + 50 + 24*60
-            current_minutes = hour*60 + minute
-            if current_minutes < start_minutes:
-                current_minutes += 24*60
-            day_window = start_minutes <= current_minutes <= end_minutes
-
-            if day_window:
-                portfolio_update_allowed = True
-                if _active_day_message_id is None:
-                    shares_df = await get_market_data(_http_session)
-                    gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
-                    if not gainers.empty or not losers.empty:
-                        index_info = await get_moex_index_info(_http_session)
-                        session_status = get_session_status(time_offset=1)
-                        update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
-                        portfolio_line = await get_portfolio_change_str()
-                        text = format_message(gainers, losers, index_info, update_time, session_status, portfolio_line)
-                        sent_msg = await _bot.send_message(MY_CHAT_ID, text, parse_mode="HTML")
-                        _active_day_message_id = sent_msg.message_id
-                        today_str = today.isoformat()
-                        if await db.get_daily_snapshot(today_str) is None:
-                            try:
-                                from tinkoff_api import get_portfolio_summary
-                                data = await get_portfolio_summary(_http_session)
-                                if data:
-                                    total = data['total_amount']
-                                    await db.set_daily_snapshot(today_str, total)
-                                    await db.set_portfolio_value(total)
-                                    logging.info(f"Снэпшот портфеля восстановлен за {today_str}: {total:.2f}")
-                            except Exception as e:
-                                logging.error(f"Не удалось создать страховочный снэпшот: {e}")
-                    await asyncio.sleep(day_update_interval)
-                    continue
-                else:
-                    shares_df = await get_market_data(_http_session)
-                    gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
-                    if not gainers.empty or not losers.empty:
-                        index_info = await get_moex_index_info(_http_session)
-                        session_status = get_session_status(time_offset=1)
-                        update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
-                        portfolio_line = await get_portfolio_change_str()
-                        text = format_message(gainers, losers, index_info, update_time, session_status, portfolio_line)
-                        try:
-                            await _bot.edit_message_text(text, chat_id=MY_CHAT_ID, message_id=_active_day_message_id, parse_mode="HTML")
-                        except Exception as e:
-                            logging.error(f"Ошибка редактирования сообщения дня: {e}")
-                            _active_day_message_id = None
-                    await asyncio.sleep(day_update_interval)
-                    continue
-            else:
+            if not is_in_day_window(now):
                 portfolio_update_allowed = False
                 _active_day_message_id = None
+                break
+            shares_df = await get_market_data(_http_session)
+            gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
+            if not gainers.empty or not losers.empty:
+                index_info = await get_moex_index_info(_http_session)
+                session_status = get_session_status(time_offset=1)
+                update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
+                portfolio_line = await get_portfolio_change_str()
+                text = format_message(gainers, losers, index_info, update_time, session_status, portfolio_line)
+                try:
+                    await _bot.edit_message_text(text, chat_id=MY_CHAT_ID, message_id=_active_day_message_id, parse_mode="HTML")
+                except Exception as e:
+                    logging.error(f"Ошибка редактирования сообщения дня: {e}")
+                    _active_day_message_id = None
 
-            if hour == 10 and minute == 0:
-                if TINKOFF_TOKEN:
-                    from tinkoff_api import sync_operations
-                    asyncio.create_task(sync_operations(_http_session))
+async def snapshot_loop():
+    while True:
+        delay = seconds_until(23, 50)
+        await asyncio.sleep(delay)
+        tomorrow = (get_moscow_time() + datetime.timedelta(days=1)).date().isoformat()
+        current = await db.get_portfolio_value()
+        if current is not None:
+            await db.set_daily_snapshot(tomorrow, current)
+            logging.info(f"Снэпшот портфеля сохранён на {tomorrow}: {current:.2f}")
 
-            if hour == 2 and minute == 0 and not _dividend_calendar_synced:
-                _dividend_calendar_synced = True
-                asyncio.create_task(refresh_dividend_calendar())
-
-            if hour == 2 and minute == 30 and not _coupon_calendar_synced:
-                _coupon_calendar_synced = True
-                asyncio.create_task(refresh_coupon_calendar())
-
-            if hour == 3 and minute == 0 and not _instruments_synced:
-                _instruments_synced = True
-                asyncio.create_task(refresh_instruments_cache())
-
-            if hour == 4 and minute == 0 and not _forecasts_synced:
-                _forecasts_synced = True
-                asyncio.create_task(refresh_forecasts())
-
-            if weekday == 4 and hour == 23 and minute >= 50:
-                if last_week_sent_date != today:
-                    await send_periodic_top('week')
-                    last_week_sent_date = today
-
-            last_trade_day = last_trading_day(today)
-            if today == last_trade_day and hour == 23 and minute >= 51:
-                if last_month_sent_date != today:
-                    await send_periodic_top('month')
-                    last_month_sent_date = today
-
-            await asyncio.sleep(5)
-
+async def daily_task_loop(name: str, hour: int, minute: int, coro_func, *args):
+    while True:
+        delay = seconds_until(hour, minute)
+        await asyncio.sleep(delay)
+        logging.info(f"Запуск ежедневной задачи: {name}")
+        try:
+            await coro_func(*args)
         except Exception as e:
-            logging.error(f"Ошибка в scheduler_loop: {e}")
-            await asyncio.sleep(5)
+            logging.error(f"Ошибка в задаче {name}: {e}")
+
+async def weekly_task_loop(weekday: int, hour: int, minute: int, task_coro, *args):
+    while True:
+        now = get_moscow_time()
+        days_ahead = (weekday - now.weekday()) % 7
+        if days_ahead == 0 and (now.hour > hour or (now.hour == hour and now.minute >= minute)):
+            days_ahead = 7
+        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0) + datetime.timedelta(days=days_ahead)
+        delay = (target - now).total_seconds()
+        await asyncio.sleep(delay)
+        logging.info(f"Запуск еженедельной задачи в {target}")
+        try:
+            await task_coro(*args)
+        except Exception as e:
+            logging.error(f"Ошибка в еженедельной задаче: {e}")
+
+async def monthly_task_loop(hour: int, minute: int, task_coro, *args):
+    while True:
+        now = get_moscow_time()
+        today = now.date()
+        last = last_trading_day(today)
+        if today < last or (today == last and (now.hour < hour or (now.hour == hour and now.minute < minute))):
+            target = datetime.datetime.combine(last, datetime.time(hour, minute), tzinfo=now.tzinfo)
+            delay = (target - now).total_seconds()
+        else:
+            next_month = today.replace(day=28) + datetime.timedelta(days=4)
+            first_of_next = next_month.replace(day=1)
+            last = last_trading_day(first_of_next)
+            target = datetime.datetime.combine(last, datetime.time(hour, minute), tzinfo=now.tzinfo)
+            delay = (target - now).total_seconds()
+        await asyncio.sleep(delay)
+        logging.info(f"Запуск ежемесячной задачи")
+        try:
+            await task_coro(*args)
+        except Exception as e:
+            logging.error(f"Ошибка в ежемесячной задаче: {e}")
+
+async def scheduler_loop():
+    tasks = [
+        asyncio.create_task(day_window_loop()),
+        asyncio.create_task(snapshot_loop()),
+    ]
+    if TINKOFF_TOKEN:
+        from tinkoff_api import sync_operations
+        tasks.append(asyncio.create_task(daily_task_loop("sync_operations", 10, 0, sync_operations, _http_session)))
+        tasks.append(asyncio.create_task(daily_task_loop("dividend_calendar", 2, 0, refresh_dividend_calendar)))
+        tasks.append(asyncio.create_task(daily_task_loop("coupon_calendar", 2, 30, refresh_coupon_calendar)))
+        tasks.append(asyncio.create_task(daily_task_loop("instruments_cache", 3, 0, refresh_instruments_cache)))
+        tasks.append(asyncio.create_task(daily_task_loop("forecasts", 4, 0, refresh_forecasts)))
+        tasks.append(asyncio.create_task(weekly_task_loop(4, 23, 50, send_periodic_top, 'week')))
+        tasks.append(asyncio.create_task(monthly_task_loop(23, 51, send_periodic_top, 'month')))
+
+    logging.info(f"Планировщик запущен: {len(tasks)} задач")
+    await asyncio.gather(*tasks)

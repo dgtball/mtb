@@ -60,12 +60,15 @@ async def init_db():
         CREATE INDEX IF NOT EXISTS idx_coupon_calendar_ticker ON coupon_calendar(ticker);
         CREATE INDEX IF NOT EXISTS idx_coupon_calendar_coupon_date ON coupon_calendar(coupon_date);
         CREATE TABLE IF NOT EXISTS dividend_forecast (
-            ticker TEXT PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
             forecast_amount REAL, forecast_month INTEGER,
             forecast_year INTEGER, confidence_score REAL DEFAULT 1.0,
             method TEXT DEFAULT 'historical_cagr',
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(ticker, forecast_year, forecast_month));
         CREATE INDEX IF NOT EXISTS idx_forecast_ticker ON dividend_forecast(ticker);
+        CREATE INDEX IF NOT EXISTS idx_forecast_year ON dividend_forecast(forecast_year);
     ''')
 
     for col in ('maturity_date', 'coupon_period'):
@@ -78,6 +81,22 @@ async def init_db():
     columns = [row[1] for row in await cursor.fetchall()]
     if 'is_redemption' not in columns:
         await db.execute("ALTER TABLE coupon_calendar ADD COLUMN is_redemption BOOLEAN DEFAULT 0")
+
+    cursor = await db.execute("PRAGMA table_info(dividend_forecast)")
+    columns = [row[1] for row in await cursor.fetchall()]
+    if columns and columns[0] == 'ticker':
+        await db.execute("DROP TABLE dividend_forecast")
+        await db.execute("""CREATE TABLE IF NOT EXISTS dividend_forecast (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            forecast_amount REAL, forecast_month INTEGER,
+            forecast_year INTEGER, confidence_score REAL DEFAULT 1.0,
+            method TEXT DEFAULT 'historical_cagr',
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(ticker, forecast_year, forecast_month))""")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_forecast_ticker ON dividend_forecast(ticker)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_forecast_year ON dividend_forecast(forecast_year)")
+        logging.info("Таблица dividend_forecast пересоздана (новая схема с id)")
 
     await db.commit()
     logging.info(f"База данных инициализирована: {DB_PATH}")
@@ -357,26 +376,34 @@ async def get_sector(ticker: str) -> str:
     row = await cursor.fetchone()
     return row[0] if row else "Прочие"
 
-async def upsert_dividend_forecast(ticker: str, forecast_amount: float, forecast_month: int, forecast_year: int, confidence_score: float = 1.0, method: str = 'historical_cagr'):
+async def upsert_dividend_forecasts(ticker: str, forecasts: list[dict]):
     db = await get_db()
-    await db.execute('''INSERT OR REPLACE INTO dividend_forecast
-        (ticker, forecast_amount, forecast_month, forecast_year, confidence_score, method, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)''',
-        (ticker, forecast_amount, forecast_month, forecast_year, confidence_score, method))
+    await db.execute("DELETE FROM dividend_forecast WHERE ticker = ?", (ticker,))
+    for f in forecasts:
+        await db.execute('''INSERT OR REPLACE INTO dividend_forecast
+            (ticker, forecast_amount, forecast_month, forecast_year, confidence_score, method, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)''',
+            (ticker, f["amount"], f["month"], f["year"], f["confidence"], f["method"]))
     await db.commit()
+    logging.info(f"Обновлено {len(forecasts)} прогнозов для {ticker}")
 
-async def get_dividend_forecast(ticker: str = None):
+async def get_dividend_forecast(ticker: str = None, year: int = None):
     db = await get_db()
-    if ticker:
-        cursor = await db.execute("SELECT ticker, forecast_amount, forecast_month, forecast_year, confidence_score, method, updated_at FROM dividend_forecast WHERE ticker = ?", (ticker,))
-        row = await cursor.fetchone()
-        if row:
-            return {"ticker": row[0], "amount": row[1], "month": row[2], "year": row[3], "confidence": row[4], "method": row[5], "updated_at": row[6]}
-        return None
-    else:
-        cursor = await db.execute("SELECT ticker, forecast_amount, forecast_month, forecast_year, confidence_score, method, updated_at FROM dividend_forecast")
-        rows = await cursor.fetchall()
-        return [{"ticker": r[0], "amount": r[1], "month": r[2], "year": r[3], "confidence": r[4], "method": r[5], "updated_at": r[6]} for r in rows]
+    parts = ["SELECT ticker, forecast_amount, forecast_month, forecast_year, confidence_score, method, updated_at FROM dividend_forecast"]
+    params = []
+    conds = []
+    if ticker is not None:
+        conds.append("ticker = ?")
+        params.append(ticker)
+    if year is not None:
+        conds.append("forecast_year = ?")
+        params.append(year)
+    if conds:
+        parts.append("WHERE " + " AND ".join(conds))
+    parts.append("ORDER BY forecast_year, forecast_month")
+    cursor = await db.execute(" ".join(parts), params)
+    rows = await cursor.fetchall()
+    return [{"ticker": r[0], "amount": r[1], "month": r[2], "year": r[3], "confidence": r[4], "method": r[5], "updated_at": r[6]} for r in rows]
 
 async def set_last_sync_time(timestamp: str):
     await _set_state("last_sync_time", timestamp)
