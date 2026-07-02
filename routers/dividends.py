@@ -1,6 +1,5 @@
 import logging
 import datetime
-import sqlite3
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from routers.auth import require_token
@@ -14,7 +13,7 @@ router = APIRouter()
 async def api_my_dividends(request: Request):
     require_token(request)
     try:
-        dividends = db.get_personal_dividends()
+        dividends = await db.get_personal_dividends()
         return JSONResponse(dividends)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -23,13 +22,12 @@ async def api_my_dividends(request: Request):
 async def api_dividends_yearly(request: Request, year: int = None, ticker: str = None):
     require_token(request)
     try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
+        conn = await db.get_db()
 
         actual_ticker = None
         if ticker:
-            c.execute("SELECT ticker FROM name_overrides WHERE display_name = ?", (ticker,))
-            row = c.fetchone()
+            c = await conn.execute("SELECT ticker FROM name_overrides WHERE display_name = ?", (ticker,))
+            row = await c.fetchone()
             if row:
                 actual_ticker = row[0]
             else:
@@ -41,19 +39,15 @@ async def api_dividends_yearly(request: Request, year: int = None, ticker: str =
                     actual_ticker = ticker
 
         if year and actual_ticker:
-            c.execute("""SELECT date, ticker, payment FROM operations 
+            c = await conn.execute("""SELECT date, ticker, payment FROM operations 
                          WHERE type IN ('Выплата дивидендов', 'Выплата купонов') 
                          AND currency = 'RUB' AND date LIKE ? 
                          AND ticker = ? 
-                         ORDER BY date DESC""", 
-                      (f"{year}%", actual_ticker))
-            rows = c.fetchall()
-            conn.close()
+                         ORDER BY date DESC""", (f"{year}%", actual_ticker))
+            rows = await c.fetchall()
             details = []
             for r in rows:
-                tick = r[1]
-                if tick is None:
-                    tick = "Прочие"
+                tick = r[1] if r[1] else "Прочие"
                 if tick != "Прочие":
                     name = NAME_OVERRIDES.get(tick) or ticker_to_name.get(tick, tick)
                 else:
@@ -62,21 +56,17 @@ async def api_dividends_yearly(request: Request, year: int = None, ticker: str =
             return JSONResponse({"year": year, "ticker": ticker, "details": details})
 
         elif actual_ticker:
-            c.execute("""SELECT date, ticker, payment FROM operations 
+            c = await conn.execute("""SELECT date, ticker, payment FROM operations 
                          WHERE type IN ('Выплата дивидендов', 'Выплата купонов') 
                          AND currency = 'RUB' 
                          AND ticker = ? 
-                         ORDER BY date DESC""", 
-                      (actual_ticker,))
-            rows = c.fetchall()
-            conn.close()
+                         ORDER BY date DESC""", (actual_ticker,))
+            rows = await c.fetchall()
             details = []
             yearly_totals = {}
             for r in rows:
-                tick = r[1]
+                tick = r[1] if r[1] else "Прочие"
                 y = r[0][:4]
-                if tick is None:
-                    tick = "Прочие"
                 if tick != "Прочие":
                     name = NAME_OVERRIDES.get(tick) or ticker_to_name.get(tick, tick)
                 else:
@@ -86,15 +76,12 @@ async def api_dividends_yearly(request: Request, year: int = None, ticker: str =
             return JSONResponse({"ticker": ticker, "details": details, "yearly_totals": yearly_totals})
 
         else:
-            c.execute("SELECT date, ticker, payment FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date")
-            rows = c.fetchall()
-            conn.close()
+            c = await conn.execute("SELECT date, ticker, payment FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date")
+            rows = await c.fetchall()
             yearly = {}
             for r in rows:
                 y = r[0][:4]
-                tick = r[1]
-                if tick is None:
-                    tick = "Прочие"
+                tick = r[1] if r[1] else "Прочие"
                 if tick != "Прочие":
                     name = NAME_OVERRIDES.get(tick) or ticker_to_name.get(tick, tick)
                 else:
@@ -138,16 +125,15 @@ async def api_dividends_monthly(request: Request, year: int = None):
             if ticker and quantity > 0:
                 portfolio_quantities[ticker] = quantity
 
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
+        conn = await db.get_db()
 
-        c.execute("""SELECT date, ticker, payment, name 
+        c = await conn.execute("""SELECT date, ticker, payment, name 
                      FROM operations 
                      WHERE type IN ('Выплата дивидендов', 'Выплата купонов') 
                        AND currency = 'RUB' 
                        AND date LIKE ? 
                      ORDER BY date""", (f"{year}%",))
-        rows = c.fetchall()
+        rows = await c.fetchall()
 
         actual_by_month = {m: {"total": 0.0, "details": []} for m in range(1, 13)}
         for r in rows:
@@ -161,20 +147,16 @@ async def api_dividends_monthly(request: Request, year: int = None):
                 display_name = NAME_OVERRIDES.get(ticker) or ticker_to_name.get(ticker, ticker)
             actual_by_month[month]["total"] += amount
             actual_by_month[month]["details"].append({
-                "date": date_str,
-                "ticker": ticker,
-                "name": display_name,
-                "amount": amount,
-                "type": "actual"
+                "date": date_str, "ticker": ticker, "name": display_name,
+                "amount": amount, "type": "actual"
             })
 
-        c.execute("""
+        c = await conn.execute("""
             SELECT ticker, payment_date, record_date, dividend_net
             FROM dividend_calendar
-            WHERE strftime('%Y', payment_date) = ?
-              AND payment_date > date('now')
+            WHERE strftime('%Y', payment_date) = ? AND payment_date > date('now')
         """, (str(year),))
-        declared_dividends = c.fetchall()
+        declared_dividends = await c.fetchall()
 
         declared_before_record = {m: {"total": 0.0, "details": []} for m in range(1, 13)}
         declared_after_record = {m: {"total": 0.0, "details": []} for m in range(1, 13)}
@@ -205,13 +187,12 @@ async def api_dividends_monthly(request: Request, year: int = None):
                     "amount": amount, "type": "declared_dividend_after"
                 })
 
-        c.execute("""
+        c = await conn.execute("""
             SELECT ticker, coupon_date, coupon_value, record_date, is_redemption
             FROM coupon_calendar
-            WHERE strftime('%Y', coupon_date) = ?
-              AND coupon_date > date('now')
+            WHERE strftime('%Y', coupon_date) = ? AND coupon_date > date('now')
         """, (str(year),))
-        declared_coupons = c.fetchall()
+        declared_coupons = await c.fetchall()
 
         redemption_by_month = {m: {"total": 0.0, "details": []} for m in range(1, 13)}
 
@@ -250,12 +231,12 @@ async def api_dividends_monthly(request: Request, year: int = None):
                         "amount": amount, "type": "declared_coupon_after"
                     })
 
-        c.execute("""
+        c = await conn.execute("""
             SELECT ticker, forecast_amount, forecast_month, forecast_year
             FROM dividend_forecast
             WHERE forecast_year = ? AND forecast_amount > 0
         """, (str(year),))
-        forecast_rows = c.fetchall()
+        forecast_rows = await c.fetchall()
 
         forecast_by_month = {m: {"total": 0.0, "details": []} for m in range(1, 13)}
 
@@ -275,13 +256,11 @@ async def api_dividends_monthly(request: Request, year: int = None):
                     "amount": amount, "type": "forecast"
                 })
 
-        c.execute("SELECT DISTINCT substr(date, 1, 4) FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date DESC")
-        years_from_ops = [int(row[0]) for row in c.fetchall() if row[0] is not None]
-        c.execute("SELECT DISTINCT forecast_year FROM dividend_forecast WHERE forecast_amount > 0")
-        forecast_years = [int(row[0]) for row in c.fetchall() if row[0] is not None]
+        c = await conn.execute("SELECT DISTINCT substr(date, 1, 4) FROM operations WHERE type IN ('Выплата дивидендов', 'Выплата купонов') AND currency = 'RUB' ORDER BY date DESC")
+        years_from_ops = [int(row[0]) for row in await c.fetchall() if row[0] is not None]
+        c = await conn.execute("SELECT DISTINCT forecast_year FROM dividend_forecast WHERE forecast_amount > 0")
+        forecast_years = [int(row[0]) for row in await c.fetchall() if row[0] is not None]
         all_years = sorted(set(years_from_ops + forecast_years), reverse=True)
-
-        conn.close()
 
         months_labels = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек']
         actual_data = [actual_by_month[m]["total"] for m in range(1, 13)]
@@ -291,17 +270,12 @@ async def api_dividends_monthly(request: Request, year: int = None):
         redemption_data = [redemption_by_month[m]["total"] for m in range(1, 13)]
 
         return JSONResponse({
-            "year": year,
-            "months": months_labels,
-            "actual": actual_data,
-            "declared_before_record": before_data,
-            "declared_after_record": after_data,
-            "redemption": redemption_data,
+            "year": year, "months": months_labels,
+            "actual": actual_data, "declared_before_record": before_data,
+            "declared_after_record": after_data, "redemption": redemption_data,
             "forecast": forecast_data,
-            "total_actual": sum(actual_data),
-            "total_before": sum(before_data),
-            "total_after": sum(after_data),
-            "total_redemption": sum(redemption_data),
+            "total_actual": sum(actual_data), "total_before": sum(before_data),
+            "total_after": sum(after_data), "total_redemption": sum(redemption_data),
             "total_forecast": sum(forecast_data),
             "details_actual": {m: actual_by_month[m]["details"] for m in range(1, 13)},
             "details_declared_before": {m: declared_before_record[m]["details"] for m in range(1, 13)},

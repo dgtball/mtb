@@ -7,11 +7,7 @@ from tabulate import tabulate
 from config import NAME_OVERRIDES, DOMAIN
 import db
 
-# ===== ДЕКОРАТОР RETRY =====
 def retry(max_attempts=3, delay=2, backoff=2, exceptions=(Exception,)):
-    """
-    Декоратор для повторных попыток при вызове асинхронной функции.
-    """
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -20,16 +16,15 @@ def retry(max_attempts=3, delay=2, backoff=2, exceptions=(Exception,)):
                     return await func(*args, **kwargs)
                 except exceptions as e:
                     if attempt == max_attempts:
-                        logging.error(f"❌ {func.__name__} failed after {max_attempts} attempts: {e}")
+                        logging.error(f"{func.__name__} failed after {max_attempts} attempts: {e}")
                         raise
                     wait = delay * (backoff ** (attempt - 1))
-                    logging.warning(f"🔄 Retry {attempt}/{max_attempts} for {func.__name__} after {wait}s: {e}")
+                    logging.warning(f"Retry {attempt}/{max_attempts} for {func.__name__} after {wait}s: {e}")
                     await asyncio.sleep(wait)
             return None
         return wrapper
     return decorator
 
-# ---------- ВРЕМЯ ----------
 def get_moscow_time():
     return datetime.datetime.now(datetime.timezone.utc).astimezone(
         datetime.timezone(datetime.timedelta(hours=3))
@@ -44,13 +39,8 @@ def is_weekend():
     now = get_moscow_time()
     return now.weekday() in (5, 6)
 
-# ---------- СТАТУС СЕССИИ ----------
 def get_session_status(no_trading_weekends=None, time_offset=0):
-    """
-    Возвращает статус сессии Московской биржи.
-    time_offset: смещение часов для отображаемого времени (например, 1 для UTC+4).
-    """
-    now_moscow = get_moscow_time()  # UTC+3
+    now_moscow = get_moscow_time()
     today_str = now_moscow.strftime("%Y-%m-%d")
     weekend = now_moscow.weekday() in (5, 6)
 
@@ -59,13 +49,11 @@ def get_session_status(no_trading_weekends=None, time_offset=0):
             if start <= today_str <= end:
                 return "Биржа закрыта (выходной)"
 
-    # Определяем сессию по московскому времени
     if weekend:
         if (now_moscow.hour > 9 or (now_moscow.hour == 9 and now_moscow.minute >= 50)) and (
             now_moscow.hour < 19 or (now_moscow.hour == 19 and now_moscow.minute == 0)
         ):
-            session = "Сессия выходного дня"
-            return session
+            return "Сессия выходного дня"
         else:
             return "Биржа закрыта"
 
@@ -93,7 +81,6 @@ def get_session_status(no_trading_weekends=None, time_offset=0):
         return "Биржа закрыта"
 
     if time_offset != 0:
-        # Корректируем времена на смещение
         def shift_time(t):
             h, m = map(int, t.split(':'))
             h += time_offset
@@ -115,7 +102,6 @@ def get_month_name_ru(month_num):
     }
     return months.get(month_num, str(month_num))
 
-# ---------- УМНОЕ ФОРМАТИРОВАНИЕ ЦЕНЫ ----------
 def smart_price(price):
     if price is None or (isinstance(price, float) and pd.isna(price)):
         return "—"
@@ -128,7 +114,6 @@ def smart_price(price):
     else:
         return f"{price:.2f}"
 
-# ---------- ПОСТРОЕНИЕ ТАБЛИЦЫ ----------
 def build_table_universal(df, title, headers, data_columns):
     if df.empty:
         return ""
@@ -168,25 +153,19 @@ def build_table_universal(df, title, headers, data_columns):
     table = tabulate(table_data, headers=headers, tablefmt="simple", numalign="right", stralign="left")
     return f"<b>{title}</b>\n<pre>{table}</pre>\n"
 
-# ---------- ПОСЛЕДНИЙ ТОРГОВЫЙ ДЕНЬ МЕСЯЦА ----------
 def last_trading_day(today):
-    """
-    Возвращает последний торговый день месяца (пн–пт).
-    today – объект datetime.date.
-    """
     if today.month == 12:
         last_day = datetime.date(today.year + 1, 1, 1) - datetime.timedelta(days=1)
     else:
         last_day = datetime.date(today.year, today.month + 1, 1) - datetime.timedelta(days=1)
-    while last_day.weekday() >= 5:  # суббота (5) или воскресенье (6)
+    while last_day.weekday() >= 5:
         last_day -= datetime.timedelta(days=1)
     return last_day
 
-# ---------- СТРОКА ПОРТФЕЛЯ ----------
-def get_portfolio_change_str():
+async def get_portfolio_change_str():
     today = datetime.date.today().isoformat()
-    snapshot = db.get_daily_snapshot(today)
-    current = db.get_portfolio_value()
+    snapshot = await db.get_daily_snapshot(today)
+    current = await db.get_portfolio_value()
     if snapshot is None or current is None or snapshot == 0:
         return ""
     change = (current - snapshot) / snapshot * 100

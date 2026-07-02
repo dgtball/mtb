@@ -1,9 +1,8 @@
 import logging
-import sqlite3
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from routers.auth import require_token
-from config import DB_PATH, SECTOR_NAMES
+from config import SECTOR_NAMES
 import db
 
 router = APIRouter()
@@ -16,7 +15,7 @@ async def set_sector(request: Request):
     sector = body.get("sector")
     if not ticker or not sector:
         raise HTTPException(400, "Missing ticker or sector")
-    db.update_instrument_sector(ticker, sector)
+    await db.update_instrument_sector(ticker, sector)
     from moex_api import ticker_to_sector
     ticker_to_sector[ticker] = sector
     return JSONResponse({"status": "ok"})
@@ -31,7 +30,7 @@ async def get_sectors_list(request: Request):
 async def get_instruments(request: Request):
     require_token(request)
     try:
-        instruments = db.get_all_instruments()
+        instruments = await db.get_all_instruments()
         return JSONResponse(instruments)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -40,14 +39,13 @@ async def get_instruments(request: Request):
 async def get_unticked_operations(request: Request):
     require_token(request)
     try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("""SELECT id, date, payment, ticker, name 
+        conn = await db.get_db()
+        c = await conn.execute("""SELECT id, date, payment, ticker, name 
                      FROM operations 
                      WHERE (ticker IS NULL OR ticker = 'Прочие') 
                        AND type IN ('Выплата дивидендов', 'Выплата купонов')
                      ORDER BY date DESC""")
-        rows = c.fetchall()
+        rows = await c.fetchall()
         operations = []
         for r in rows:
             operations.append({
@@ -56,21 +54,20 @@ async def get_unticked_operations(request: Request):
             })
 
         tickers_set = set()
-        c.execute("SELECT ticker FROM instruments")
-        for row in c.fetchall():
+        c = await conn.execute("SELECT ticker FROM instruments")
+        for row in await c.fetchall():
             if row[0]:
                 tickers_set.add(row[0])
-        c.execute("SELECT ticker FROM name_overrides")
-        for row in c.fetchall():
+        c = await conn.execute("SELECT ticker FROM name_overrides")
+        for row in await c.fetchall():
             if row[0]:
                 tickers_set.add(row[0])
-        c.execute("SELECT DISTINCT ticker FROM operations WHERE ticker IS NOT NULL AND ticker != 'Прочие'")
-        for row in c.fetchall():
+        c = await conn.execute("SELECT DISTINCT ticker FROM operations WHERE ticker IS NOT NULL AND ticker != 'Прочие'")
+        for row in await c.fetchall():
             if row[0]:
                 tickers_set.add(row[0])
 
         tickers_list = sorted(tickers_set)
-        conn.close()
 
         return JSONResponse({
             "operations": operations,
@@ -89,11 +86,9 @@ async def link_ticker_to_operation(request: Request):
         new_ticker = body.get("ticker")
         if not op_id or not new_ticker:
             raise HTTPException(400, "Missing id or ticker")
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("UPDATE operations SET ticker = ? WHERE id = ?", (new_ticker, op_id))
-        conn.commit()
-        conn.close()
+        conn = await db.get_db()
+        await conn.execute("UPDATE operations SET ticker = ? WHERE id = ?", (new_ticker, op_id))
+        await conn.commit()
         return JSONResponse({"status": "ok"})
     except Exception as e:
         logging.error(f"Error in /api/operations/link: {e}", exc_info=True)

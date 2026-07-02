@@ -12,7 +12,7 @@ from keyboards import main_keyboard
 from services.tops import get_top_data
 from utils import (
     get_moscow_time, get_local_time, is_weekend, get_session_status,
-    get_week_number, get_month_name_ru, build_table_universal, 
+    get_week_number, get_month_name_ru, build_table_universal,
     get_portfolio_change_str, retry
 )
 from moex_api import (
@@ -20,8 +20,6 @@ from moex_api import (
     get_moex_index_info, get_top_movers, calc_period_change
 )
 
-
-# ---------- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ----------
 _http_session = None
 _bot = None
 
@@ -33,7 +31,6 @@ def set_bot(bot_instance):
     global _bot
     _bot = bot_instance
 
-# ---------- ФОРМАТИРОВАНИЕ ----------
 def format_message(gainers, losers, index_info, update_time, session_status, portfolio_change_str=""):
     header = ""
     if index_info and 'last' in index_info:
@@ -67,7 +64,6 @@ def format_historical_table(gainers, losers, period, from_date_dt, till_date_dt)
         text += build_table_universal(losers, "📉 Падение", ["Тикер", "Название", "Изменение"], ['SECID', 'SHORTNAME', 'CHANGE_PCT'])
     return text
 
-# ---------- ОТПРАВКА ТОПА (РАЗОВАЯ) ----------
 async def send_top(message: types.Message, period: str = 'day'):
     loading_msg = await message.answer("⏳ Загружаю данные...")
     try:
@@ -85,7 +81,6 @@ async def send_top(message: types.Message, period: str = 'day'):
         if period == 'day':
             text = format_message(gainers, losers, index_info, update_time, session_status, portfolio_line)
         else:
-            # Форматируем исторический топ
             now = get_moscow_time()
             if period == 'week':
                 start = now - datetime.timedelta(days=now.weekday())
@@ -104,7 +99,6 @@ async def send_top(message: types.Message, period: str = 'day'):
         logging.error(f"Ошибка в send_top: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка при загрузке данных: {e}")
 
-# ---------- ОБРАБОТЧИКИ ----------
 async def cmd_start(message: types.Message, state: FSMContext):
     if message.from_user.id != MY_CHAT_ID:
         await message.answer("⛔ Доступ запрещён.")
@@ -128,12 +122,10 @@ async def handle_buttons_and_commands(message: types.Message, state: FSMContext)
     text = message.text
     logging.info(f"🔄 Обработка сообщения: '{text}'")
 
-    # ---------- ТОП НЕДЕЛИ ----------
     if text == "📊 Топ недели":
         await send_top(message, 'week')
         return
 
-    # ---------- ТОП МЕСЯЦА ----------
     if text == "🗓️ Топ месяца":
         await send_top(message, 'month')
         return

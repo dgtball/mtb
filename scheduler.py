@@ -7,22 +7,20 @@ import db
 
 from handlers import format_message, format_historical_table
 from moex_api import get_market_data, get_moex_index_info, get_top_movers, get_historical_shares, calc_period_change
-from utils import get_moscow_time, get_local_time, get_session_status, last_trading_day, get_portfolio_change_str
+from utils import get_moscow_time, get_local_time, get_session_status, last_trading_day, get_portfolio_change_str, build_table_universal
 from config import MY_CHAT_ID, TOP_N, TINKOFF_TOKEN
 from services.tops import get_top_data
 
-# ---------- Глобальные переменные ----------
 _bot = None
 _http_session = None
 _active_day_message_id = None
-_snapshot_saved_today = False       # флаг сохранения снэпшота на сегодня
+_snapshot_saved_today = False
 portfolio_update_allowed = False
 
-# Флаги однократного выполнения задач (сбрасываются в полночь)
 _dividend_calendar_synced = False
 _coupon_calendar_synced = False
 _instruments_synced = False
-_forecasts_synced = False           # новый флаг для прогнозов
+_forecasts_synced = False
 
 def set_bot(bot: Bot):
     global _bot
@@ -36,9 +34,7 @@ def is_portfolio_update_allowed():
     global portfolio_update_allowed
     return portfolio_update_allowed
 
-# ---------- ФУНКЦИИ ОТПРАВКИ ТОПОВ НЕДЕЛИ И МЕСЯЦА ----------
 async def send_periodic_top(period: str):
-    """period: 'week' или 'month'"""
     try:
         now = get_moscow_time()
         gainers, losers, _, _, _, _ = await get_top_data(period, _http_session)
@@ -63,53 +59,48 @@ async def send_periodic_top(period: str):
     except Exception as e:
         logging.error(f"Ошибка отправки топа {period}: {e}")
 
-# ---------- ФУНКЦИЯ ОБНОВЛЕНИЯ КЭША ИНСТРУМЕНТОВ ----------
 async def refresh_instruments_cache():
-    logging.info("🔄 Обновление справочника инструментов из MOEX")
+    logging.info("Обновление справочника инструментов из MOEX")
     try:
         from moex_api import load_instrument_names
         await load_instrument_names(_http_session, force=True)
-        logging.info("✅ Справочник инструментов обновлён")
+        logging.info("Справочник инструментов обновлён")
     except Exception as e:
-        logging.error(f"❌ Ошибка обновления справочника: {e}")
+        logging.error(f"Ошибка обновления справочника: {e}")
 
-# ---------- ФУНКЦИЯ ОБНОВЛЕНИЯ КАЛЕНДАРЯ ДИВИДЕНДОВ ---------        
 async def refresh_dividend_calendar():
-    logging.info("🔄 Обновление календаря дивидендов")
+    logging.info("Обновление календаря дивидендов")
     try:
         from tinkoff_api import fetch_all_dividends
         data = await fetch_all_dividends(_http_session)
         for ticker, info in data.items():
             for div in info["dividends"]:
-                db.upsert_dividend_calendar(ticker, info["figi"], div)
-        logging.info(f"✅ Календарь дивидендов обновлён для {len(data)} инструментов")
+                await db.upsert_dividend_calendar(ticker, info["figi"], div)
+        logging.info(f"Календарь дивидендов обновлён для {len(data)} инструментов")
     except Exception as e:
-        logging.error(f"❌ Ошибка обновления календаря дивидендов: {e}")
+        logging.error(f"Ошибка обновления календаря дивидендов: {e}")
 
-# ---------- ФУНКЦИЯ ОБНОВЛЕНИЯ КАЛЕНДАРЯ КУПОНОВ ---------          
 async def refresh_coupon_calendar():
-    logging.info("🔄 Обновление календаря купонов")
+    logging.info("Обновление календаря купонов")
     try:
         from tinkoff_api import fetch_all_coupons
         data = await fetch_all_coupons(_http_session)
         for ticker, info in data.items():
             for coupon in info["coupons"]:
-                db.upsert_coupon_calendar(ticker, info["figi"], coupon)
-        logging.info(f"✅ Календарь купонов обновлён для {len(data)} облигаций")
+                await db.upsert_coupon_calendar(ticker, info["figi"], coupon)
+        logging.info(f"Календарь купонов обновлён для {len(data)} облигаций")
     except Exception as e:
-        logging.error(f"❌ Ошибка обновления календаря купонов: {e}")
+        logging.error(f"Ошибка обновления календаря купонов: {e}")
 
-# ---------- ФУНКЦИЯ ПРОГНОЗИРОВАНИЯ ---------
 async def refresh_forecasts():
-    logging.info("🔄 Обновление прогнозов дивидендов")
+    logging.info("Обновление прогнозов дивидендов")
     try:
         from services.forecast import calculate_and_update_forecasts
         await calculate_and_update_forecasts(_http_session)
-        logging.info("✅ Прогнозы дивидендов обновлены")
+        logging.info("Прогнозы дивидендов обновлены")
     except Exception as e:
-        logging.error(f"❌ Ошибка обновления прогнозов: {e}")
+        logging.error(f"Ошибка обновления прогнозов: {e}")
 
-# ---------- ОСНОВНОЙ ЦИКЛ ПЛАНИРОВЩИКА ----------
 async def scheduler_loop():
     global _active_day_message_id, portfolio_update_allowed, _snapshot_saved_today
     global _dividend_calendar_synced, _coupon_calendar_synced, _instruments_synced, _forecasts_synced
@@ -128,7 +119,6 @@ async def scheduler_loop():
             hour = now.hour
             minute = now.minute
 
-            # Сброс флагов в полночь
             if hour == 0 and minute == 0:
                 _snapshot_saved_today = False
                 _dividend_calendar_synced = False
@@ -136,20 +126,17 @@ async def scheduler_loop():
                 _instruments_synced = False
                 _forecasts_synced = False
 
-            # ----- Снэпшот портфеля (после 23:50) – только один раз -----
             if hour == 23 and minute >= 50 and not _snapshot_saved_today:
                 tomorrow = today + datetime.timedelta(days=1)
                 tomorrow_str = tomorrow.isoformat()
-                current = db.get_portfolio_value()
+                current = await db.get_portfolio_value()
                 if current is not None:
-                    db.set_daily_snapshot(tomorrow_str, current)
+                    await db.set_daily_snapshot(tomorrow_str, current)
                     _snapshot_saved_today = True
                     logging.info(f"Снэпшот портфеля сохранён на {tomorrow_str}: {current:.2f}")
-                # После сохранения засыпаем на минуту, чтобы не проверять слишком часто
                 await asyncio.sleep(60)
                 continue
 
-            # ----- Окно 06:50 – 00:50 МСК (топ дня) -----
             start_minutes = 6*60 + 50
             end_minutes = 0*60 + 50 + 24*60
             current_minutes = hour*60 + minute
@@ -166,20 +153,19 @@ async def scheduler_loop():
                         index_info = await get_moex_index_info(_http_session)
                         session_status = get_session_status(time_offset=1)
                         update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
-                        portfolio_line = get_portfolio_change_str()
+                        portfolio_line = await get_portfolio_change_str()
                         text = format_message(gainers, losers, index_info, update_time, session_status, portfolio_line)
                         sent_msg = await _bot.send_message(MY_CHAT_ID, text, parse_mode="HTML")
                         _active_day_message_id = sent_msg.message_id
-                        # Страховка: если снэпшот за сегодня отсутствует, создаём сейчас
                         today_str = today.isoformat()
-                        if db.get_daily_snapshot(today_str) is None:
+                        if await db.get_daily_snapshot(today_str) is None:
                             try:
                                 from tinkoff_api import get_portfolio_summary
                                 data = await get_portfolio_summary(_http_session)
                                 if data:
                                     total = data['total_amount']
-                                    db.set_daily_snapshot(today_str, total)
-                                    db.set_portfolio_value(total)
+                                    await db.set_daily_snapshot(today_str, total)
+                                    await db.set_portfolio_value(total)
                                     logging.info(f"Снэпшот портфеля восстановлен за {today_str}: {total:.2f}")
                             except Exception as e:
                                 logging.error(f"Не удалось создать страховочный снэпшот: {e}")
@@ -192,7 +178,7 @@ async def scheduler_loop():
                         index_info = await get_moex_index_info(_http_session)
                         session_status = get_session_status(time_offset=1)
                         update_time = get_local_time().strftime("%d/%m/%y %H:%M:%S")
-                        portfolio_line = get_portfolio_change_str()
+                        portfolio_line = await get_portfolio_change_str()
                         text = format_message(gainers, losers, index_info, update_time, session_status, portfolio_line)
                         try:
                             await _bot.edit_message_text(text, chat_id=MY_CHAT_ID, message_id=_active_day_message_id, parse_mode="HTML")
@@ -205,40 +191,32 @@ async def scheduler_loop():
                 portfolio_update_allowed = False
                 _active_day_message_id = None
 
-            # ----- Ежедневные задачи (с флагами) -----
-            # Синхронизация операций в 10:00 (без флага, так как может быть вызвана вручную)
             if hour == 10 and minute == 0:
                 if TINKOFF_TOKEN:
                     from tinkoff_api import sync_operations
                     asyncio.create_task(sync_operations(_http_session))
 
-            # Календарь дивидендов в 02:00
             if hour == 2 and minute == 0 and not _dividend_calendar_synced:
                 _dividend_calendar_synced = True
                 asyncio.create_task(refresh_dividend_calendar())
 
-            # Календарь купонов в 02:30
             if hour == 2 and minute == 30 and not _coupon_calendar_synced:
                 _coupon_calendar_synced = True
                 asyncio.create_task(refresh_coupon_calendar())
 
-            # Справочник инструментов в 03:00
             if hour == 3 and minute == 0 and not _instruments_synced:
                 _instruments_synced = True
                 asyncio.create_task(refresh_instruments_cache())
 
-            # Прогнозы дивидендов в 04:00
             if hour == 4 and minute == 0 and not _forecasts_synced:
                 _forecasts_synced = True
                 asyncio.create_task(refresh_forecasts())
 
-            # ----- Топ недели (пятница после 23:50) -----
             if weekday == 4 and hour == 23 and minute >= 50:
                 if last_week_sent_date != today:
                     await send_periodic_top('week')
                     last_week_sent_date = today
 
-            # ----- Топ месяца (последний торговый день месяца после 23:50) -----
             last_trade_day = last_trading_day(today)
             if today == last_trade_day and hour == 23 and minute >= 51:
                 if last_month_sent_date != today:

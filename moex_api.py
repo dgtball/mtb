@@ -14,9 +14,8 @@ figi_to_ticker = {}
 async def load_instrument_names(http_session, force=False):
     global ticker_to_name, ticker_to_sector, figi_to_ticker
     
-    # Если не force, пробуем загрузить из БД
     if not force:
-        instruments = db.get_all_instruments()
+        instruments = await db.get_all_instruments()
         if instruments:
             for inst in instruments:
                 ticker_to_name[inst['ticker']] = inst['name'] or inst['ticker']  # защита от None
@@ -49,7 +48,7 @@ async def load_instrument_names(http_session, force=False):
                         if not clean_name:
                             clean_name = secid  # защита от пустой строки
                         figi = row.get('FIGI', None)
-                        db.upsert_instrument(secid, clean_name, sector=None, figi=figi, instrument_type='share')
+                        await db.upsert_instrument(secid, clean_name, sector=None, figi=figi, instrument_type='share')
                         ticker_to_name[secid] = clean_name
                         if figi:
                             figi_to_ticker[figi] = secid
@@ -76,7 +75,7 @@ async def load_instrument_names(http_session, force=False):
                             if not clean_name:
                                 clean_name = secid
                             figi = row.get('FIGI', None)
-                            db.upsert_instrument(secid, clean_name, sector=None, figi=figi, instrument_type='bond')
+                            await db.upsert_instrument(secid, clean_name, sector=None, figi=figi, instrument_type='bond')
                             ticker_to_name[secid] = clean_name
                             if figi:
                                 figi_to_ticker[figi] = secid
@@ -102,15 +101,14 @@ async def load_instrument_names(http_session, force=False):
                         if not clean_name:
                             clean_name = secid
                         figi = row.get('FIGI', None)
-                        db.upsert_instrument(secid, clean_name, sector=None, figi=figi, instrument_type='etf')
+                        await db.upsert_instrument(secid, clean_name, sector=None, figi=figi, instrument_type='etf')
                         ticker_to_name[secid] = clean_name
                         if figi:
                             figi_to_ticker[figi] = secid
     except Exception as e:
         logging.error(f"Ошибка загрузки ETF: {e}")
 
-    # После загрузки обновляем глобальные словари из БД, чтобы подтянуть сектора (если есть)
-    instruments = db.get_all_instruments()
+    instruments = await db.get_all_instruments()
     for inst in instruments:
         if inst['ticker'] not in ticker_to_name:
             ticker_to_name[inst['ticker']] = inst['name'] or inst['ticker']

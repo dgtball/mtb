@@ -2,12 +2,9 @@ import logging
 import datetime
 import aiohttp
 import db
-import sqlite3
-
 from config import TINKOFF_TOKEN, TINKOFF_API_URL, NAME_OVERRIDES, ticker_to_name
 from utils import retry
 
-# Глобальный словарь FIGI → Ticker, заполняется при старте
 portfolio_figi_to_ticker = {}
 EXTRA_FIGI_MAP = {}
 
@@ -40,7 +37,7 @@ async def get_portfolio_data(http_session, account_id: str) -> dict:
     params = {"accountId": account_id}
     data = await tinkoff_api_request(http_session, "POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetPortfolio", params=params)
     return data
-    
+
 @retry(max_attempts=3, delay=2, backoff=2)
 async def get_portfolio_summary(http_session):
     try:
@@ -54,7 +51,6 @@ async def get_portfolio_summary(http_session):
         data = await get_portfolio_data(http_session, account_id)
         positions = data.get("positions", [])
 
-        # Общая стоимость портфеля (с копейками)
         total_amount_obj = data.get("totalAmountPortfolio", {})
         total = float(total_amount_obj.get("units", 0)) + float(total_amount_obj.get("nano", 0)) / 1e9
         total_currency = total_amount_obj.get("currency", "RUB")
@@ -63,7 +59,6 @@ async def get_portfolio_summary(http_session):
         total_value = 0.0
         balance = 0.0
 
-        # Определяем баланс (деньги на счёте)
         for pos in positions:
             ticker = pos.get("ticker", "")
             if ticker == "RUB000UTSTOM" or pos.get("instrumentType") == "INSTRUMENT_TYPE_CURRENCY":
@@ -81,7 +76,6 @@ async def get_portfolio_summary(http_session):
                 continue
             filtered_positions.append(pos)
 
-        # Суммируем стоимость и затраты
         for pos in filtered_positions:
             quantity_obj = pos.get("quantity", {})
             quantity = float(quantity_obj.get("units", 0)) + float(quantity_obj.get("nano", 0)) / 1e9
@@ -118,7 +112,6 @@ async def get_portfolio_summary(http_session):
             "CURRENCY": "Валюта",
         }
 
-        # Обрабатываем каждую позицию
         for pos in filtered_positions:
             figi = pos.get("figi")
             ticker = pos.get("ticker") or figi
@@ -178,7 +171,6 @@ async def get_portfolio_summary(http_session):
         return None
 
 async def build_figi_map(http_session):
-    """Запрашивает текущий портфель и строит словарь FIGI → ticker."""
     global portfolio_figi_to_ticker
     try:
         summary = await get_portfolio_summary(http_session)
@@ -208,7 +200,7 @@ async def sync_operations(http_session, from_date=None, force_full=False):
         if force_full:
             from_date = None
         if from_date is None:
-            last_date = db.get_last_operation_date()
+            last_date = await db.get_last_operation_date()
             if last_date:
                 from_date = datetime.datetime.fromisoformat(last_date) + datetime.timedelta(seconds=1)
             else:
@@ -218,7 +210,7 @@ async def sync_operations(http_session, from_date=None, force_full=False):
         logging.info(f"Запрос операций с {from_date} по {to_date}")
 
         all_operations = []
-        page_token = None  # для пагинации (если есть)
+        page_token = None
         while True:
             params = {
                 "accountId": account_id,
@@ -227,7 +219,7 @@ async def sync_operations(http_session, from_date=None, force_full=False):
                 "state": "OPERATION_STATE_EXECUTED"
             }
             if page_token:
-                params["pageToken"] = page_token  # если API использует pageToken
+                params["pageToken"] = page_token
 
             data = await tinkoff_api_request(http_session, "POST", "tinkoff.public.invest.api.contract.v1.OperationsService/GetOperations", params=params)
             operations = data.get("operations", [])
@@ -235,7 +227,6 @@ async def sync_operations(http_session, from_date=None, force_full=False):
                 break
             all_operations.extend(operations)
             logging.info(f"Получено {len(operations)} операций, всего собрано {len(all_operations)}")
-            # Проверяем наличие следующей страницы
             next_page_token = data.get("nextPage")
             if not next_page_token:
                 break
@@ -255,7 +246,7 @@ async def sync_operations(http_session, from_date=None, force_full=False):
                         from moex_api import figi_to_ticker as moex_figi_to_ticker
                         ticker = moex_figi_to_ticker.get(figi)
                     if not ticker:
-                        ticker = EXTRA_FIGI_MAP.get(figi)   # ваш дополнительный маппинг
+                        ticker = EXTRA_FIGI_MAP.get(figi)
                 if not ticker:
                     ticker = "Прочие"
 
@@ -272,13 +263,9 @@ async def sync_operations(http_session, from_date=None, force_full=False):
             comm_nano = float(commission_obj.get("nano", 0)) / 1e9
             commission_rub = comm_units + comm_nano
 
-            # Проверяем существование записи
-            with sqlite3.connect(db.DB_PATH) as conn:
-                c = conn.cursor()
-                c.execute("SELECT id FROM operations WHERE id = ?", (op.get("id"),))
-                exists = c.fetchone() is not None
+            exists = await db.operation_exists(op.get("id"))
 
-            db.insert_operation({
+            await db.insert_operation({
                 "id": op.get("id"),
                 "date": op.get("date"),
                 "type": op.get("type"),
@@ -302,14 +289,12 @@ async def sync_operations(http_session, from_date=None, force_full=False):
         logging.error(f"Ошибка в sync_operations: {e}", exc_info=True)
         return 0
 
-
-# Календарь дивидендных выплат/купонов     
 async def get_dividends_for_instrument(http_session, figi: str):
     endpoint = "tinkoff.public.invest.api.contract.v1.InstrumentsService/GetDividends"
     params = {"figi": figi}
     data = await tinkoff_api_request(http_session, "POST", endpoint, params=params)
     return data.get("dividends", [])
-    
+
 async def get_coupons_for_instrument(http_session, figi: str):
     endpoint = "tinkoff.public.invest.api.contract.v1.InstrumentsService/GetBondCoupons"
     params = {"figi": figi}
@@ -317,22 +302,19 @@ async def get_coupons_for_instrument(http_session, figi: str):
     coupons = data.get("events", [])
     logging.info(f"Получено {len(coupons)} купонов для FIGI {figi}")
     if coupons:
-        # Логируем первую и последнюю дату для проверки
         first_date = coupons[0].get("couponDate") if coupons else None
         last_date = coupons[-1].get("couponDate") if coupons else None
         logging.info(f"Первый купон: {first_date}, последний: {last_date}")
     return coupons
 
-"""Получить дивидендные календари для всех акций/облигаций в портфеле."""    
 async def fetch_all_dividends(http_session):
     portfolio = await get_portfolio_summary(http_session)
     if not portfolio:
         logging.warning("fetch_all_dividends: портфель не получен")
         return {}
-    
+
     result = {}
     for pos in portfolio.get("positions", []):
-        # Берём только акции (тип display 'Акции')
         if pos.get("type_display") == "Акции" and pos.get("figi"):
             figi = pos["figi"]
             ticker = pos["ticker"]
@@ -344,56 +326,45 @@ async def fetch_all_dividends(http_session):
                         "name": pos["name"],
                         "dividends": dividends
                     }
-                    # Сохраняем в БД
                     for div in dividends:
-                        db.upsert_dividend_calendar(ticker, figi, div)
+                        await db.upsert_dividend_calendar(ticker, figi, div)
                     logging.info(f"Сохранено {len(dividends)} дивидендов для {ticker}")
             except Exception as e:
                 logging.error(f"Ошибка получения дивидендов для {ticker}: {e}")
-    
+
     return result
 
 async def fetch_all_coupons(http_session):
-    """
-    Получает купоны для всех облигаций в портфеле.
-    1. Запрашивает купоны через API Т-Инвестиций (GetBondCoupons).
-    2. Получает дату погашения и купонный период из MOEX.
-    3. Генерирует недостающие купоны до погашения, используя период из MOEX или вычисленный по купонам.
-    4. Добавляет событие погашения.
-    """
     portfolio = await get_portfolio_summary(http_session)
     if not portfolio:
         logging.warning("fetch_all_coupons: портфель не получен")
         return {}
-    
+
     result = {}
     for pos in portfolio.get("positions", []):
         if pos.get("type_display") == "Облигации" and pos.get("figi"):
             figi = pos["figi"]
             ticker = pos["ticker"]
             try:
-                # 1. Получаем купоны из API
                 coupons = await get_coupons_for_instrument(http_session, figi)
                 if not coupons:
                     logging.warning(f"Нет купонов для {ticker} (FIGI {figi})")
                     continue
-                
+
                 first_date = coupons[0].get("couponDate")
                 last_date = coupons[-1].get("couponDate")
                 logging.info(f"Получено {len(coupons)} купонов для {ticker}, с {first_date} по {last_date}")
-                
-                # 2. Получаем данные из MOEX
+
                 from moex_api import get_bond_maturity_date
                 logging.info(f"Запрос данных для {ticker} из MOEX")
                 bond_info = await get_bond_maturity_date(http_session, ticker)
                 maturity_date = bond_info.get("maturity_date") if bond_info else None
                 coupon_period = bond_info.get("coupon_period") if bond_info else None
                 logging.info(f"Дата погашения: {maturity_date}, период: {coupon_period}")
-                
-                # 3. Сохраняем данные в instruments
+
                 if maturity_date or coupon_period:
-                    existing = db.get_instrument(ticker)
-                    db.upsert_instrument(
+                    existing = await db.get_instrument(ticker)
+                    await db.upsert_instrument(
                         ticker,
                         name=existing.get("name") if existing else pos.get("name"),
                         sector=existing.get("sector") if existing else None,
@@ -402,14 +373,12 @@ async def fetch_all_coupons(http_session):
                         maturity_date=maturity_date,
                         coupon_period=coupon_period
                     )
-                
-                # 4. Генерация прогнозных купонов и погашения
+
                 last_coupon = coupons[-1]
                 last_date_str = last_coupon["couponDate"].replace('Z', '+00:00')
                 last_date_dt = datetime.datetime.fromisoformat(last_date_str).replace(tzinfo=None)
                 amount = last_coupon["payOneBond"]
-                
-                # Определяем период
+
                 if coupon_period and coupon_period > 0:
                     period_days = coupon_period
                 elif len(coupons) >= 2:
@@ -417,12 +386,11 @@ async def fetch_all_coupons(http_session):
                     prev_date_dt = datetime.datetime.fromisoformat(prev_date_str).replace(tzinfo=None)
                     period_days = (last_date_dt - prev_date_dt).days
                 else:
-                    period_days = 182  # стандартный полугодовой купон
-                
+                    period_days = 182
+
                 if period_days <= 0:
                     period_days = 182
-                
-                # Генерируем купоны до даты погашения
+
                 if maturity_date:
                     maturity_dt = datetime.datetime.fromisoformat(maturity_date.replace('Z', '+00:00')).replace(tzinfo=None)
                     current_date = last_date_dt
@@ -446,8 +414,7 @@ async def fetch_all_coupons(http_session):
                         coupons.append(new_coupon)
                         current_date = next_date
                         coupon_count += 1
-                    
-                    # Добавляем погашение
+
                     if maturity_dt >= datetime.datetime.now().replace(tzinfo=None):
                         coupons.append({
                             "couponDate": maturity_date,
@@ -457,15 +424,14 @@ async def fetch_all_coupons(http_session):
                             "is_redemption": True
                         })
                         logging.info(f"Добавлено погашение для {ticker} на {maturity_date}")
-                
-                # 5. Сохраняем все купоны в БД
+
                 for coup in coupons:
-                    db.upsert_coupon_calendar(ticker, figi, coup)
-                
+                    await db.upsert_coupon_calendar(ticker, figi, coup)
+
                 result[ticker] = {"figi": figi, "coupons": coupons}
                 logging.info(f"Сохранено {len(coupons)} купонов для {ticker}")
-                
+
             except Exception as e:
                 logging.error(f"Ошибка обработки облигации {ticker}: {e}", exc_info=True)
-    
+
     return result

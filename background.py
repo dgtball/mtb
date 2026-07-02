@@ -12,7 +12,7 @@ async def portfolio_updater(http_session):
                 data = await get_portfolio_summary(http_session)
                 if data:
                     total = data['total_amount']
-                    db.set_portfolio_value(total)
+                    await db.set_portfolio_value(total)
                     logging.debug(f"Портфель автообновлён: {total:.2f}")
                 await asyncio.sleep(300)
             else:

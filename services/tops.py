@@ -1,4 +1,3 @@
-# services/tops.py
 import logging
 import datetime
 import pandas as pd
@@ -7,25 +6,20 @@ from utils import get_moscow_time, get_session_status, smart_price, build_table_
 from config import TOP_N
 
 async def get_top_data(period: str, http_session):
-    """
-    Возвращает данные для топа (лидеры роста/падения) за указанный период.
-    period: 'day', 'week', 'month'
-    Возвращает кортеж (gainers, losers, index_info, session_status, update_time, portfolio_line)
-    """
     if period == 'day':
         shares_df = await get_market_data(http_session)
         gainers, losers = get_top_movers(shares_df, top_n=TOP_N)
         index_info = await get_moex_index_info(http_session)
         session_status = get_session_status(time_offset=1)
         update_time = datetime.datetime.now().strftime("%d/%m/%y %H:%M:%S")
-        portfolio_line = get_portfolio_change_str()
+        portfolio_line = await get_portfolio_change_str()
         return gainers, losers, index_info, session_status, update_time, portfolio_line
 
     else:
         now = get_moscow_time()
         if period == 'week':
             start = now - datetime.timedelta(days=now.weekday())
-        else:  # month
+        else:
             start = now.replace(day=1)
         from_date_str = start.strftime("%Y-%m-%d")
         till_date_str = now.strftime("%Y-%m-%d")

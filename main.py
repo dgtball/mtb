@@ -1,5 +1,4 @@
 import os
-import sys
 import logging
 import time
 import asyncio
@@ -13,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION, TINKOFF_TOKEN, MINI_APP_SECRET, WEBHOOK_URL, DATA_DIR
+from config import API_TOKEN, PORT, MY_CHAT_ID, VERSION, TINKOFF_TOKEN, MINI_APP_SECRET, WEBHOOK_URL
 from moex_api import load_instrument_names
 from handlers import register_handlers, set_http_session, set_bot
 from background import portfolio_updater
@@ -111,8 +110,8 @@ async def mini_app(request: Request):
         return HTMLResponse("<h1>Ошибка: mini_app.html не найден</h1>", status_code=404)
 
 async def main():
-    db.init_db()
-    db.load_name_overrides()
+    await db.init_db()
+    await db.load_name_overrides()
 
     session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
     state.bot_session = session
